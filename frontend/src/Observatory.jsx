@@ -27,7 +27,7 @@ import {
   ArrowsClockwise,
 } from "@phosphor-icons/react";
 import Scene from "./Scene";
-import MatrixWorkspace from "./MatrixWorkspace";
+import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
@@ -118,7 +118,13 @@ export function App() {
       trace?.kind === "attention_capture"
         ? [
             {
-              module: `Attention L${trace.layer} / H${trace.head}`,
+              module:
+                (tree?.nodes || []).find((n) =>
+                  new RegExp(
+                    `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks|h)\\.${trace.layer}$`,
+                  ).test(n.path),
+                )?.path ?? `Attention L${trace.layer} / H${trace.head}`,
+              label: `Attention L${trace.layer} / H${trace.head}`,
               values: trace.values.flat(),
               shape: trace.shape,
               total_elements: trace.shape[0] * trace.shape[1],
@@ -128,7 +134,7 @@ export function App() {
             },
           ]
         : trace?.events || [],
-    [trace],
+    [trace, tree],
   );
   const viewTrace = useMemo(() => {
     if (
@@ -231,20 +237,31 @@ export function App() {
         (_, i) => i,
       );
   const tensorOptions = useMemo(() => {
-    const modules = [
-      ...new Set(
-        events
-          .map((e) => e.module)
-          .filter((m) => m && !/^Attention L\d+/.test(m)),
-      ),
-    ];
+    const modules =
+      trace?.kind === "attention_capture"
+        ? []
+        : [...new Set(events.map((e) => e.module).filter(Boolean))];
     const atLayer = modules.filter((m) =>
       new RegExp(
         `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\\.${layer}(?:\\.|$)`,
       ).test(m),
     );
     return (atLayer.length ? atLayer : modules).slice(0, 64);
-  }, [events, layer]);
+  }, [events, layer, trace?.kind]);
+  const textModel = state?.loaded?.task === "text";
+  // Layer choices: numeric decoder layers for text models, block nodes otherwise.
+  const blockMode = !textModel && (Boolean(state?.loaded) || native);
+  const layerChoices = useMemo(() => {
+    if (!blockMode)
+      return [...new Set(layerOptions)].map((n) => ({
+        value: String(n),
+        label: `L${n}`,
+      }));
+    return nodes.map((n, i) => ({
+      value: n.path,
+      label: `${railLabel(n.path, i)} · ${n.path.split(".").slice(-2).join(".")}`,
+    }));
+  }, [blockMode, layerOptions, nodes]);
   const status = busy
     ? `${state.job.action} · working`
     : state?.job.status === "failed"
@@ -276,7 +293,15 @@ export function App() {
     setHeadView(null);
     setTree(t.structure || null);
     setEventIndex(0);
-    setSelected(eventPath(t.events?.[0]));
+    setSelected(
+      t.kind === "attention_capture"
+        ? (t.structure?.nodes || []).find((n) =>
+            new RegExp(
+              `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks|h)\\.${t.layer}$`,
+            ).test(n.path),
+          )?.path || ""
+        : eventPath(t.events?.[0]),
+    );
     setPlaying(false);
     setInspection(null);
     setPanel(t.kind === "attention_capture" ? "attention" : "component");
@@ -302,6 +327,9 @@ export function App() {
             setTraceId("");
             setSelected("");
             setCapturePaths([]);
+            setLayer(0);
+            setHead(0);
+            setTensor(s.loaded?.task === "text" ? "attention" : "latents");
           }
           if (s.job.status === "failed") setError(s.job.error);
           if (s.job.status !== "completed") variantOf.current = "";
@@ -502,12 +530,27 @@ export function App() {
             <span>Layer</span>
             <select
               aria-label="Layer"
-              value={layerOptions.includes(layer) ? layer : layerOptions[0]}
-              onChange={(e) => setLayer(Number(e.target.value))}
+              value={
+                !blockMode
+                  ? String(
+                      layerOptions.includes(layer) ? layer : layerOptions[0],
+                    )
+                  : nodes.find(
+                      (n) =>
+                        n.path === selected ||
+                        selected.startsWith(n.path + "."),
+                    )?.path || ""
+              }
+              onChange={(e) =>
+                !blockMode
+                  ? setLayer(Number(e.target.value))
+                  : choose(e.target.value)
+              }
             >
-              {layerOptions.map((n) => (
-                <option key={n} value={n}>
-                  L{n}
+              {blockMode && !layerChoices.length && <option value="">—</option>}
+              {layerChoices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
                 </option>
               ))}
             </select>
@@ -530,7 +573,15 @@ export function App() {
                 }
               }}
             >
-              <option value="attention">Attention</option>
+              {(textModel || (!state?.loaded && !native)) && (
+                <option value="attention">Attention</option>
+              )}
+              {textModel && <option value="layers">Layer outputs</option>}
+              {blockMode && (
+                <option value="latents">
+                  {native ? "Denoiser outputs" : "Denoising latents"}
+                </option>
+              )}
               {tensorOptions.map((m) => (
                 <option key={m} value={m}>
                   {m.replace(/^model\./, "")}
@@ -555,9 +606,7 @@ export function App() {
                   )
                 : busy
                   ? action(() => api("cancel", {}))
-                  : run(
-                      tensor === "attention" && state?.loaded?.task === "text",
-                    )
+                  : run(tensor === "attention" && textModel)
             }
           >
             {native ? "ComfyUI" : busy ? "Cancel" : "Run"}
@@ -578,12 +627,14 @@ export function App() {
           maxLength={8192}
         />
         <div className="tokens">
-          <span className="muted">
-            {trace?.tokens
-              ? `Tokens (${trace.tokens.length})`
-              : native
-                ? "Native execution"
-                : "Tokens appear after a capture"}
+          <span className={busy ? "muted working" : "muted"}>
+            {busy
+              ? `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
+              : trace?.tokens
+                ? `Tokens (${trace.tokens.length})`
+                : native
+                  ? "Native execution"
+                  : "Tokens appear after a capture"}
           </span>
           {trace?.tokens?.map((t, i) => (
             <span
@@ -628,7 +679,7 @@ export function App() {
             state?.loaded?.task === "text" &&
             (trace?.model_name ? trace.model_name === state.loaded.name : true)
           }
-          onRunVariant={runVariant}
+          onRunVariant={native ? null : runVariant}
           fallbackPrompt={prompt}
         />
       ) : view === "matrix" ? (
@@ -739,7 +790,7 @@ export function App() {
                 <h2>{modelName}</h2>
                 <p>
                   {trace
-                    ? `${events.length} captured ${trace.kind === "diffusion_step_capture" ? "steps" : "events"}`
+                    ? `${events.length} captured ${trace.kind === "diffusion_step_capture" ? "step" : "event"}${events.length === 1 ? "" : "s"}`
                     : tree
                       ? `${allNodes.length} ${tree.kind === "artifact_tensor_namespace" ? "tensor namespace groups" : "runtime components"}`
                       : "Structure. Activity. Understanding."}
@@ -920,7 +971,8 @@ export function App() {
                     event && valueIndex !== null ? (
                       <>
                         <span>
-                          {short(eventPath(event))} · #{valueIndex}
+                          {short(event.label ?? eventPath(event))} · #
+                          {valueIndex}
                         </span>
                         <strong>
                           Value{" "}
@@ -1194,14 +1246,14 @@ export function App() {
                             key={`${q}:${k}`}
                             title={`Query ${q}, key ${k}: ${v.toFixed(5)}`}
                             style={{
-                              background: `rgba(222,83,85,${Math.max(0.025, v)})`,
+                              background: mix(Math.max(0, Math.min(1, v))),
                             }}
                           />
                         )),
                       )}
                     </div>
                     <p className="micro">
-                      0 = pale · 1 = coral. Attention weights do not establish
+                      0 = ivory · 1 = teal. Attention weights do not establish
                       causality.
                     </p>
                   </>
@@ -1367,15 +1419,17 @@ export function App() {
               }}
             />
             <div>
-              <span>{short(events[0]?.module)}</span>
+              <span>{short(events[0]?.label ?? events[0]?.module)}</span>
               <span>
                 {event?.denoiser_call !== undefined
                   ? `Denoiser call ${event.denoiser_call}`
                   : event?.step !== undefined
                     ? `Diffusion step ${event.step}`
-                    : short(event?.module)}
+                    : short(event?.label ?? event?.module)}
               </span>
-              <span>{short(events.at(-1)?.module)}</span>
+              <span>
+                {short(events.at(-1)?.label ?? events.at(-1)?.module)}
+              </span>
             </div>
           </div>
           <select
@@ -1653,7 +1707,7 @@ function Modal({ title, close, children }) {
   useEffect(() => {
     const previous = document.activeElement,
       el = ref.current;
-    el.querySelector("button")?.focus();
+    el.querySelector("button")?.focus({ preventScroll: true });
     function key(e) {
       if (e.key !== "Tab") return;
       const items = [
@@ -1674,7 +1728,7 @@ function Modal({ title, close, children }) {
     el.addEventListener("keydown", key);
     return () => {
       el.removeEventListener("keydown", key);
-      previous?.focus();
+      previous?.focus?.({ preventScroll: true });
     };
   }, []);
   return (

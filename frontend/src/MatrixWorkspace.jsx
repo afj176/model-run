@@ -365,6 +365,12 @@ export default function MatrixWorkspace({
               <MagnifyingGlass size={16} />
               <select
                 aria-label="Zoom"
+                disabled={stageMode !== "overview"}
+                title={
+                  stageMode === "overview"
+                    ? "Stage zoom"
+                    : "Zoom applies to the 3D overview"
+                }
                 value={zoom}
                 onChange={(e) => {
                   setZoom(Number(e.target.value));

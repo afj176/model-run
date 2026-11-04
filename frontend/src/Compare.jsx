@@ -164,7 +164,7 @@ export default function Compare({
       {!traceA && (
         <p className="muted">Open a capture first, then pick a second one.</p>
       )}
-      {traceA && traceA.kind !== "diffusion_step_capture" && (
+      {traceA && traceA.kind !== "diffusion_step_capture" && onRunVariant && (
         <form
           className="compare-variant"
           onSubmit={(e) => {

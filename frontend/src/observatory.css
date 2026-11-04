@@ -2306,3 +2306,27 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+.tokens .working {
+  color: #3f31a3;
+  font-weight: 600;
+}
+.tokens .working::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3d8f;
+  margin-right: 6px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}

@@ -676,7 +676,7 @@ export default function Scene({
         ),
       );
       const caption = makeLabel(
-        `${eventPath(event)} · ${n.toLocaleString()} values · ${cols}×${rows}`,
+        `${event.label ?? eventPath(event)} · ${n.toLocaleString()} values · ${cols}×${rows}`,
         { size: 26, color: "#b9b0dd", scale: 1.2 },
       );
       caption.position.set(FIELD_X, fieldY - 0.45, depth / 2 + 0.9);

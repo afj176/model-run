@@ -149,6 +149,11 @@ ComfyUI, lighting up wherever the trace carries the data.
   per-call deltas, and every limitation recorded with the trace. It is built
   in the browser from the trace alone, so it works identically in ComfyUI,
   contains no scripts, and prints cleanly.
+- **Toolbar.** Tensor offers Attention and Layer outputs for text models (an
+  attention probe or a module capture of the first 32 numbered components, or
+  the components ticked in Layer Stack), and Denoising latents for diffusion
+  pipelines; Layer lists decoder layers for text models and block nodes for
+  diffusion and ComfyUI traces, where choosing one selects it.
 - **Run View stage.** The 3D Model view is now a model map on the same dark
   stage as the exploration table: one slab per block or step, tinted by its
   captured RMS and carrying a strip of its first retained values, with the
