@@ -235,6 +235,14 @@ class Application:
         attach_to = request.get("attach_to")
         if ablate and not isinstance(attach_to, str):
             raise ValueError("Capture attention for this prompt before ablating heads")
+        patching = request.get("patch")
+        if patching not in (None, "last", "all"):
+            raise ValueError("patch must be last or all")
+        source_prompt = request.get("source_prompt")
+        if patching and (not isinstance(source_prompt, str) or not 1 <= len(source_prompt) <= 8192 or not isinstance(attach_to, str)):
+            raise ValueError("Activation patching needs a source prompt and a target trace to attach to")
+        if patching and ablate:
+            raise ValueError("Choose either ablation or patching")
         def observe():
             item = self._loaded
             if item is None:
@@ -253,10 +261,19 @@ class Application:
                 if not 1 <= ids.shape[1] <= 128:
                     raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
                 inputs = {"input_ids": ids.to(item["device"])}
+                if patching:
+                    source_text = tokenizer.apply_chat_template([{"role": "user", "content": source_prompt}], tokenize=False, add_generation_prompt=True) if mode == "chat" else source_prompt
+                    source_ids = tokenizer(source_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
+                    if not 1 <= source_ids.shape[1] <= 128:
+                        raise ValueError("Use a source prompt of 1 to 128 tokens")
+                    inputs["source_ids"] = source_ids.to(item["device"])
                 attention = request.get("attention", False)
                 if type(attention) is not bool:
                     raise ValueError("attention must be boolean")
-                if ablate:
+                if patching:
+                    operation = "patch_layers"
+                    options = {"positions": patching}
+                elif ablate:
                     operation = "ablate_heads"
                     options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
                                "heads": [bounded_int(request.get("head", 0), 0, 1024, "head")] if ablate == "head" else None}
@@ -264,7 +281,7 @@ class Application:
                     operation = "probe_attention" if attention else "next_token"
                     options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
                                "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
-                if not paths and not attention and not ablate:
+                if not paths and not attention and not ablate and not patching:
                     paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
                 def decorate(output, trace):
                     trace["input_mode"] = mode
@@ -278,6 +295,11 @@ class Application:
                         for entry in [trace["baseline"], *trace["heads"]]:
                             for token in entry["top_tokens"]:
                                 token["text"] = tokenizer.decode([token["token_id"]])
+                    if trace.get("kind") == "activation_patching":
+                        for entry in [trace["source_run"], trace["target_run"], *trace["layers"]]:
+                            for token in entry["top_tokens"]:
+                                token["text"] = tokenizer.decode([token["token_id"]])
+                        trace["source_run"]["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in inputs["source_ids"][0].tolist()]
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
             else:
                 if ablate:
@@ -329,6 +351,8 @@ class Application:
             trace = self.host.take_trace()
             if trace is not None and trace.get("kind") == "head_ablation":
                 self._attach_ablation(attach_to, trace)
+            elif trace is not None and trace.get("kind") == "activation_patching":
+                self._attach_patching(attach_to, trace)
             elif trace is not None:
                 trace["model_name"] = item["name"]
                 trace["structure"] = self._tree
@@ -336,6 +360,19 @@ class Application:
             if state["status"] == "failed":
                 raise RuntimeError(state["error"])
         return self._start("observe", observe)
+
+    def _attach_patching(self, attach_to, result):
+        """Store an activation-patching result on the target trace it was measured against."""
+        target = self.trace(attach_to)
+        if target.get("kind") not in ("attention_capture", "pytorch_module_capture"):
+            raise ValueError("Patching attaches to a text capture")
+        if target.get("input", {}).get("token_count") != result["target_run"]["token_count"]:
+            raise ValueError("The target prompt differs from trace B; rerun B first")
+        target["patching"] = {key: result[key] for key in ("method", "positions", "layer_count", "source_run", "target_run", "layers", "limitations")}
+        with self._lock:
+            record = next((t for t in self._traces if t["id"] == attach_to), None)
+            name = record["name"] if record else "Capture"
+        self.publish(target, name, replace_id=attach_to)
 
     def _attach_ablation(self, attach_to, result):
         """Merge an ablation result into the attention trace it was measured against."""

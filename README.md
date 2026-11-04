@@ -178,6 +178,16 @@ ComfyUI, lighting up wherever the trace carries the data.
   heads of the shared layer moved most (over the shared block when shapes
   differ), both last-token attention strips, and per-layer RMS of the retained
   prefixes.
+- **Activation patching.** With two text captures paired in Compare, "Patch
+  A → B" copies A's residual stream into B's forward pass at the last position
+  (or every position when the prompts tokenise to the same length), one decoder
+  layer at a time, and records B's next-token distribution each time: the
+  probability of A's answer, how much of the gap to A's own probability the
+  patch recovers, whether B's top token flips to A's answer, and the KL shift.
+  The result attaches to trace B as a new revision and appears in Compare as a
+  per-layer track and in the report. This is a causal test of where the answer
+  is carried; each layer is patched on its own and later positions still see
+  the target prompt.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

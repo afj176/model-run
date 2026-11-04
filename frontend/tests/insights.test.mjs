@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  patchStory,
   compareOverlap,
   headReactions,
   layerReactions,
@@ -406,4 +407,55 @@ test("layerReactions, lensDivergence and promptCompareStory read both traces", (
     /Layer 1's attention reacted most: entropy down 0.80 bits/,
   );
   assert.equal(promptCompareStory(traceA, null), null);
+});
+
+test("patchStory reports flips and the strongest layer", () => {
+  const block = {
+    positions: "last",
+    source_run: {
+      top_tokens: [{ token_id: 1, text: " Paris", probability: 0.66 }],
+    },
+    target_run: {
+      top_tokens: [{ token_id: 2, text: " Berlin", probability: 0.48 }],
+      source_answer_probability: 0.02,
+      target_answer_probability: 0.48,
+    },
+    layers: [
+      {
+        layer: 0,
+        recovery: 0.05,
+        source_answer_probability: 0.05,
+        top_is_source: false,
+        top_tokens: [{ token_id: 2 }],
+      },
+      {
+        layer: 1,
+        recovery: 0.9,
+        source_answer_probability: 0.6,
+        top_is_source: true,
+        top_tokens: [{ token_id: 1 }],
+      },
+      {
+        layer: 2,
+        recovery: 0.4,
+        source_answer_probability: 0.28,
+        top_is_source: false,
+        top_tokens: [{ token_id: 2 }],
+      },
+    ],
+  };
+  const story = patchStory(block);
+  assert.equal(story.best.layer, 1);
+  assert.deepEqual(story.flips, [1]);
+  assert.match(story.text, /flips the answer to “␣Paris” at layer 1/);
+  assert.match(story.text, /recovers 90% of the gap/);
+  const same = patchStory({
+    ...block,
+    target_run: {
+      ...block.target_run,
+      top_tokens: block.source_run.top_tokens,
+    },
+  });
+  assert.match(same.text, /already answer/);
+  assert.equal(patchStory(null), null);
 });

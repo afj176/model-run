@@ -2,6 +2,7 @@
  * from the recorded trace; heatmaps are drawn from recorded values. */
 import {
   ablationStory,
+  patchStory,
   activationStats,
   attentionHeadProfile,
   callDeltas,
@@ -237,13 +238,11 @@ function predictionSection(trace) {
           ? ` It first surfaced at ${story.firstLabel}, lost the lead, and held it from ${story.settledLabel} to the output.`
           : ` It first became the top guess at ${story.settledLabel} of ${story.layersTotal - 1} and held through to the output.`;
   let body = `<p>${esc(text)}${Number.isFinite(trace.output.entropy_bits) ? ` <span class="muted">${num(trace.output.entropy_bits, 2)} bits of uncertainty.</span>` : ""}</p>${bars(
-    top
-      .slice(0, 5)
-      .map((t) => ({
-        label: `“${tokenText(t.text)}”`,
-        value: t.probability,
-        text: pct(t.probability),
-      })),
+    top.slice(0, 5).map((t) => ({
+      label: `“${tokenText(t.text)}”`,
+      value: t.probability,
+      text: pct(t.probability),
+    })),
     { max: 1 },
   )}`;
   const lens = trace.logit_lens?.layers;
@@ -378,6 +377,7 @@ export function buildReport(trace, { name = "", generated = new Date() } = {}) {
     );
   if (trace.kind === "attention_capture") body += attentionSections(trace);
   body += predictionSection(trace);
+  body += patchingSection(trace);
   body += crossAttentionSection(trace);
   if (trace.kind !== "attention_capture") body += activationSections(trace);
   const limitations = [...new Set(trace.limitations || [])];
@@ -425,3 +425,23 @@ table{border-collapse:collapse;font-size:13px;width:100%}th,td{text-align:left;p
 .preview{max-height:260px;border-radius:8px}.plain-list{margin:0;padding-left:18px;font-size:13px;color:#2f2a55}footer{margin-top:20px;font-size:12px;color:var(--muted)}
 @media print{section{break-inside:avoid}body{background:#fff}}
 `;
+
+function patchingSection(trace) {
+  const block = trace.patching;
+  const story = patchStory(block);
+  if (!story) return "";
+  const rows = block.layers
+    .map(
+      (l) =>
+        `<tr class="${l.top_is_source ? "flip" : ""}"><td>L${l.layer}</td><td>“${esc(tokenText(l.top_tokens[0]?.text))}” ${pct(l.top_tokens[0]?.probability)}</td><td>${pct(l.source_answer_probability)}</td><td>${pct(l.recovery)}</td><td>${num(l.kl_bits, 2)}</td></tr>`,
+    )
+    .join("");
+  const body = `<p>${esc(story.text)}</p><p class="muted">Source prompt: ${esc(
+    (block.source_run.tokens || []).map((t) => t.text).join(""),
+  )} · source answer “${esc(tokenText(story.source.text))}” ${pct(story.source.probability)} · target answer “${esc(tokenText(story.target.text))}” ${pct(story.target.probability)} · patched at the ${block.positions === "all" ? "same positions" : "last position"}</p><table><tr><th>Layer</th><th>Top token after patch</th><th>P(source answer)</th><th>Recovery</th><th>KL bits</th></tr>${rows}</table>`;
+  return section(
+    "Which layer carries the source answer",
+    body,
+    block.limitations?.join(" "),
+  );
+}

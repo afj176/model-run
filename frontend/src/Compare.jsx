@@ -9,6 +9,7 @@ import {
   layerReactions,
   lensDivergence,
   layerOf,
+  patchStory,
   pct,
   promptCompareStory,
   promptFromTokens,
@@ -37,6 +38,7 @@ export default function Compare({
   busy = false,
   canRun = false,
   onRunVariant,
+  onRunPatch,
   fallbackPrompt = "",
 }) {
   const [otherId, setOtherId] = useState("");
@@ -57,6 +59,7 @@ export default function Compare({
   useEffect(() => {
     if (pairedId) setOtherId(pairedId);
   }, [pairedId]);
+  const revisionB = (traces || []).find((t) => t.id === otherId)?.revision ?? 0;
   useEffect(() => {
     if (!otherId) {
       setTraceB(null);
@@ -70,7 +73,27 @@ export default function Compare({
     return () => {
       alive = false;
     };
-  }, [otherId]);
+  }, [otherId, revisionB]);
+  const promptOf = (t) =>
+    t?.tokens && (t.input_mode || "raw") === "raw"
+      ? promptFromTokens(t.tokens)
+      : "";
+  const patching = traceB?.patching || null;
+  const patchStoryData = useMemo(() => patchStory(patching), [patching]);
+  const patchSourceMatches =
+    patching &&
+    traceA?.tokens &&
+    Array.isArray(patching.source_run.tokens) &&
+    patching.source_run.tokens.length === traceA.tokens.length &&
+    patching.source_run.tokens.every((t, i) => t.id === traceA.tokens[i].id);
+  const canPatch =
+    Boolean(onRunPatch) &&
+    canRun &&
+    traceA?.tokens &&
+    traceB?.tokens &&
+    traceB.kind !== "diffusion_step_capture" &&
+    promptOf(traceA) &&
+    promptOf(traceB);
   const attention =
     traceA?.kind === "attention_capture" &&
     traceB?.kind === "attention_capture";
@@ -464,6 +487,97 @@ export default function Compare({
               ? "The two answers form the same way at every layer."
               : `They part at ${lens.firstLabel}${lens.lastDisagreement !== null && lens.lastDisagreement !== lens.firstDisagreement ? ` and last differ at ${traceA.logit_lens.layers[lens.lastDisagreement].label}` : ""}.`}
           </p>
+        </div>
+      )}
+      {traceB && (canPatch || patching) && (
+        <div className="compare-card wide">
+          <h3>
+            Which layer carries A's answer{" "}
+            <small className="muted">activation patching, A → B</small>
+          </h3>
+          {patching && patchSourceMatches && patchStoryData ? (
+            <>
+              <p className="compare-story">
+                <Lightbulb size={16} weight="duotone" /> {patchStoryData.text}
+              </p>
+              <div className="patch-track" role="list">
+                {patching.layers.map((l) => (
+                  <span
+                    key={l.layer}
+                    role="listitem"
+                    className={`${l.top_is_source ? "flip" : ""} ${l.layer === patchStoryData.best.layer ? "best" : ""}`}
+                    style={{
+                      "--r": Math.max(0, Math.min(1, l.recovery)),
+                    }}
+                    title={`Layer ${l.layer}: “${tokenText(patchStoryData.source.text)}” ${pct(l.source_answer_probability)} (recovery ${pct(l.recovery)}) · top “${tokenText(l.top_tokens[0]?.text)}” ${pct(l.top_tokens[0]?.probability)} · ${l.kl_bits.toFixed(2)} bits`}
+                  >
+                    <i />
+                    <small>{l.layer}</small>
+                  </span>
+                ))}
+              </div>
+              <p className="micro">
+                Bar height is how much of the gap between B's and A's
+                probability of “{tokenText(patchStoryData.source.text)}” the
+                patch at that layer restores; pink bars flip B's top token to
+                A's answer. Patched at the{" "}
+                {patching.positions === "all"
+                  ? "same positions"
+                  : "last position"}
+                , one layer at a time. {patching.limitations?.[1]}
+              </p>
+            </>
+          ) : patching && !patchSourceMatches ? (
+            <p className="muted">
+              B carries a patching result from a different source prompt. Run
+              patching again to measure against this A.
+            </p>
+          ) : (
+            <p className="muted">
+              Copy A's residual stream into B's forward pass at the last
+              position, one decoder layer at a time, and measure how much of A's
+              answer comes back. This is a causal test of where the answer is
+              carried.
+            </p>
+          )}
+          {canPatch && (
+            <div className="compare-patch-actions">
+              <button
+                disabled={busy}
+                onClick={() =>
+                  onRunPatch(
+                    promptOf(traceA),
+                    promptOf(traceB),
+                    traceB.id ?? otherId,
+                    "last",
+                  )
+                }
+              >
+                <Play size={14} weight="fill" />{" "}
+                {busy ? "Running…" : patching ? "Patch again" : "Patch A → B"}
+              </button>
+              {traceA.tokens.length === traceB.tokens.length && (
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    onRunPatch(
+                      promptOf(traceA),
+                      promptOf(traceB),
+                      traceB.id ?? otherId,
+                      "all",
+                    )
+                  }
+                  title="Patch every position (prompts have the same length)"
+                >
+                  Patch all positions
+                </button>
+              )}
+              <span className="micro">
+                One forward pass per layer ({traceB.structure?.nodes ? "" : ""}
+                {patching?.layer_count ?? "all"} layers) on the loaded model.
+              </span>
+            </div>
+          )}
         </div>
       )}
       {traceB && (topA.length || topB.length) > 0 && (

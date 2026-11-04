@@ -669,3 +669,25 @@ export function promptCompareStory(traceA, traceB) {
   }
   return { text: parts.join(" "), diff, lens, layers, heads };
 }
+
+/** Narrative and ranking for an activation-patching sweep attached to the target trace. */
+export function patchStory(block) {
+  const layers = block?.layers;
+  if (!Array.isArray(layers) || !layers.length) return null;
+  const source = block.source_run.top_tokens[0];
+  const target = block.target_run.top_tokens[0];
+  const ranked = [...layers].sort((a, b) => b.recovery - a.recovery);
+  const best = ranked[0];
+  const flips = layers.filter((l) => l.top_is_source).map((l) => l.layer);
+  const sameAnswer = source.token_id === target.token_id;
+  const name = (t) => `\u201c${tokenText(t.text)}\u201d`;
+  let text;
+  if (sameAnswer)
+    text = `Both prompts already answer ${name(source)}; patching moves its probability from ${pct(block.target_run.source_answer_probability)} by at most ${pct(Math.max(...layers.map((l) => l.source_answer_probability)) - block.target_run.source_answer_probability)} (layer ${best.layer}).`;
+  else if (flips.length)
+    text = `Copying A's residual stream into B at the ${block.positions === "all" ? "every position" : "last position"} flips the answer to ${name(source)} at ${flips.length === 1 ? `layer ${flips[0]}` : `${flips.length} layers (first ${Math.min(...flips)}, last ${Math.max(...flips)})`}; layer ${best.layer} recovers ${pct(best.recovery)} of the gap, taking ${name(source)} from ${pct(block.target_run.source_answer_probability)} to ${pct(best.source_answer_probability)}.`;
+  else
+    text = `No single layer flips B's answer to ${name(source)}; the strongest is layer ${best.layer}, which recovers ${pct(best.recovery)} of the gap (${pct(block.target_run.source_answer_probability)} \u2192 ${pct(best.source_answer_probability)}).`;
+  const peak = Math.max(1e-9, ...layers.map((l) => Math.abs(l.recovery)));
+  return { text, ranked, best, flips, peak, sameAnswer, source, target };
+}

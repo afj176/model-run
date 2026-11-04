@@ -117,6 +117,13 @@ class CausalLMAdapter(TorchModuleAdapter):
         trace["adapter_id"] = self.adapter_id
         return trace
 
+    def patch_layers(self, input_ids, source_ids, **limits):
+        from .transformers_capture import capture_activation_patching
+        self._require("module_outputs")
+        trace = self._run(lambda: capture_activation_patching(self.model, source_ids, input_ids, **limits))
+        trace["adapter_id"] = self.adapter_id
+        return trace
+
     def ablate_heads(self, input_ids, layer, heads=None, **limits):
         from .transformers_capture import capture_head_ablation
         self._require("module_outputs")

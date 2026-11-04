@@ -322,3 +322,137 @@ def capture_head_ablation(model, input_ids, layer, heads=None, *, max_tokens=128
             "limitations": ["Zero ablation removes the head's output at every position; it is an intervention, not the model's natural behaviour, and a zeroed head is off-distribution.",
                             "Effects of ablating several heads together are not additive and were not measured.",
                             "kl_bits is the KL divergence from the baseline to the ablated next-token distribution at the last input position."]}
+
+
+_LAYER_PATTERN = r"(?:^|\.)(?:layers|blocks|h|transformer_blocks)\.(\d+)$"
+
+
+def _decoder_layers(model):
+    """Decoder layer modules in index order, found by name; refuses ambiguous trees."""
+    import re
+    found = {}
+    for name, module in model.named_modules():
+        match = re.search(_LAYER_PATTERN, name)
+        if match:
+            index = int(match.group(1))
+            if index in found:
+                raise ValueError("Ambiguous decoder layer naming; activation patching is unavailable")
+            found[index] = module
+    if not found or sorted(found) != list(range(len(found))):
+        raise ValueError("Decoder layers are not contiguous; activation patching is unavailable")
+    return [found[i] for i in range(len(found))]
+
+
+def _hidden_of(output):
+    import torch
+    if isinstance(output, torch.Tensor):
+        return output
+    if isinstance(output, (tuple, list)) and output and isinstance(output[0], torch.Tensor):
+        return output[0]
+    raise ValueError("Decoder layer output is not a hidden-state tensor")
+
+
+def capture_activation_patching(model, source_ids, target_ids, *, layers=None, positions="last", max_tokens=128, top_k=10, control=None):
+    """Copy the source run's residual stream into the target run, one decoder layer at a time.
+
+    For each layer the layer's output hidden state at the patched positions is replaced with the
+    source run's value, the forward continues, and the next-token distribution at the last target
+    position is recorded. ``positions`` is "last" (the final position of each prompt) or "all"
+    (every position; prompts must tokenise to the same length).
+    """
+    import torch
+    if any(module.training for module in model.modules()):
+        raise ValueError("all model modules must already be in evaluation mode")
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 128:
+        raise ValueError("max_tokens must be between 1 and 128")
+    for ids in (source_ids, target_ids):
+        if not isinstance(ids, torch.Tensor) or ids.ndim != 2 or ids.shape[0] != 1 or ids.dtype not in (torch.int32, torch.int64) or not 1 <= ids.shape[1] <= max_tokens:
+            raise ValueError("input_ids must be a bounded batch of one integer token sequence")
+    if positions not in ("last", "all"):
+        raise ValueError("positions must be last or all")
+    if positions == "all" and source_ids.shape[1] != target_ids.shape[1]:
+        raise ValueError("Patching every position needs prompts of the same token length")
+    if type(top_k) is not int or not 1 <= top_k <= 100:
+        raise ValueError("top_k must be between 1 and 100")
+    modules = _decoder_layers(model)
+    if layers is None:
+        layers = list(range(len(modules)))
+    if not isinstance(layers, list) or not layers or len(layers) != len(set(layers)) or any(type(l) is not int or not 0 <= l < len(modules) for l in layers):
+        raise ValueError("layers must list distinct decoder layer indices")
+    if len(layers) > 256:
+        raise ValueError("At most 256 layers can be patched per request")
+    source_slice = slice(None) if positions == "all" else slice(source_ids.shape[1] - 1, source_ids.shape[1])
+    target_slice = slice(None) if positions == "all" else slice(target_ids.shape[1] - 1, target_ids.shape[1])
+    if control is not None:
+        control.checkpoint("patching_start")
+
+    def forward(ids):
+        with torch.inference_mode():
+            logits = model(input_ids=ids, use_cache=False).logits
+        if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
+            raise ValueError("Model did not return causal language model logits")
+        last = logits[0, -1].detach().float().cpu()
+        if not torch.isfinite(last).all().item():
+            raise ValueError("Model returned non-finite logits")
+        return last
+
+    # Source run: keep each layer's output at the patched positions.
+    stored = {}
+    handles = []
+    try:
+        for index, module in enumerate(modules):
+            def keep(_module, _args, output, index=index):
+                stored[index] = _hidden_of(output)[:, source_slice].detach().clone()
+            handles.append(module.register_forward_hook(keep))
+        source_probabilities, source = _distribution(forward(source_ids), top_k)
+    finally:
+        for handle in handles:
+            handle.remove()
+    if len(stored) != len(modules):
+        raise ValueError("Some decoder layers produced no hidden state during the source run")
+    target_probabilities, target = _distribution(forward(target_ids), top_k)
+    source_top = source["top_tokens"][0]["token_id"]
+    target_top = target["top_tokens"][0]["token_id"]
+    base_source = float(target_probabilities[source_top].item())
+    base_target = float(target_probabilities[target_top].item())
+    source_own = float(source_probabilities[source_top].item())
+    target_log = torch.log(target_probabilities.clamp_min(1e-30))
+    results = []
+    for position, layer in enumerate(layers):
+        if control is not None:
+            control.check()
+        replacement = stored[layer]
+
+        def patch_output(_module, _args, output, replacement=replacement):
+            hidden = _hidden_of(output)
+            patched = hidden.clone()
+            patched[:, target_slice] = replacement.to(device=hidden.device, dtype=hidden.dtype)
+            if isinstance(output, torch.Tensor):
+                return patched
+            return (patched, *tuple(output)[1:])
+
+        handle = modules[layer].register_forward_hook(patch_output)
+        try:
+            probabilities, patched = _distribution(forward(target_ids), top_k)
+        finally:
+            handle.remove()
+        kl = float((target_probabilities * (target_log - torch.log(probabilities.clamp_min(1e-30)))).sum().item())
+        after_source = float(probabilities[source_top].item())
+        after_target = float(probabilities[target_top].item())
+        span = source_own - base_source
+        results.append({"layer": layer, **patched, "kl_bits": max(0.0, kl / math.log(2)),
+                        "source_answer_probability": after_source, "target_answer_probability": after_target,
+                        "recovery": (after_source - base_source) / span if abs(span) > 1e-9 else 0.0,
+                        "top_is_source": patched["top_tokens"][0]["token_id"] == source_top})
+        if control is not None:
+            control.checkpoint(f"patching:layer:{layer}", completed=position + 1, total=len(layers))
+    return {"schema_version": "1.0", "kind": "activation_patching", "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
+            "torch_version": str(torch.__version__), "method": "residual_stream_patch", "positions": positions,
+            "layer_count": len(modules), "source_run": {**source, "token_count": int(source_ids.shape[1])},
+            "target_run": {**target, "token_count": int(target_ids.shape[1]),
+                       "source_answer_probability": base_source, "target_answer_probability": base_target},
+            "layers": results,
+            "limitations": ["Each layer is patched on its own; effects of patching several layers together are not measured.",
+                            "The patched state is the layer's output residual stream at the chosen positions; attention from later positions still sees the target prompt.",
+                            "recovery is the fraction of the gap between the target's and the source's own probability of the source answer that the patch restores; it can exceed 1 or go negative.",
+                            "kl_bits is the KL divergence from the target baseline to the patched next-token distribution."]}

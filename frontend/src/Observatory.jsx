@@ -88,6 +88,10 @@ export function App() {
   const [valueIndex, setValueIndex] = useState(null);
   const [pairB, setPairB] = useState("");
   const variantOf = useRef("");
+  const pairBRef = useRef("");
+  useEffect(() => {
+    pairBRef.current = pairB;
+  }, [pairB]);
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
     [size, setSize] = useState(256),
@@ -343,6 +347,8 @@ export function App() {
             // A variant-prompt run: keep A open and pair the new trace as B.
             variantOf.current = "";
             setPairB(latest.id);
+          } else if (!sameRun && latest.id === pairBRef.current) {
+            // Trace B was republished (patching attached): Compare refetches it; keep A open.
           } else if (!sameRun) {
             await openTrace(latest.id);
           } else if (selectedTrace.current === latest.id) {
@@ -430,6 +436,20 @@ export function App() {
       }).catch((e) => {
         variantOf.current = "";
         throw e;
+      }),
+    );
+  }
+  function runPatch(sourcePrompt, targetPrompt, targetId, positions = "last") {
+    if (!sourcePrompt || !targetPrompt || !targetId) return;
+    setPlaying(false);
+    action(() =>
+      api("run", {
+        prompt: targetPrompt,
+        source_prompt: sourcePrompt,
+        input_mode: trace?.input_mode || inputMode,
+        modules: [],
+        patch: positions,
+        attach_to: targetId,
       }),
     );
   }
@@ -680,6 +700,7 @@ export function App() {
             (trace?.model_name ? trace.model_name === state.loaded.name : true)
           }
           onRunVariant={native ? null : runVariant}
+          onRunPatch={native ? null : runPatch}
           fallbackPrompt={prompt}
         />
       ) : view === "matrix" ? (

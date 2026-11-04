@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 MAX_TRACE_BYTES = 16 * 1024 * 1024
-SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation"}
+SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching"}
 
 
 def _unique_pairs(pairs):
@@ -48,6 +48,33 @@ def _validate_cross_attention(section):
                 raise ValueError(f"Invalid cross-attention {key}")
 
 
+def _validate_patching(block):
+    """An activation-patching result attached to a text capture."""
+    def _dist_ok(entry, extra=()):
+        tokens = entry.get("top_tokens") if isinstance(entry, dict) else None
+        return (isinstance(tokens, list) and 1 <= len(tokens) <= 100
+                and all(isinstance(t, dict) and type(t.get("token_id")) is int and type(t.get("probability")) in (int, float) and 0 <= t["probability"] <= 1 for t in tokens)
+                and type(entry.get("entropy_bits")) in (int, float) and math.isfinite(entry["entropy_bits"])
+                and all(type(entry.get(k)) in (int, float) and math.isfinite(entry[k]) for k in extra))
+    if (not isinstance(block, dict) or block.get("method") != "residual_stream_patch" or block.get("positions") not in ("last", "all")
+            or type(block.get("layer_count")) is not int or not 1 <= block["layer_count"] <= 1024
+            or not _dist_ok(block.get("source_run")) or type(block["source_run"].get("token_count")) is not int
+            or not _dist_ok(block.get("target_run"), ("source_answer_probability", "target_answer_probability")) or type(block["target_run"].get("token_count")) is not int
+            or not isinstance(block.get("layers"), list) or not 1 <= len(block["layers"]) <= block["layer_count"]
+            or not isinstance(block.get("limitations"), list)):
+        raise ValueError("Invalid activation patching block")
+    tokens = block["source_run"].get("tokens")
+    if tokens is not None and (not isinstance(tokens, list) or len(tokens) != block["source_run"]["token_count"] or any(not isinstance(t, dict) or type(t.get("id")) is not int for t in tokens)):
+        raise ValueError("Invalid patching source tokens")
+    seen = set()
+    for entry in block["layers"]:
+        if (not _dist_ok(entry, ("kl_bits", "source_answer_probability", "target_answer_probability", "recovery"))
+                or type(entry.get("layer")) is not int or not 0 <= entry["layer"] < block["layer_count"] or entry["layer"] in seen
+                or entry["kl_bits"] < 0 or type(entry.get("top_is_source")) is not bool):
+            raise ValueError("Invalid activation patching layer")
+        seen.add(entry["layer"])
+
+
 def _validate_ablation(ablation, layer):
     """A zero-ablation result: a baseline next-token distribution and one entry per ablated head."""
     def _tokens_ok(entry):
@@ -84,6 +111,10 @@ def _validate(trace):
         if trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture"):
             raise ValueError("Cross-attention maps belong to denoiser traces")
         _validate_cross_attention(trace["cross_attention"])
+    if "patching" in trace:
+        if trace["kind"] not in ("pytorch_module_capture", "attention_capture"):
+            raise ValueError("Activation patching belongs to text captures")
+        _validate_patching(trace["patching"])
     structure = trace.get("structure")
     if structure is not None:
         if not isinstance(structure, dict) or not isinstance(structure.get("nodes"), list) or len(structure["nodes"]) > 10000:
@@ -166,6 +197,8 @@ def _validate(trace):
                 raise ValueError("Invalid attention layer summaries")
     elif trace["kind"] == "head_ablation":
         _validate_ablation(trace, trace.get("layer"))
+    elif trace["kind"] == "activation_patching":
+        _validate_patching(trace)
     elif trace["kind"] == "pytorch_module_capture":
         events, capture = trace.get("events"), trace.get("capture")
         if not isinstance(events, list) or len(events) > 1024 or not isinstance(capture, dict):

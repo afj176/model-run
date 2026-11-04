@@ -2330,3 +2330,73 @@ main {
     opacity: 1;
   }
 }
+
+/* ---- Activation patching ---- */
+.patch-track {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 96px;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid #d9d0e8;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.patch-track span {
+  --r: 0;
+  flex: 1 0 18px;
+  max-width: 40px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+}
+.patch-track span i {
+  display: block;
+  width: 100%;
+  height: calc(4px + var(--r) * 70px);
+  border-radius: 4px 4px 0 0;
+  background: #c9c1e6;
+}
+.patch-track span.flip i {
+  background: linear-gradient(180deg, #ff6fae, #ff3d8f);
+}
+.patch-track span.best i {
+  outline: 2px solid #3f31a3;
+  outline-offset: 1px;
+}
+.patch-track span small {
+  font-size: 9px;
+  color: #6b6489;
+}
+.compare-patch-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.compare-patch-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #c9bdf0;
+  background: #fff;
+  color: #3f31a3;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.compare-patch-actions button:first-child {
+  background: #3f31a3;
+  color: #fff;
+  border-color: #3f31a3;
+}
+.compare-patch-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

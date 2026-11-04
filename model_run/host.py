@@ -70,7 +70,7 @@ class ModelHost:
             raise ValueError("module_paths must be a list or tuple")
         paths = list(module_paths)
         methods = {"module_outputs": "capture", "next_token": "next_token",
-                   "probe_attention": "probe_attention", "ablate_heads": "ablate_heads", "denoising_steps": "capture_steps"}
+                   "probe_attention": "probe_attention", "ablate_heads": "ablate_heads", "patch_layers": "patch_layers", "denoising_steps": "capture_steps"}
         if operation not in methods:
             raise UnsupportedCapability("Unknown observation operation")
         with self._lock:
@@ -81,12 +81,14 @@ class ModelHost:
             if item["state"] != "ready":
                 raise RuntimeError("Model resource is not ready")
             adapter = item["adapter"]
-            feature = "module_outputs" if operation in ("probe_attention", "ablate_heads") else operation
+            feature = "module_outputs" if operation in ("probe_attention", "ablate_heads", "patch_layers") else operation
             negotiation = adapter.negotiate([feature])
             if not negotiation["accepted"] or not callable(getattr(adapter, methods[operation], None)):
                 raise UnsupportedCapability(f"Operation unavailable: {operation}")
             if operation in ("next_token", "probe_attention", "ablate_heads") and set(inputs) != {"input_ids"}:
                 raise ValueError("Language-model input requires exactly input_ids")
+            if operation == "patch_layers" and set(inputs) != {"input_ids", "source_ids"}:
+                raise ValueError("Activation patching requires input_ids and source_ids")
             def observe(control):
                 if operation == "module_outputs":
                     output, trace = adapter.capture(inputs, paths, control=control, **options)
@@ -97,6 +99,9 @@ class ModelHost:
                     output = None
                 elif operation == "ablate_heads":
                     trace = adapter.ablate_heads(inputs["input_ids"], control=control, **options)
+                    output = None
+                elif operation == "patch_layers":
+                    trace = adapter.patch_layers(inputs["input_ids"], inputs["source_ids"], control=control, **options)
                     output = None
                 else:
                     output, trace = adapter.capture_steps(inputs, control=control, **options)
