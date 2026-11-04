@@ -217,7 +217,17 @@ ComfyUI, lighting up wherever the trace carries the data.
   put it on top and where it stayed on top), and the measured attention from
   the generating position to every earlier token, prompt and generated alike,
   averaged over all layers and heads, with the first-token attention sink
-  called out. Greedy only: no sampling, repetition control or chat loop.
+  called out. Greedy only: no sampling or repetition control. Decoding uses
+  the key-value cache, so 160 tokens take about ten seconds on a 0.6B model;
+  the response length is a capture setting (32 to 256 tokens). With the
+  tokenizer chat template selected, a reasoning model's own `<think>` block is
+  shown as a collapsible "thinking" segment with its confidence summarised
+  separately from the answer, and "Closest calls" lists the tokens where the
+  runner-up nearly won.
+- **Video latents.** Cross-attention maps understand 5-D video latents
+  (frames × height × width, temporal patch 1, 2 or 4): maps are recorded per
+  frame, up to 16 evenly chosen frames, and the panel has a frame picker.
+  Module and step captures already worked for video denoisers.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

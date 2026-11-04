@@ -10,9 +10,11 @@ from model_run.cross_attention import image_grid, pooled_grid, measure, MAX_MAP_
 
 class GridTests(unittest.TestCase):
     def test_image_grid_and_pooling(self):
-        self.assertEqual(image_grid(16, [1, 4, 4, 4]), (4, 4, 1))
-        self.assertEqual(image_grid(4, [1, 4, 4, 4]), (2, 2, 2))
-        self.assertEqual(image_grid(1024, [1, 16, 64, 64]), (32, 32, 2))
+        self.assertEqual(image_grid(16, [1, 4, 4, 4]), (4, 4, 1, 1))
+        self.assertEqual(image_grid(4, [1, 4, 4, 4]), (2, 2, 2, 1))
+        self.assertEqual(image_grid(1024, [1, 16, 64, 64]), (32, 32, 2, 1))
+        self.assertEqual(image_grid(3 * 16, [1, 16, 3, 8, 8]), (4, 4, 2, 3))  # video: 3 frames of 4×4 tokens
+        self.assertEqual(image_grid(2 * 16, [1, 16, 4, 8, 8]), (4, 4, 2, 2))  # temporal patch 2
         self.assertIsNone(image_grid(17, [1, 4, 4, 4]))
         self.assertIsNone(image_grid(16, [1, 4, 16]))
         self.assertEqual(pooled_grid(64, 64, 77, 32), (32, 32))
@@ -75,3 +77,18 @@ class MeasureTests(unittest.TestCase):
         self.assertIn("unavailable", measure(q, k, heads=3, text_tokens=5, latent_shape=[1, 4, 4, 4]))
         self.assertIn("unavailable", measure(q, q, heads=2, text_tokens=20, latent_shape=[1, 4, 4, 4]))
         with self.assertRaises(ValueError): measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], max_grid=0)
+
+
+@unittest.skipIf(torch is None, "optional torch dependency unavailable")
+class VideoMapTests(unittest.TestCase):
+    def test_video_latents_record_per_frame_maps(self):
+        torch.manual_seed(3)
+        q = torch.randn(1, 2, 3 * 16, 8)
+        k = torch.randn(1, 2, 5, 8)
+        result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 16, 3, 8, 8], max_grid=4)
+        self.assertEqual((result["frames"], result["grid"], result["source_grid"]), (3, [4, 4], [4, 4]))
+        self.assertEqual(len(result["maps"][0]), 3 * 16)
+        self.assertEqual(result["frame_indices"], [0, 1, 2])
+        from model_run.trace_store import _validate_cross_attention
+        _validate_cross_attention({"method": "measured_attention_probabilities", "source": "fixture", "selection": "x", "grid_limit": 4, "limitations": [],
+                                   "events": [{"denoiser_call": 0, "block": "x", "batch": "b", **result}]})

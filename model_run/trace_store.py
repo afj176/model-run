@@ -37,7 +37,10 @@ def _validate_cross_attention(section):
                 or not isinstance(event.get("source_grid"), list) or len(event["source_grid"]) != 2 or any(type(n) is not int or n < 1 for n in event["source_grid"])
                 or type(event.get("heads")) is not int or not isinstance(event.get("batch"), str) or not isinstance(event.get("block"), str)):
             raise ValueError("Invalid cross-attention event")
-        cells = event["grid"][0] * event["grid"][1]
+        frames = event.get("frames", 1)
+        if type(frames) is not int or not 1 <= frames <= 64:
+            raise ValueError("Invalid cross-attention frame count")
+        cells = frames * event["grid"][0] * event["grid"][1]
         maps = event.get("maps")
         if (not isinstance(maps, list) or len(maps) != event["text_tokens"] or event["text_tokens"] * cells > 262144
                 or any(not isinstance(row, list) or len(row) != cells or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in row) for row in maps)):
@@ -56,7 +59,7 @@ def _validate_generation(trace):
     steps = trace.get("steps")
     if (trace.get("decoding") != "greedy" or trace.get("stopped") not in ("max_new_tokens", "eos", "context_limit")
             or not isinstance(trace.get("input"), dict) or type(trace["input"].get("token_count")) is not int
-            or not isinstance(steps, list) or not 1 <= len(steps) <= 64 or type(trace.get("provenance")) is not bool):
+            or not isinstance(steps, list) or not 1 <= len(steps) <= 256 or type(trace.get("provenance")) is not bool):
         raise ValueError("Invalid generation capture")
     for index, step in enumerate(steps):
         if (not isinstance(step, dict) or step.get("index") != index or type(step.get("position")) is not int or step["position"] < 1

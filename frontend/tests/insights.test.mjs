@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  responseSegments,
   responseStory,
   layerNodePath,
   diffusionCompareStory,
@@ -558,4 +559,35 @@ test("responseStory summarises confidence and where tokens settled", () => {
   assert.match(story.text, /chose to stop/);
   assert.equal(story.leastConfident.index, 1);
   assert.equal(responseStory({ steps: [] }), null);
+});
+
+test("responseSegments finds the thinking span and the story reports it", () => {
+  const mk = (text, p = 0.5) => ({
+    text,
+    probability: p,
+    entropy_bits: 1,
+    top_tokens: [
+      { text, probability: p },
+      { text: "x", probability: p - 0.05 },
+    ],
+  });
+  const steps = [
+    mk("<think>"),
+    mk("hmm", 0.4),
+    mk("ok", 0.6),
+    mk("</think>"),
+    mk(" Paris", 0.9),
+  ].map((s, i) => ({ ...s, index: i }));
+  const seg = responseSegments(steps);
+  assert.deepEqual(seg, { thinking: [1, 3], closed: true, answerStart: 4 });
+  assert.equal(responseSegments([mk("a")]).thinking, null);
+  const open = responseSegments([mk("<think>"), mk("a")]);
+  assert.deepEqual([open.thinking, open.closed], [[1, 2], false]);
+  const story = responseStory({
+    steps,
+    stopped: "eos",
+    response: "<think>hmmok</think> Paris",
+  });
+  assert.match(story.text, /thought for 2 tokens before answering with 1/);
+  assert.equal(story.closeCalls.length, 4);
 });

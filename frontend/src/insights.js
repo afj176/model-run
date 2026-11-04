@@ -839,6 +839,37 @@ export function responseStory(trace) {
       `${settled.length === steps.length ? "Every token" : `${settled.length} of ${steps.length} tokens`} settled by the output; the typical token was decided at ${median === 0 ? "the embeddings" : `layer ${median - 1} of ${layerCount - 1}`}${late ? `, and ${late} only at the final layer` : ""}.`,
     );
   }
+  const segments = responseSegments(steps);
+  if (segments.thinking) {
+    const [a, b] = segments.thinking;
+    const think = steps.slice(a, b);
+    const answer = segments.closed ? steps.slice(segments.answerStart) : [];
+    const mean = (list) =>
+      list.length
+        ? list.reduce((x, s) => x + s.probability, 0) / list.length
+        : null;
+    parts.push(
+      segments.closed
+        ? `It thought for ${think.length} tokens before answering${answer.length ? ` with ${answer.length}` : ""}; thinking tokens averaged ${pct(mean(think))} confidence${answer.length ? ` and the answer ${pct(mean(answer))}` : ""}.`
+        : `It was still thinking when the length limit hit (${think.length} thinking tokens); raise the response length to see the answer.`,
+    );
+  }
+  // Close calls: where the runner-up nearly won.
+  const closeCalls = steps
+    .map((s) => ({
+      index: s.index,
+      text: s.text,
+      probability: s.probability,
+      runnerUp: s.top_tokens?.[1] ?? null,
+    }))
+    .filter((c) => c.runnerUp && c.probability - c.runnerUp.probability < 0.1)
+    .sort(
+      (x, y) =>
+        x.probability -
+        x.runnerUp.probability -
+        (y.probability - y.runnerUp.probability),
+    )
+    .slice(0, 4);
   if (trace.stopped === "eos") parts.push("It chose to stop.");
   else if (trace.stopped === "context_limit")
     parts.push("It hit the context limit.");
@@ -848,5 +879,20 @@ export function responseStory(trace) {
     mostConfident: most,
     leastConfident: least,
     settledCount: settled.length,
+    closeCalls,
+    segments,
+  };
+}
+
+/** Thinking span marked by the model's own <think> … </think> tokens, as step indices. */
+export function responseSegments(steps = []) {
+  const isTag = (s, tag) => (s?.text ?? "").trim() === tag;
+  const open = steps.findIndex((s) => isTag(s, "<think>"));
+  if (open < 0) return { thinking: null, closed: true };
+  const close = steps.findIndex((s, i) => i > open && isTag(s, "</think>"));
+  return {
+    thinking: [open + 1, close < 0 ? steps.length : close],
+    closed: close >= 0,
+    answerStart: close < 0 ? null : close + 1,
   };
 }

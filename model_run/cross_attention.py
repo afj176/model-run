@@ -16,15 +16,22 @@ LIMITATIONS = ["Maps are head-averaged attention probabilities from the exact qu
                "Attention weights show where text is read, not what caused a pixel; they are not a causal attribution."]
 
 
+MAX_FRAMES = 16
+
+
 def image_grid(token_count, latent_shape):
-    """Infer (rows, cols, factor) of the image token grid from a 4-D latent shape."""
-    if not isinstance(latent_shape, (list, tuple)) or len(latent_shape) != 4:
+    """Infer (rows, cols, factor, frames) of the token grid from a 4-D image or 5-D video latent shape."""
+    if not isinstance(latent_shape, (list, tuple)) or len(latent_shape) not in (4, 5):
         return None
-    height, width = int(latent_shape[2]), int(latent_shape[3])
-    for factor in (1, 2, 4, 8, 16, 32):
-        rows, cols = -(-height // factor), -(-width // factor)
-        if rows * cols == token_count:
-            return rows, cols, factor
+    height, width = int(latent_shape[-2]), int(latent_shape[-1])
+    frames_in = int(latent_shape[2]) if len(latent_shape) == 5 else 1
+    temporal = (1, 2, 4) if len(latent_shape) == 5 else (1,)
+    for ft in temporal:
+        frames = -(-frames_in // ft)
+        for factor in (1, 2, 4, 8, 16, 32):
+            rows, cols = -(-height // factor), -(-width // factor)
+            if frames * rows * cols == token_count:
+                return rows, cols, factor, frames
     return None
 
 
@@ -81,7 +88,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     grid = image_grid(image_tokens, latent_shape)
     if grid is None:
         return {"unavailable": f"{image_tokens} image tokens do not map onto the latent grid {list(latent_shape)}"}
-    rows, cols, factor = grid
+    rows, cols, factor, frames = grid
     scale = float(scale) if scale is not None else dim ** -0.5
     qb = q[batch_index, :, first_image_query:].detach()
     kb = k[batch_index].detach()
@@ -116,15 +123,22 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         mean = (total / heads).cpu()  # [image_tokens, text_tokens]
         if not torch.isfinite(mean).all().item():
             return {"unavailable": "Attention probabilities were not finite"}
-        maps = mean.transpose(0, 1).reshape(text_tokens, 1, rows, cols)
-        out_rows, out_cols = pooled_grid(rows, cols, text_tokens, max_grid)
+        maps = mean.transpose(0, 1).reshape(text_tokens, frames, rows, cols)
+        frame_indices = list(range(frames))
+        if frames > MAX_FRAMES:
+            # Keep an even subset of frames so the record stays bounded.
+            frame_indices = [round(i * (frames - 1) / (MAX_FRAMES - 1)) for i in range(MAX_FRAMES)]
+            maps = maps[:, frame_indices]
+        kept = len(frame_indices)
+        out_rows, out_cols = pooled_grid(rows, cols, text_tokens * kept, max_grid)
         if (out_rows, out_cols) != (rows, cols):
-            maps = torch.nn.functional.adaptive_avg_pool2d(maps, (out_rows, out_cols))
-        maps = maps.reshape(text_tokens, out_rows * out_cols)
+            maps = torch.nn.functional.adaptive_avg_pool2d(maps.reshape(text_tokens * kept, 1, rows, cols), (out_rows, out_cols)).reshape(text_tokens, kept, out_rows, out_cols)
+        maps = maps.reshape(text_tokens, kept * out_rows * out_cols)
         text_mass = maps.sum(0)
         token_mass = maps.mean(1)
     return {"attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
             "source_grid": [rows, cols], "grid_factor": factor, "grid": [out_rows, out_cols], "scale": scale,
+            "frames": kept, "frame_indices": frame_indices, "source_frames": frames,
             "mask_applied": row_mask is not None,
             "maps": [[round(v, ROUND_DIGITS) for v in row] for row in maps.tolist()],
             "text_mass": [round(v, ROUND_DIGITS) for v in text_mass.tolist()],

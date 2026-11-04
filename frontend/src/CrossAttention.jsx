@@ -7,6 +7,7 @@ export default function CrossAttention({ trace }) {
   const section = trace?.cross_attention;
   const events = section?.events || [];
   const [eventIndex, setEventIndex] = useState(0);
+  const [frame, setFrame] = useState(0);
   const [token, setToken] = useState(null);
   const [overlay, setOverlay] = useState(true);
   const event = events[Math.min(eventIndex, events.length - 1)] || null;
@@ -18,6 +19,7 @@ export default function CrossAttention({ trace }) {
   useEffect(() => {
     setEventIndex(0);
     setToken(null);
+    setFrame(0);
   }, [trace?.cross_attention]);
   if (!section) return null;
   const picked = token ?? story?.ranked[0]?.index ?? 0;
@@ -26,6 +28,12 @@ export default function CrossAttention({ trace }) {
       ? `data:image/png;base64,${trace.preview.base64}`
       : null;
   const label = (i) => (labels?.[i] ? `“${tokenText(labels[i])}”` : `#${i}`);
+  const frames = event?.frames ?? 1;
+  const cells = event ? event.grid[0] * event.grid[1] : 0;
+  const slice = (values) =>
+    frames > 1 && Array.isArray(values)
+      ? values.slice(frame * cells, (frame + 1) * cells)
+      : values;
   const focus = story ? crossAttentionStory(event, labels, picked) : null;
   // Runs of repeated special tokens (padding) collapse into one chip and leave the ranking.
   const isPad = (i) =>
@@ -49,6 +57,27 @@ export default function CrossAttention({ trace }) {
             {event ? `${event.heads} heads averaged` : "no maps recorded"}
           </small>
         </h2>
+        {frames > 1 && (
+          <label className="xattn-call">
+            Frame
+            <select
+              value={frame}
+              onChange={(e) => setFrame(Number(e.target.value))}
+              aria-label="Video frame"
+            >
+              {(event.frame_indices || [...Array(frames).keys()]).map(
+                (source, i) => (
+                  <option key={i} value={i}>
+                    {source}
+                    {event.source_frames && event.source_frames > frames
+                      ? ` of ${event.source_frames}`
+                      : ""}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+        )}
         {events.length > 1 && (
           <label className="xattn-call">
             Denoiser call
@@ -79,7 +108,7 @@ export default function CrossAttention({ trace }) {
           <div className="xattn-body">
             <div className="xattn-map">
               <HeatCanvas
-                values={event.maps[picked]}
+                values={slice(event.maps[picked])}
                 grid={event.grid}
                 image={overlay ? preview : null}
               />
@@ -104,7 +133,7 @@ export default function CrossAttention({ trace }) {
               {event.attention_kind === "joint" && (
                 <>
                   <HeatCanvas
-                    values={event.text_mass}
+                    values={slice(event.text_mass)}
                     grid={event.grid}
                     image={overlay ? preview : null}
                     small

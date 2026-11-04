@@ -239,7 +239,7 @@ class Application:
             raise ValueError("Capture attention for this prompt before ablating heads")
         generate = request.get("generate")
         if generate is not None:
-            generate = bounded_int(generate, 1, 64, "generate")
+            generate = bounded_int(generate, 1, 256, "generate")
         patching = request.get("patch")
         if patching not in (None, "last", "all"):
             raise ValueError("patch must be last or all")

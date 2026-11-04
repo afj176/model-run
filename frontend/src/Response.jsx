@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
-import { pct, responseStory, tokenLabel, tokenText } from "./insights";
+import {
+  pct,
+  responseSegments,
+  responseStory,
+  tokenLabel,
+  tokenText,
+} from "./insights";
 
 /** The model's greedy response and, for each token it wrote, where that token came from. */
 export default function Response({ trace }) {
   const steps = trace?.steps || [];
   const [picked, setPicked] = useState(null);
+  const [showThinking, setShowThinking] = useState(true);
   useEffect(() => {
     setPicked(null);
   }, [trace]);
   const story = useMemo(() => responseStory(trace), [trace]);
+  const segments = useMemo(() => responseSegments(steps), [steps]);
   if (!steps.length) return null;
   const index = picked ?? story.leastConfident?.index ?? 0;
   const step = steps[index];
@@ -28,6 +36,22 @@ export default function Response({ trace }) {
   }
   const lens = step.lens || null;
   const layerCount = lens ? lens.chosen_probability_by_layer.length : 0;
+  const segmentOf = (i) =>
+    segments.thinking && i >= segments.thinking[0] && i < segments.thinking[1]
+      ? "thinking"
+      : "answer";
+  const tokenButton = (s, i) => (
+    <button
+      key={i}
+      role="listitem"
+      className={`response-token ${i === index ? "picked" : ""} ${s.probability < 0.3 ? "unsure" : ""}`}
+      style={{ "--p": s.probability }}
+      title={`token ${i}: “${tokenText(s.text)}” ${pct(s.probability)} · ${s.entropy_bits.toFixed(2)} bits${s.lens?.settled_layer !== undefined && s.lens?.settled_layer !== null ? ` · settled at ${s.lens.settled_layer === 0 ? "the embeddings" : `layer ${s.lens.settled_layer - 1}`}` : ""}`}
+      onClick={() => setPicked(i)}
+    >
+      {s.text === "" ? "∅" : s.text}
+    </button>
+  );
   return (
     <div className="response">
       <div className="prediction-head">
@@ -59,28 +83,68 @@ export default function Response({ trace }) {
         <span className="response-prompt">
           {(trace.tokens || []).map((t) => t.text).join("")}
         </span>
-        {steps.map((s, i) => (
-          <button
-            key={i}
-            role="listitem"
-            className={`response-token ${i === index ? "picked" : ""}`}
-            style={{ "--p": s.probability }}
-            title={`token ${i}: “${tokenText(s.text)}” ${pct(s.probability)} · ${s.entropy_bits.toFixed(2)} bits${s.lens?.settled_layer !== undefined && s.lens?.settled_layer !== null ? ` · settled at ${s.lens.settled_layer === 0 ? "the embeddings" : `layer ${s.lens.settled_layer - 1}`}` : ""}`}
-            onClick={() => setPicked(i)}
-          >
-            {s.text === "" ? "∅" : s.text}
-          </button>
-        ))}
+        {segments.thinking ? (
+          <>
+            {steps.slice(0, segments.thinking[0]).map(tokenButton)}
+            <span className="response-segment thinking">
+              <button
+                className="response-segment-toggle"
+                onClick={() => setShowThinking((v) => !v)}
+                aria-expanded={showThinking}
+              >
+                thinking · {segments.thinking[1] - segments.thinking[0]} tokens
+                {segments.closed ? "" : " · unfinished"}{" "}
+                {showThinking ? "▾" : "▸"}
+              </button>
+              {showThinking &&
+                steps
+                  .slice(segments.thinking[0], segments.thinking[1])
+                  .map((s, k) => tokenButton(s, segments.thinking[0] + k))}
+            </span>
+            {segments.closed && (
+              <span className="response-segment answer">
+                <span className="response-segment-label">answer</span>
+                {steps
+                  .slice(segments.thinking[1])
+                  .map((s, k) => tokenButton(s, segments.thinking[1] + k))}
+              </span>
+            )}
+          </>
+        ) : (
+          steps.map(tokenButton)
+        )}
       </div>
       <p className="micro">
-        Click a token. Shade is the probability the model gave it; the prompt is
-        shown plain.
+        Click a token. Shade is the probability the model gave it; tokens under
+        30% are outlined. The prompt is shown plain.
+        {segments.thinking
+          ? " Thinking tokens are what the model wrote between its own <think> markers; they are its visible reasoning, not a hidden state."
+          : ""}
       </p>
+      {story.closeCalls?.length > 0 && (
+        <div className="response-forks">
+          <span className="matrix-insight-sub">Closest calls</span>
+          {story.closeCalls.map((c) => (
+            <button
+              key={c.index}
+              className="response-fork"
+              onClick={() => setPicked(c.index)}
+              title={`token ${c.index}: ${pct(c.probability)} vs ${pct(c.runnerUp.probability)}`}
+            >
+              “{tokenText(c.text)}” <em>over</em> “{tokenText(c.runnerUp.text)}”
+              <small>
+                {pct(c.probability)} vs {pct(c.runnerUp.probability)}
+              </small>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="response-detail">
         <div>
           <h3>
             Token {index}: “{tokenText(step.text)}”{" "}
             <small>
+              {segmentOf(index) === "thinking" ? "thinking · " : ""}
               {pct(step.probability)} · {step.entropy_bits.toFixed(2)} bits of
               uncertainty
             </small>

@@ -99,6 +99,7 @@ export function App() {
   }, [pairB]);
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
+    [responseTokens, setResponseTokens] = useState(48),
     [size, setSize] = useState(256),
     [seed, setSeed] = useState(0);
   const [layer, setLayer] = useState(0),
@@ -443,7 +444,7 @@ export function App() {
       modules: capturePaths,
       elements,
     };
-    if (step === "generation") body.generate = 32;
+    if (step === "generation") body.generate = responseTokens;
     else if (step === "attention") {
       body.attention = true;
       body.layer = active.layer;
@@ -1816,6 +1817,19 @@ export function App() {
                   >
                     {[256, 1024, 2048, 4096].map((n) => (
                       <option key={n}>{n}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Response length">
+                  <select
+                    value={responseTokens}
+                    onChange={(e) => setResponseTokens(Number(e.target.value))}
+                    aria-label="Response length"
+                  >
+                    {[32, 48, 96, 160, 256].map((n) => (
+                      <option key={n} value={n}>
+                        {n} tokens
+                      </option>
                     ))}
                   </select>
                 </Field>

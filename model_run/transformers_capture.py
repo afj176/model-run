@@ -476,14 +476,15 @@ def capture_activation_patching(model, source_ids, target_ids, *, layers=None, p
                             "kl_bits is the KL divergence from the target baseline to the patched next-token distribution."]}
 
 
-MAX_GENERATED_TOKENS = 64
+MAX_GENERATED_TOKENS = 256
+MAX_GENERATION_CONTEXT = 512
 
 
 def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_tokens=128, provenance=True, control=None):
     """Greedy-decode a bounded response and record, for every generated token, where it came from.
 
-    Each step is a full eager forward pass over the prompt plus the tokens generated so far,
-    with hidden states and attention requested. Per token the trace keeps the top-k
+    The prompt is run once; each later step feeds the new token with the key-value cache, so
+    the per-step hidden states and attention rows are those of the generating position. Per token the trace keeps the top-k
     distribution and entropy, the logit lens of the chosen token across layers (which layer
     first ranked it top and how its probability grew), and the measured attention from the
     generating position to every earlier token, averaged over all layers and heads.
@@ -513,11 +514,17 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
     stopped = "max_new_tokens"
     if control is not None:
         control.checkpoint("generation_start")
+    past = None
+    pending = input_ids
     with torch.inference_mode():
         for step in range(max_new_tokens):
             if control is not None:
                 control.check()
-            output = model(input_ids=sequence, use_cache=False, output_hidden_states=provenance, output_attentions=provenance)
+            output = model(input_ids=pending, past_key_values=past, use_cache=True,
+                           output_hidden_states=provenance, output_attentions=provenance)
+            past = getattr(output, "past_key_values", None)
+            if past is None:
+                raise ValueError("Model returned no key-value cache; generation capture needs one")
             logits = getattr(output, "logits", None)
             if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
                 raise ValueError("Model did not return causal language model logits")
@@ -559,15 +566,16 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
             if chosen in eos_ids:
                 stopped = "eos"
                 break
-            if sequence.shape[1] >= 256:
+            if sequence.shape[1] >= MAX_GENERATION_CONTEXT:
                 stopped = "context_limit"
                 break
-            sequence = torch.cat([sequence, torch.tensor([[chosen]], dtype=sequence.dtype, device=sequence.device)], dim=1)
+            pending = torch.tensor([[chosen]], dtype=sequence.dtype, device=sequence.device)
+            sequence = torch.cat([sequence, pending], dim=1)
     return {"schema_version": "1.0", "kind": "generation_capture", "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
             "torch_version": str(torch.__version__), "decoding": "greedy", "stopped": stopped,
             "input": {"token_count": int(input_ids.shape[1]), "token_ids_included": False},
             "steps": steps, "provenance": provenance,
             "limitations": ["Greedy decoding without sampling, repetition control or a chat loop; the response is what the raw model would write next.",
-                            "Every step is a full forward pass; attention is the measured head- and layer-averaged weight from the generating position and is not a causal attribution.",
+                            "Attention is the measured head- and layer-averaged weight from the generating position (key-value cache decoding) and is not a causal attribution.",
                             "The logit lens applies the final norm and output head to earlier residual states; it is a lens, not the model's own output.",
                             "No tokenizer text is recorded here; the application decodes tokens separately."]}

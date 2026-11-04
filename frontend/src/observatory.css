@@ -2551,3 +2551,69 @@ main {
   padding-top: 22px;
   border-top: 1px solid #e3dbf5;
 }
+
+.response-token.unsure {
+  outline: 1px dashed #ff3d8f99;
+  outline-offset: 0;
+}
+.response-segment {
+  display: inline;
+}
+.response-segment.thinking .response-token {
+  opacity: 0.78;
+}
+.response-segment-toggle,
+.response-segment-label {
+  display: inline-block;
+  font:
+    600 11px "Segoe UI",
+    system-ui,
+    sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #3f31a3;
+  background: #ece7fa;
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 9px;
+  margin: 0 6px 0 2px;
+  min-height: 0;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.response-segment-label {
+  cursor: default;
+  background: #d9f5ec;
+  color: #0a7f6a;
+}
+.response-forks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 0;
+}
+.response-forks .matrix-insight-sub {
+  margin: 0 4px 0 0;
+}
+.response-fork {
+  min-height: 0;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 1px solid #e3dbf5;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.response-fork em {
+  font-style: normal;
+  color: #6b6489;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  margin: 0 4px;
+}
+.response-fork small {
+  margin-left: 6px;
+  color: #b4215a;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
