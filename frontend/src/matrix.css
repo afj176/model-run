@@ -388,7 +388,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  height: 84px;
+  height: 112px;
   padding: 0 26px;
   display: flex;
   align-items: center;
@@ -1115,13 +1115,16 @@ button.matrix-dot:hover i {
   position: absolute;
   left: 20px;
   right: 20px;
-  top: -34px;
-  height: 30px;
+  top: -44px;
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
   pointer-events: none;
 }
 .matrix-sparkline svg {
-  width: 100%;
-  height: 26px;
+  flex: 1;
+  height: 22px;
   overflow: visible;
 }
 .matrix-sparkline path {
@@ -1134,12 +1137,17 @@ button.matrix-dot:hover i {
   fill: #ff3d8f;
 }
 .matrix-sparkline span {
-  position: absolute;
-  right: 0;
-  top: -6px;
+  position: static;
   font-size: 11px;
   color: #b9b0dd;
   white-space: nowrap;
+  align-self: center;
+}
+.matrix-stage-kind {
+  margin-right: 6px;
+}
+.matrix-step {
+  cursor: help;
 }
 .matrix-timeline {
   overflow: visible;

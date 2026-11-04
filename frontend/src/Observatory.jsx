@@ -32,7 +32,7 @@ import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
-import { layerNodePath, railLabel } from "./insights";
+import { layerNodePath, layerOf, railLabel } from "./insights";
 import Compare from "./Compare";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
@@ -82,12 +82,15 @@ export function App() {
     [playing, setPlaying] = useState(false);
   const [logScale, setLogScale] = useState(true);
   const [cameraMode, setCameraMode] = useState("orbit");
-  const [tensor, setTensor] = useState("attention");
   const [headView, setHeadView] = useState(null);
   const native = state?.host === "comfyui";
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [pairB, setPairB] = useState("");
+  // A capture session: the companion traces produced by one Run (outputs, response, attention).
+  const sessionRef = useRef(null);
+  const [session, setSession] = useState(null);
+  const [companions, setCompanions] = useState({});
   const variantOf = useRef("");
   const pairBRef = useRef("");
   useEffect(() => {
@@ -238,24 +241,9 @@ export function App() {
         { length: Math.max(1, (trace?.layer ?? 0) + 1, layer + 1) },
         (_, i) => i,
       );
-  const tensorOptions = useMemo(() => {
-    const modules =
-      trace?.kind === "attention_capture"
-        ? []
-        : [...new Set(events.map((e) => e.module).filter(Boolean))];
-    const atLayer = modules.filter((m) =>
-      new RegExp(
-        `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\\.${layer}(?:\\.|$)`,
-      ).test(m),
-    );
-    return (atLayer.length ? atLayer : modules).slice(0, 64);
-  }, [events, layer, trace?.kind]);
   const textModel = state?.loaded?.task === "text";
   // Layer choices: numeric decoder layers for text models, block nodes otherwise.
   const blockMode = !textModel && (Boolean(state?.loaded) || native);
-  useEffect(() => {
-    if (blockMode && tensor === "attention") setTensor("latents");
-  }, [blockMode, tensor]);
   const layerChoices = useMemo(() => {
     if (!blockMode)
       return [...new Set(layerOptions)].map((n) => ({
@@ -289,7 +277,7 @@ export function App() {
     const index = events.findIndex((e) => eventPath(e) === path);
     if (index >= 0) setEventIndex(index);
   }
-  async function openTrace(id) {
+  async function openTrace(id, atLayer = null) {
     selectedTrace.current = id;
     const t = await api(`traces/${id}`);
     if (selectedTrace.current !== id) return;
@@ -297,11 +285,18 @@ export function App() {
     setTrace(t);
     setHeadView(null);
     setTree(t.structure || null);
-    setEventIndex(0);
+    const landing =
+      atLayer === null || t.kind === "attention_capture"
+        ? 0
+        : Math.max(
+            0,
+            (t.events || []).findIndex((e) => layerOf(e.module) === atLayer),
+          );
+    setEventIndex(landing);
     setSelected(
       t.kind === "attention_capture"
         ? layerNodePath(t.structure?.nodes, t.layer) || ""
-        : eventPath(t.events?.[0]),
+        : eventPath(t.events?.[landing]),
     );
     setPlaying(false);
     setInspection(null);
@@ -330,17 +325,46 @@ export function App() {
             setCapturePaths([]);
             setLayer(0);
             setHead(0);
-            setTensor(s.loaded?.task === "text" ? "attention" : "latents");
           }
           if (s.job.status === "failed") setError(s.job.error);
-          if (s.job.status !== "completed") variantOf.current = "";
+          if (s.job.status !== "completed") {
+            variantOf.current = "";
+            sessionRef.current = null;
+          }
         }
         const latest = s.traces.at(-1);
         const version = latest && `${latest.id}:${latest.revision || 1}`;
         if (latest && version !== lastPublished.current) {
           const sameRun = lastPublished.current.startsWith(`${latest.id}:`);
           lastPublished.current = version;
-          if (!sameRun && variantOf.current) {
+          const active = sessionRef.current;
+          if (!sameRun && active && active.pending.length) {
+            // One step of a capture session finished: record it and launch the next.
+            const step = active.pending.shift();
+            active.ids[step] = latest.id;
+            if (active.pending.length) {
+              launchSessionStep(active, active.pending[0]);
+            } else {
+              const ids = { ...active.ids };
+              setSession({ key: active.key, ids });
+              const [moduleTrace, generationTrace] = await Promise.all([
+                ids.module ? api(`traces/${ids.module}`) : null,
+                ids.generation ? api(`traces/${ids.generation}`) : null,
+              ]);
+              if (!alive) return;
+              setCompanions({
+                module: moduleTrace,
+                generation: generationTrace,
+              });
+              sessionRef.current = null;
+              const openId =
+                (active.open === "module" ? ids.module : ids.attention) ||
+                ids.attention ||
+                ids.module ||
+                latest.id;
+              await openTrace(openId, active.layer);
+            }
+          } else if (!sameRun && variantOf.current) {
             // A variant-prompt run: keep A open and pair the new trace as B.
             variantOf.current = "";
             setPairB(latest.id);
@@ -387,6 +411,63 @@ export function App() {
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, []);
+  function launchSessionStep(active, step) {
+    const body = {
+      prompt: active.prompt,
+      input_mode: active.inputMode,
+      modules: capturePaths,
+      elements,
+    };
+    if (step === "generation") body.generate = 32;
+    else if (step === "attention") {
+      body.attention = true;
+      body.layer = active.layer;
+      body.head = active.head;
+    }
+    action(() =>
+      api("run", body).catch((e) => {
+        sessionRef.current = null;
+        throw e;
+      }),
+    );
+  }
+  /** Run everything for a text prompt: layer outputs, the response, then the attention probe. */
+  function runSession(steps = ["module", "generation", "attention"], at = {}) {
+    setPlaying(false);
+    const active = {
+      key: `${state?.loaded?.name}|${inputMode}|${prompt}`,
+      prompt,
+      inputMode,
+      layer: at.layer ?? layer,
+      head: at.head ?? head,
+      open:
+        at.open ??
+        (trace?.kind === "pytorch_module_capture" ? "module" : "attention"),
+      pending: [...steps],
+      ids: {
+        ...(session?.key === `${state?.loaded?.name}|${inputMode}|${prompt}`
+          ? session.ids
+          : {}),
+      },
+    };
+    sessionRef.current = active;
+    launchSessionStep(active, active.pending[0]);
+  }
+  /** Look at another layer: re-probe attention there when a session is live, and jump the outputs view. */
+  function pickLayer(index, nextHead = head) {
+    setLayer(index);
+    if (nextHead !== head) setHead(nextHead);
+    const sameSession =
+      session &&
+      session.key === `${state?.loaded?.name}|${inputMode}|${prompt}`;
+    if (textModel && sameSession && !busy)
+      runSession(["attention"], { layer: index, head: nextHead });
+    const at = events.findIndex((e) => layerOf(e.module) === index);
+    if (at >= 0) {
+      setEventIndex(at);
+      setSelected(eventPath(events[at]));
+    }
+  }
   function run(attention = false, ablate = null) {
     setPlaying(false);
     action(() =>
@@ -433,17 +514,6 @@ export function App() {
       }).catch((e) => {
         variantOf.current = "";
         throw e;
-      }),
-    );
-  }
-  function runGenerate(count = 32) {
-    setPlaying(false);
-    action(() =>
-      api("run", {
-        prompt,
-        input_mode: inputMode,
-        modules: [],
-        generate: count,
       }),
     );
   }
@@ -602,7 +672,7 @@ export function App() {
               }
               onChange={(e) =>
                 !blockMode
-                  ? setLayer(Number(e.target.value))
+                  ? pickLayer(Number(e.target.value))
                   : choose(e.target.value)
               }
             >
@@ -610,43 +680,6 @@ export function App() {
               {layerChoices.map((c) => (
                 <option key={c.value} value={c.value}>
                   {c.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="toolbar-field">
-            <span>Tensor</span>
-            <select
-              aria-label="Tensor"
-              className="tensor-select"
-              value={tensor}
-              onChange={(e) => {
-                const next = e.target.value;
-                setTensor(next);
-                if (next !== "attention") {
-                  const at = events.findIndex((ev) => ev.module === next);
-                  if (at >= 0) {
-                    setEventIndex(at);
-                    setSelected(eventPath(events[at]));
-                  }
-                }
-              }}
-            >
-              {(textModel || (!state?.loaded && !native)) && (
-                <option value="attention">Attention</option>
-              )}
-              {textModel && <option value="layers">Layer outputs</option>}
-              {textModel && (
-                <option value="generate">Response · where it came from</option>
-              )}
-              {blockMode && (
-                <option value="latents">
-                  {native ? "Denoiser outputs" : "Denoising latents"}
-                </option>
-              )}
-              {tensorOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m.replace(/^model\./, "")}
                 </option>
               ))}
             </select>
@@ -668,9 +701,9 @@ export function App() {
                   )
                 : busy
                   ? action(() => api("cancel", {}))
-                  : tensor === "generate" && textModel
-                    ? runGenerate()
-                    : run(tensor === "attention" && textModel)
+                  : textModel
+                    ? runSession()
+                    : run(false)
             }
           >
             {native ? "ComfyUI" : busy ? "Cancel" : "Run"}
@@ -693,7 +726,9 @@ export function App() {
         <div className="tokens">
           <span className={busy ? "muted working" : "muted"}>
             {busy
-              ? `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
+              ? sessionRef.current
+                ? `Capturing ${{ module: "layer outputs", generation: "the response", attention: "attention" }[sessionRef.current.pending[0]] || "…"} (${Object.keys(sessionRef.current.ids).length + 1} of ${Object.keys(sessionRef.current.ids).length + sessionRef.current.pending.length})…`
+                : `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
               : trace?.tokens
                 ? `Tokens (${trace.tokens.length})`
                 : native
@@ -773,6 +808,20 @@ export function App() {
           canAttention={state?.loaded?.task === "text"}
           onCapture={() => run(true)}
           onAblate={(mode) => run(true, mode)}
+          onPickLayer={textModel ? pickLayer : undefined}
+          stageOptions={
+            session && Object.values(session.ids).includes(traceId)
+              ? {
+                  current:
+                    trace?.kind === "attention_capture"
+                      ? "attention"
+                      : "outputs",
+                  attention: session.ids.attention,
+                  outputs: session.ids.module,
+                  open: (id) => id && id !== traceId && openTrace(id, layer),
+                }
+              : null
+          }
           layer={layer}
           setLayer={setLayer}
           head={head}
@@ -1368,33 +1417,54 @@ export function App() {
       )}
       <section className="output panel">
         <div className="output-main">
-          {!trace?.output?.top_tokens &&
-            !trace?.cross_attention &&
-            trace?.kind !== "generation_capture" && (
-              <h2>
-                {trace?.preview ? "Generated output" : "Capture history"}
-                <small>Local session · up to 8 traces / 32 MiB</small>
-              </h2>
-            )}
-          {trace?.output?.top_tokens ? (
-            <Prediction trace={trace} />
-          ) : trace?.kind === "generation_capture" ? (
-            <Response trace={trace} />
-          ) : trace?.cross_attention ? (
-            <CrossAttention trace={trace} />
-          ) : trace?.preview?.mime === "image/png" ? (
-            <img
-              className="output-image"
-              alt="Decoded pipeline output"
-              src={`data:image/png;base64,${trace.preview.base64}`}
-            />
-          ) : (
-            <p className="muted">
-              {state?.host === "comfyui"
-                ? "Connect Model Run · Observe between a model loader and sampler. Captures appear here while ComfyUI runs."
-                : "Captures stay in memory until exported. Use the history controls to reopen a trace."}
-            </p>
-          )}
+          {(() => {
+            const inSession =
+              session && Object.values(session.ids).includes(traceId);
+            const predictionTrace = trace?.output?.top_tokens
+              ? trace
+              : inSession && companions.module?.output?.top_tokens
+                ? companions.module
+                : null;
+            const responseTrace =
+              trace?.kind === "generation_capture"
+                ? trace
+                : inSession && companions.generation
+                  ? companions.generation
+                  : null;
+            const panels = [];
+            if (predictionTrace)
+              panels.push(
+                <Prediction key="prediction" trace={predictionTrace} />,
+              );
+            if (responseTrace)
+              panels.push(<Response key="response" trace={responseTrace} />);
+            if (trace?.cross_attention)
+              panels.push(<CrossAttention key="xattn" trace={trace} />);
+            if (!panels.length && trace?.preview?.mime === "image/png")
+              panels.push(
+                <img
+                  key="preview"
+                  className="output-image"
+                  alt="Decoded pipeline output"
+                  src={`data:image/png;base64,${trace.preview.base64}`}
+                />,
+              );
+            if (!panels.length)
+              return (
+                <>
+                  <h2>
+                    {trace?.preview ? "Generated output" : "Capture history"}
+                    <small>Local session · up to 8 traces / 32 MiB</small>
+                  </h2>
+                  <p className="muted">
+                    {state?.host === "comfyui"
+                      ? "Connect Model Run · Observe between a model loader and sampler. Captures appear here while ComfyUI runs."
+                      : "Captures stay in memory until exported. Use the history controls to reopen a trace."}
+                  </p>
+                </>
+              );
+            return <div className="output-stack">{panels}</div>;
+          })()}
         </div>
         <div className="history">
           {trace?.output?.top_tokens && (

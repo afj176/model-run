@@ -77,6 +77,8 @@ export default function MatrixWorkspace({
   canAttention,
   onCapture,
   onAblate,
+  onPickLayer,
+  stageOptions = null,
   layer,
   setLayer,
   head,
@@ -214,6 +216,10 @@ export default function MatrixWorkspace({
           ? `Step ${event.step}`
           : "—";
   function pickLayer(index) {
+    if (onPickLayer) {
+      onPickLayer(index);
+      return;
+    }
     setLayer(index);
     const at = events.findIndex((e) => layerOf(e.module) === index);
     if (at >= 0 && trace?.kind !== "attention_capture") onPickEvent?.(at);
@@ -361,6 +367,37 @@ export default function MatrixWorkspace({
                 <Table size={17} /> Cell detail
               </button>
             </div>
+            {stageOptions &&
+              (stageOptions.attention || stageOptions.outputs) && (
+                <div
+                  className="matrix-segment matrix-stage-kind"
+                  role="group"
+                  aria-label="Stage tensor"
+                >
+                  <button
+                    className={
+                      stageOptions.current === "attention" ? "selected" : ""
+                    }
+                    aria-pressed={stageOptions.current === "attention"}
+                    disabled={!stageOptions.attention}
+                    onClick={() => stageOptions.open(stageOptions.attention)}
+                    title="Attention weights of the selected layer and head"
+                  >
+                    Attention
+                  </button>
+                  <button
+                    className={
+                      stageOptions.current === "outputs" ? "selected" : ""
+                    }
+                    aria-pressed={stageOptions.current === "outputs"}
+                    disabled={!stageOptions.outputs}
+                    onClick={() => stageOptions.open(stageOptions.outputs)}
+                    title="Captured output values of the selected layer"
+                  >
+                    Layer output
+                  </button>
+                </div>
+              )}
             <label className="matrix-zoom">
               <MagnifyingGlass size={16} />
               <select
@@ -600,7 +637,12 @@ export default function MatrixWorkspace({
         <footer className="matrix-timeline" aria-label="Layer / ordinal events">
           <span className="matrix-timeline-label">
             Layer / Ordinal Events{" "}
-            <Info size={15} weight="regular" aria-hidden="true" />
+            <Info
+              size={15}
+              weight="regular"
+              aria-hidden="true"
+              title="Each dot is a decoder layer. Click one to look at that layer: attention is re-probed there and the layer output view jumps to it."
+            />
           </span>
           <div className="matrix-track">
             {series && series.points.length > 1 && (
@@ -619,7 +661,7 @@ export default function MatrixWorkspace({
                     key={entry}
                     label={`L${entry}`}
                     active={entry === currentLayer}
-                    pending={entry === layer && entry !== currentLayer}
+                    pending={busy && entry === layer && entry !== currentLayer}
                     onClick={() => pickLayer(entry)}
                   />
                 ),
@@ -627,12 +669,23 @@ export default function MatrixWorkspace({
               <OrdinalDot label="Output" />
             </div>
           </div>
-          <span className="matrix-step">
+          <span
+            className="matrix-step"
+            title={
+              stepIndex >= 0
+                ? "Which decoder layer the stage shows; click a dot or use the Layer select to move"
+                : undefined
+            }
+          >
             {stepIndex >= 0
-              ? `Step ${stepIndex + 1} / ${stepTotal}`
-              : events.length
-                ? `Event ${eventIndex + 1} / ${events.length}`
-                : "No events"}
+              ? `Layer ${currentLayer} · ${stepIndex + 1} of ${stepTotal}`
+              : event?.denoiser_call !== undefined
+                ? `Call ${event.denoiser_call} · ${eventIndex + 1} of ${events.length}`
+                : event?.step !== undefined
+                  ? `Step ${event.step} · ${eventIndex + 1} of ${events.length}`
+                  : events.length
+                    ? `Event ${eventIndex + 1} of ${events.length}`
+                    : "No events"}
           </span>
         </footer>
       </section>

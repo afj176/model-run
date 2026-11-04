@@ -2541,3 +2541,13 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+.output-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.output-stack > * + * {
+  padding-top: 22px;
+  border-top: 1px solid #e3dbf5;
+}

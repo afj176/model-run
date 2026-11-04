@@ -149,11 +149,16 @@ ComfyUI, lighting up wherever the trace carries the data.
   per-call deltas, and every limitation recorded with the trace. It is built
   in the browser from the trace alone, so it works identically in ComfyUI,
   contains no scripts, and prints cleanly.
-- **Toolbar.** Tensor offers Attention and Layer outputs for text models (an
-  attention probe or a module capture of the first 32 numbered components, or
-  the components ticked in Layer Stack), and Denoising latents for diffusion
-  pipelines; Layer lists decoder layers for text models and block nodes for
-  diffusion and ComfyUI traces, where choosing one selects it.
+- **Toolbar.** For a text model, Run captures a whole session: the layer
+  outputs (the first 32 numbered components, or the components ticked in
+  Layer Stack), the greedy response, and an attention probe at the chosen
+  layer and head. Every panel the session produced stacks below the stage:
+  the prediction with its logit lens, the response with per-token provenance,
+  and the stage itself switches between Attention and Layer output. The Layer
+  select and the timeline dots mean the same thing everywhere: look at this
+  layer. Choosing one re-probes attention there and moves the layer-output
+  view; the badge reads "Layer n · k of N". Diffusion pipelines run a
+  denoising capture, and Layer lists steps or blocks instead.
 - **Run View stage.** The 3D Model view is now a model map on the same dark
   stage as the exploration table: one slab per block or step, tinted by its
   captured RMS and carrying a strip of its first retained values, with the
