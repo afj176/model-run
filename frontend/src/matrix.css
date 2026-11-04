@@ -1227,3 +1227,104 @@ button.matrix-dot:hover i {
 .matrix-annotation {
   bottom: 290px;
 }
+
+/* ---- Head ablation ---- */
+.matrix-insight-label.effect-decisive {
+  color: #b4215a;
+}
+.matrix-insight-label.effect-negligible {
+  color: #6b6489;
+}
+.matrix-ablation-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.matrix-ablation-compare > div {
+  display: grid;
+  grid-template-columns: 84px minmax(60px, 120px) 1fr 44px;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+.matrix-ablation-compare small {
+  color: #6b6489;
+  font-size: 11px;
+}
+.matrix-ablation-token {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.matrix-ablation-bar {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: #ece7fa;
+  overflow: hidden;
+}
+.matrix-ablation-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #ff6fae, #ff3d8f);
+}
+.matrix-ablation-compare > div:first-child .matrix-ablation-bar i {
+  background: linear-gradient(90deg, #7fd9c2, #0f9f86);
+}
+.matrix-ablation-compare b {
+  text-align: right;
+}
+.matrix-ablation-rank button.picked {
+  background: #efe9ff;
+}
+.matrix-ablation-rank .matrix-attends-bar {
+  background: linear-gradient(90deg, #ff9ec9, #ff3d8f);
+}
+.matrix-ablation-rank b {
+  color: #b4215a;
+}
+.matrix-ablation-rank em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b4215a;
+  text-transform: uppercase;
+}
+.matrix-ablation-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.matrix-ablation-actions button {
+  flex: 1;
+  min-height: 34px;
+  border-radius: 10px;
+  border: 1px solid #c9bdf0;
+  background: #fff;
+  color: #3f31a3;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.matrix-ablation-actions button:hover:not(:disabled) {
+  background: #efe9ff;
+}
+.matrix-ablation-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.matrix-gallery-effect {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ffe1ec;
+  color: #b4215a !important;
+  font-weight: 700;
+}
+.matrix-gallery-effect.flips {
+  background: #ff3d8f;
+  color: #fff !important;
+}

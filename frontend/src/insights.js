@@ -334,3 +334,54 @@ export function compareMatrices(a, b) {
 export function pct(v) {
   return `${Math.round((finite(v) ? v : 0) * 100)}%`;
 }
+
+/** Readable token text for narrative sentences. */
+export function tokenText(text) {
+  if (text === undefined || text === null) return "?";
+  if (text === "") return "\u2205";
+  return text.replace(/\n/g, "\u23ce").replace(/ /g, "\u2423");
+}
+
+/** What a head ablation sweep says about one head and about the layer as a whole. */
+export function ablationStory(ablation, head) {
+  const heads = ablation?.heads;
+  if (!Array.isArray(heads) || !heads.length || !ablation.baseline) return null;
+  const baseline = ablation.baseline.top_tokens[0];
+  const ranked = [...heads].sort((a, b) => b.kl_bits - a.kl_bits);
+  const peak = Math.max(1e-9, ...ranked.map((h) => h.kl_bits));
+  const entry = heads.find((h) => h.head === head) || null;
+  let text = null;
+  let effect = null;
+  if (entry) {
+    const after = entry.top_tokens[0];
+    const before = baseline.probability;
+    const drop = before - entry.baseline_top_probability;
+    effect =
+      entry.kl_bits >= 1
+        ? "decisive"
+        : entry.kl_bits >= 0.1
+          ? "noticeable"
+          : "negligible";
+    const rank = ranked.findIndex((h) => h.head === head) + 1;
+    if (entry.top_token_changed)
+      text = `Without head ${head} the answer changes: \u201c${tokenText(after.text)}\u201d takes over at ${pct(after.probability)} and \u201c${tokenText(baseline.text)}\u201d falls from ${pct(before)} to ${pct(entry.baseline_top_probability)}.`;
+    else if (drop > 0.02)
+      text = `Without head ${head} the answer holds, but confidence in \u201c${tokenText(baseline.text)}\u201d drops from ${pct(before)} to ${pct(entry.baseline_top_probability)}.`;
+    else if (drop < -0.02)
+      text = `Without head ${head} the model is more sure of \u201c${tokenText(baseline.text)}\u201d: ${pct(before)} rises to ${pct(entry.baseline_top_probability)}, so this head was pulling against the answer.`;
+    else
+      text = `Removing head ${head} barely moves the prediction: \u201c${tokenText(baseline.text)}\u201d stays at about ${pct(before)}.`;
+    text += ` The distribution shifts by ${entry.kl_bits.toFixed(entry.kl_bits >= 0.1 ? 2 : 3)} bits${heads.length > 1 ? `, rank ${rank} of ${heads.length} measured heads` : ""}.`;
+  }
+  return {
+    entry,
+    effect,
+    text,
+    ranked,
+    peak,
+    baseline,
+    complete: heads.length === ablation.head_count,
+    strongest: ranked[0],
+    changers: ranked.filter((h) => h.top_token_changed).map((h) => h.head),
+  };
+}

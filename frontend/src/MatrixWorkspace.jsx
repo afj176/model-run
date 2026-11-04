@@ -15,6 +15,7 @@ import {
 import MatrixScene from "./MatrixScene";
 import { extractMatrix } from "./matrixData";
 import {
+  ablationStory,
   activationStats,
   attentionHeadProfile,
   callDeltas,
@@ -23,6 +24,7 @@ import {
   pct,
   rowSummary,
   tokenLabel,
+  tokenText,
 } from "./insights";
 import "./matrix.css";
 
@@ -80,6 +82,7 @@ export default function MatrixWorkspace({
   busy,
   canAttention,
   onCapture,
+  onAblate,
   layer,
   setLayer,
   head,
@@ -276,6 +279,16 @@ export default function MatrixWorkspace({
         : [],
     [attention, trace],
   );
+  const ablation = useMemo(
+    () => (attention ? ablationStory(trace.ablation, trace.head) : null),
+    [attention, trace],
+  );
+  const ablationByHead = useMemo(() => {
+    const map = new Map();
+    for (const entry of trace?.ablation?.heads || [])
+      map.set(entry.head, entry);
+    return map;
+  }, [trace]);
   const measured = Array.isArray(trace?.attribution?.last_position_attention);
   const attribution =
     attention && Array.isArray(trace.attribution?.values)
@@ -689,6 +702,132 @@ export default function MatrixWorkspace({
             )}
           </section>
         )}
+        {attention && (
+          <section className="matrix-insight" aria-label="Head ablation">
+            <h3>
+              <Lightbulb size={18} weight="duotone" /> What happens without this
+              head
+            </h3>
+            {ablation?.entry ? (
+              <>
+                <p className={`matrix-insight-label effect-${ablation.effect}`}>
+                  {ablation.effect === "decisive"
+                    ? "Decisive head"
+                    : ablation.effect === "noticeable"
+                      ? "Noticeable effect"
+                      : "Negligible effect"}
+                </p>
+                <p className="matrix-insight-text">{ablation.text}</p>
+                <div className="matrix-ablation-compare">
+                  {[
+                    ["With head", ablation.baseline],
+                    ["Without head", ablation.entry.top_tokens[0]],
+                  ].map(([label, token]) => (
+                    <div key={label}>
+                      <small>{label}</small>
+                      <span className="matrix-ablation-token">
+                        “{tokenText(token.text)}”
+                      </span>
+                      <span className="matrix-ablation-bar">
+                        <i
+                          style={{
+                            width: `${Math.max(1, token.probability * 100)}%`,
+                          }}
+                        />
+                      </span>
+                      <b>{pct(token.probability)}</b>
+                    </div>
+                  ))}
+                </div>
+                <div className="matrix-chips">
+                  <span title="KL divergence from the baseline distribution">
+                    {ablation.entry.kl_bits.toFixed(3)} bits shift
+                  </span>
+                  <span title="Entropy of the next-token distribution without this head">
+                    {ablation.entry.entropy_bits.toFixed(2)} bits entropy (was{" "}
+                    {trace.ablation.baseline.entropy_bits.toFixed(2)})
+                  </span>
+                </div>
+              </>
+            ) : (
+              <p className="matrix-insight-text">
+                Zero this head's output and re-run the same prompt to measure
+                how much the next-token prediction depends on it. This is a
+                causal intervention; attention weights alone are not.
+              </p>
+            )}
+            {ablation?.ranked?.length > 1 && (
+              <>
+                <p className="matrix-insight-sub">
+                  Heads of layer {trace.layer} ranked by effect
+                  {ablation.complete
+                    ? ""
+                    : ` (${ablation.ranked.length} of ${trace.ablation.head_count} measured)`}
+                </p>
+                <ul className="matrix-attends matrix-ablation-rank">
+                  {ablation.ranked.slice(0, 8).map((entry) => (
+                    <li key={entry.head}>
+                      <button
+                        onClick={() => onPickHead?.(entry.head)}
+                        aria-pressed={entry.head === trace.head}
+                        className={entry.head === trace.head ? "picked" : ""}
+                        title={`Head ${entry.head}: ${entry.kl_bits.toFixed(3)} bits${entry.top_token_changed ? ", answer changes" : ""}`}
+                      >
+                        <span className="matrix-attends-token">
+                          H{entry.head}
+                          {entry.top_token_changed && (
+                            <em title="The top token changes without this head">
+                              {" "}
+                              flips
+                            </em>
+                          )}
+                        </span>
+                        <span
+                          className="matrix-attends-bar"
+                          style={{
+                            width: `${Math.max(2, (entry.kl_bits / ablation.peak) * 100)}%`,
+                          }}
+                        />
+                        <b>
+                          {entry.kl_bits.toFixed(entry.kl_bits >= 0.1 ? 2 : 3)}
+                        </b>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {ablation.changers.length > 0 && (
+                  <p className="matrix-note">
+                    Removing{" "}
+                    {ablation.changers.length === 1
+                      ? `head ${ablation.changers[0]}`
+                      : `heads ${ablation.changers.join(", ")}`}{" "}
+                    on its own changes the predicted token.
+                  </p>
+                )}
+              </>
+            )}
+            <div className="matrix-ablation-actions">
+              <button
+                disabled={busy || !canAttention || !onAblate}
+                onClick={() => onAblate?.("head")}
+              >
+                Ablate H{trace.head}
+              </button>
+              <button
+                disabled={busy || !canAttention || !onAblate}
+                onClick={() => onAblate?.("layer")}
+                title="Zero each head of this layer in turn"
+              >
+                Sweep all{" "}
+                {trace.head_count ? `${trace.head_count} heads` : "heads"}
+              </button>
+            </div>
+            <p className="matrix-note">
+              Zero ablation at every position; one extra forward pass per head.
+              Effects of several heads together are not additive.
+            </p>
+          </section>
+        )}
         {attribution && (
           <section className="matrix-insight" aria-label="Token attribution">
             <h3>
@@ -743,6 +882,14 @@ export default function MatrixWorkspace({
                   <HeadThumb matrix={item.matrix} />
                   <span>H{item.index}</span>
                   <small>{item.profile?.label}</small>
+                  {ablationByHead.has(item.index) && (
+                    <small
+                      className={`matrix-gallery-effect ${ablationByHead.get(item.index).top_token_changed ? "flips" : ""}`}
+                      title="Bits of shift when this head is zeroed"
+                    >
+                      {ablationByHead.get(item.index).kl_bits.toFixed(2)} b
+                    </small>
+                  )}
                 </button>
               ))}
             </div>
@@ -850,7 +997,9 @@ export default function MatrixWorkspace({
               {attention ? "Attention heatmap" : "Value heatmap"}{" "}
               <small>(linked)</small>
             </h3>
-            <div className={`matrix-heatmap-figure ${tokens ? "with-tokens" : ""}`}>
+            <div
+              className={`matrix-heatmap-figure ${tokens ? "with-tokens" : ""}`}
+            >
               <span className="matrix-heatmap-ylabel">
                 {tokens ? "query token" : axisTitle(data.axes[0])}
               </span>

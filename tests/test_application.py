@@ -88,3 +88,37 @@ class ApplicationTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class AblationAttachTests(unittest.TestCase):
+    def test_attach_merges_heads_and_checks_prompt(self):
+        app = Application()
+        try:
+            attention = {"schema_version": "1.0", "kind": "attention_capture", "model_class": "fixture", "torch_version": "fixture",
+                         "layer": 1, "head": 0, "head_count": 2, "axes": ["query_position", "key_position"], "shape": [2, 2],
+                         "values": [[1.0, 0.0], [0.5, 0.5]], "input": {"token_count": 2, "token_ids_included": False}, "limitations": []}
+            identifier = app.publish(attention, "fixture")["id"]
+            distribution = {"top_tokens": [{"token_id": 3, "probability": 0.5}], "entropy_bits": 1.0}
+            def result(head, kl):
+                return {"schema_version": "1.0", "kind": "head_ablation", "model_class": "fixture", "torch_version": "fixture", "method": "zero_ablation", "layer": 1, "head_count": 2, "head_dim": 4, "position": 1,
+                        "baseline": distribution, "limitations": [],
+                        "heads": [{"head": head, **distribution, "kl_bits": kl, "baseline_top_probability": 0.4, "top_token_changed": False}]}
+            app._attach_ablation(identifier, result(1, 0.5))
+            app._attach_ablation(identifier, result(0, 0.25))
+            app._attach_ablation(identifier, result(1, 0.75))
+            merged = app.trace(identifier)
+            self.assertEqual([(e["head"], e["kl_bits"]) for e in merged["ablation"]["heads"]], [(0, 0.25), (1, 0.75)])
+            self.assertEqual(merged["values"], attention["values"])
+            self.assertEqual(app.snapshot()["traces"][-1]["revision"], 4)
+            self.assertEqual(app.snapshot()["traces"][-1]["name"], "fixture")
+            wrong_prompt = result(0, 0.1)
+            wrong_prompt["position"] = 5
+            with self.assertRaises(ValueError): app._attach_ablation(identifier, wrong_prompt)
+            wrong_layer = result(0, 0.1)
+            wrong_layer["layer"] = 0
+            with self.assertRaises(ValueError): app._attach_ablation(identifier, wrong_layer)
+            with self.assertRaises(ValueError): app._attach_ablation("missing", result(0, 0.1))
+            with self.assertRaises(ValueError): app.run({"prompt": "hi", "ablate": "head"})
+            with self.assertRaises(ValueError): app.run({"prompt": "hi", "ablate": "nope", "attach_to": identifier})
+        finally:
+            app.close()

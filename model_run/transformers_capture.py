@@ -204,3 +204,121 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
                                                     "last_position_attention is the measured head- and layer-averaged attention from the final query position."]}
             trace["layers"] = _layer_summaries(cpu)
     return trace
+
+
+MAX_ABLATION_HEADS = 128
+_ATTENTION_NAMES = ("self_attn", "attn", "attention", "self_attention")
+_PROJECTION_NAMES = ("o_proj", "out_proj", "c_proj", "dense", "wo", "proj")
+
+
+def _attention_projection(model, layer):
+    """Find the output projection of decoder layer ``layer`` and the per-head width of its input."""
+    import torch
+    attention = None
+    for name, module in model.named_modules():
+        parts = name.split(".")
+        if len(parts) >= 2 and parts[-1] in _ATTENTION_NAMES and parts[-2] == str(layer):
+            attention = module
+            break
+    if attention is None:
+        raise ValueError("Requested attention layer is unavailable")
+    projection = next((getattr(attention, name) for name in _PROJECTION_NAMES
+                       if isinstance(getattr(attention, name, None), torch.nn.Module)), None)
+    if projection is None:
+        raise ValueError("The attention module has no recognised output projection; head ablation is unavailable")
+    weight = getattr(projection, "weight", None)
+    if not isinstance(weight, torch.Tensor) or weight.ndim != 2:
+        raise ValueError("The attention output projection has no 2-D weight")
+    in_features = weight.shape[1] if isinstance(projection, torch.nn.Linear) else weight.shape[0]
+    config = getattr(model, "config", None)
+    head_count = getattr(attention, "num_heads", None) or getattr(config, "num_attention_heads", None)
+    head_dim = getattr(attention, "head_dim", None) or getattr(config, "head_dim", None)
+    if type(head_count) is not int or head_count < 1:
+        raise ValueError("The attention head count is unavailable")
+    if type(head_dim) is not int or head_dim < 1:
+        head_dim = in_features // head_count
+    if head_count * head_dim != in_features:
+        raise ValueError("The attention output projection width does not match head_count x head_dim")
+    return projection, head_count, head_dim
+
+
+def _distribution(logits, top_k):
+    import torch
+    probabilities = torch.softmax(logits, dim=-1)
+    values, indices = torch.topk(probabilities, min(top_k, probabilities.numel()))
+    return probabilities, {"top_tokens": [{"token_id": int(i), "probability": float(p)} for i, p in zip(indices.tolist(), values.tolist())],
+                           "entropy_bits": _entropy_bits(probabilities)}
+
+
+def capture_head_ablation(model, input_ids, layer, heads=None, *, max_tokens=128, top_k=10, control=None):
+    """Zero one attention head's output at a time and record how the next-token distribution moves.
+
+    The head's slice of the input to the layer's output projection is zeroed during a full
+    forward pass, so the measurement is a zero ablation of the head's contribution at every
+    position. ``heads`` lists head indices; ``None`` sweeps every head of the layer.
+    """
+    import torch
+    if any(module.training for module in model.modules()):
+        raise ValueError("all model modules must already be in evaluation mode")
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 128:
+        raise ValueError("max_tokens must be between 1 and 128")
+    if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
+        raise ValueError("input_ids must be a bounded batch of one integer token sequence")
+    if type(layer) is not int or layer < 0:
+        raise ValueError("layer must be a nonnegative integer")
+    if type(top_k) is not int or not 1 <= top_k <= 100:
+        raise ValueError("top_k must be between 1 and 100")
+    projection, head_count, head_dim = _attention_projection(model, layer)
+    if heads is None:
+        heads = list(range(head_count))
+    if not isinstance(heads, list) or not heads or len(heads) != len(set(heads)) or any(type(h) is not int or not 0 <= h < head_count for h in heads):
+        raise ValueError("heads must list distinct head indices of the selected layer")
+    if len(heads) > MAX_ABLATION_HEADS:
+        raise ValueError(f"At most {MAX_ABLATION_HEADS} heads can be ablated per request")
+    if control is not None:
+        control.checkpoint("ablation_start")
+
+    def forward():
+        with torch.inference_mode():
+            logits = model(input_ids=input_ids, use_cache=False).logits
+        if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
+            raise ValueError("Model did not return causal language model logits")
+        last = logits[0, -1].detach().float().cpu()
+        if not torch.isfinite(last).all().item():
+            raise ValueError("Model returned non-finite logits")
+        return last
+
+    baseline_probabilities, baseline = _distribution(forward(), top_k)
+    baseline_top = baseline["top_tokens"][0]["token_id"]
+    baseline_log = torch.log(baseline_probabilities.clamp_min(1e-30))
+    results = []
+    for position, head in enumerate(heads):
+        if control is not None:
+            control.check()
+        start, stop = head * head_dim, (head + 1) * head_dim
+
+        def zero_head(_module, args):
+            value = args[0]
+            if not isinstance(value, torch.Tensor) or value.shape[-1] != head_count * head_dim:
+                raise ValueError("Unexpected input to the attention output projection")
+            value = value.clone()
+            value[..., start:stop] = 0
+            return (value, *args[1:])
+
+        handle = projection.register_forward_pre_hook(zero_head)
+        try:
+            probabilities, ablated = _distribution(forward(), top_k)
+        finally:
+            handle.remove()
+        kl = float((baseline_probabilities * (baseline_log - torch.log(probabilities.clamp_min(1e-30)))).sum().item())
+        results.append({"head": head, **ablated, "kl_bits": max(0.0, kl / math.log(2)),
+                        "baseline_top_probability": float(probabilities[baseline_top].item()),
+                        "top_token_changed": ablated["top_tokens"][0]["token_id"] != baseline_top})
+        if control is not None:
+            control.checkpoint(f"ablation:head:{head}", completed=position + 1, total=len(heads))
+    return {"schema_version": "1.0", "kind": "head_ablation", "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
+            "torch_version": str(torch.__version__), "method": "zero_ablation", "layer": layer, "head_count": head_count, "head_dim": head_dim,
+            "position": int(input_ids.shape[1] - 1), "baseline": baseline, "heads": results,
+            "limitations": ["Zero ablation removes the head's output at every position; it is an intervention, not the model's natural behaviour, and a zeroed head is off-distribution.",
+                            "Effects of ablating several heads together are not additive and were not measured.",
+                            "kl_bits is the KL divergence from the baseline to the ablated next-token distribution at the last input position."]}

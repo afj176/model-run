@@ -229,6 +229,12 @@ class Application:
             raise ValueError("Select at most 32 module paths")
         paths = list(paths)
         elements = bounded_int(request.get("elements", 1024), 1, 4096, "elements")
+        ablate = request.get("ablate")
+        if ablate not in (None, "head", "layer"):
+            raise ValueError("ablate must be head or layer")
+        attach_to = request.get("attach_to")
+        if ablate and not isinstance(attach_to, str):
+            raise ValueError("Capture attention for this prompt before ablating heads")
         def observe():
             item = self._loaded
             if item is None:
@@ -250,10 +256,15 @@ class Application:
                 attention = request.get("attention", False)
                 if type(attention) is not bool:
                     raise ValueError("attention must be boolean")
-                operation = "probe_attention" if attention else "next_token"
-                options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
-                           "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
-                if not paths and not attention:
+                if ablate:
+                    operation = "ablate_heads"
+                    options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
+                               "heads": [bounded_int(request.get("head", 0), 0, 1024, "head")] if ablate == "head" else None}
+                else:
+                    operation = "probe_attention" if attention else "next_token"
+                    options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
+                               "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
+                if not paths and not attention and not ablate:
                     paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
                 def decorate(output, trace):
                     trace["input_mode"] = mode
@@ -263,6 +274,10 @@ class Application:
                     for entry in trace.get("logit_lens", {}).get("layers", []):
                         for token in entry["top_tokens"]:
                             token["text"] = tokenizer.decode([token["token_id"]])
+                    if trace.get("kind") == "head_ablation":
+                        for entry in [trace["baseline"], *trace["heads"]]:
+                            for token in entry["top_tokens"]:
+                                token["text"] = tokenizer.decode([token["token_id"]])
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
             else:
                 import inspect
@@ -297,13 +312,35 @@ class Application:
                                  timeout_seconds=300, on_result=decorate)
             state = self.host.wait()["run"]
             trace = self.host.take_trace()
-            if trace is not None:
+            if trace is not None and trace.get("kind") == "head_ablation":
+                self._attach_ablation(attach_to, trace)
+            elif trace is not None:
                 trace["model_name"] = item["name"]
                 trace["structure"] = self._tree
                 self.publish(trace, item["name"])
             if state["status"] == "failed":
                 raise RuntimeError(state["error"])
         return self._start("observe", observe)
+
+    def _attach_ablation(self, attach_to, result):
+        """Merge an ablation result into the attention trace it was measured against."""
+        target = self.trace(attach_to)
+        if target.get("kind") != "attention_capture" or target.get("layer") != result["layer"]:
+            raise ValueError("Ablation must target the attention capture of the same layer")
+        if target.get("input", {}).get("token_count") != result["position"] + 1:
+            raise ValueError("The prompt differs from the attention capture; capture attention again first")
+        if result["head_count"] != target.get("head_count", result["head_count"]):
+            raise ValueError("The attention capture reports a different head count")
+        existing = target.get("ablation")
+        heads = {entry["head"]: entry for entry in (existing or {}).get("heads", [])}
+        for entry in result["heads"]:
+            heads[entry["head"]] = entry
+        target["ablation"] = {key: result[key] for key in ("method", "layer", "head_count", "head_dim", "position", "baseline", "limitations")}
+        target["ablation"]["heads"] = [heads[key] for key in sorted(heads)]
+        with self._lock:
+            record = next((t for t in self._traces if t["id"] == attach_to), None)
+            name = record["name"] if record else "Attention capture"
+        self.publish(target, name, replace_id=attach_to)
 
     def publish(self, trace, name="Imported trace", *, replace_id=None):
         data = encode_trace(trace)

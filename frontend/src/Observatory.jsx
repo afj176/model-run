@@ -316,7 +316,7 @@ export function App() {
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, []);
-  function run(attention = false) {
+  function run(attention = false, ablate = null) {
     setPlaying(false);
     action(() =>
       api("run", {
@@ -330,6 +330,7 @@ export function App() {
         attention,
         layer,
         head,
+        ...(ablate ? { ablate, attach_to: traceId } : {}),
       }),
     );
   }
@@ -551,6 +552,7 @@ export function App() {
           busy={busy}
           canAttention={state?.loaded?.task === "text"}
           onCapture={() => run(true)}
+          onAblate={(mode) => run(true, mode)}
           layer={layer}
           setLayer={setLayer}
           head={head}

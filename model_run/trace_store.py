@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 MAX_TRACE_BYTES = 16 * 1024 * 1024
-SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture"}
+SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation"}
 
 
 def _unique_pairs(pairs):
@@ -16,6 +16,28 @@ def _unique_pairs(pairs):
             raise ValueError(f"Duplicate JSON key: {key}")
         result[key] = value
     return result
+
+
+def _validate_ablation(ablation, layer):
+    """A zero-ablation result: a baseline next-token distribution and one entry per ablated head."""
+    def _tokens_ok(entry):
+        tokens = entry.get("top_tokens") if isinstance(entry, dict) else None
+        return (isinstance(tokens, list) and 1 <= len(tokens) <= 100
+                and all(isinstance(t, dict) and type(t.get("token_id")) is int and type(t.get("probability")) in (int, float) and 0 <= t["probability"] <= 1 for t in tokens)
+                and type(entry.get("entropy_bits")) in (int, float) and math.isfinite(entry["entropy_bits"]))
+    if (not isinstance(ablation, dict) or ablation.get("method") != "zero_ablation" or type(layer) is not int or ablation.get("layer") != layer
+            or type(ablation.get("head_count")) is not int or not 1 <= ablation["head_count"] <= 1024
+            or not _tokens_ok(ablation.get("baseline")) or not isinstance(ablation.get("heads"), list) or not 1 <= len(ablation["heads"]) <= ablation["head_count"]
+            or not isinstance(ablation.get("limitations"), list)):
+        raise ValueError("Invalid head ablation block")
+    seen = set()
+    for entry in ablation["heads"]:
+        if (not _tokens_ok(entry) or type(entry.get("head")) is not int or not 0 <= entry["head"] < ablation["head_count"] or entry["head"] in seen
+                or type(entry.get("kl_bits")) not in (int, float) or not math.isfinite(entry["kl_bits"]) or entry["kl_bits"] < 0
+                or type(entry.get("baseline_top_probability")) not in (int, float) or not 0 <= entry["baseline_top_probability"] <= 1
+                or type(entry.get("top_token_changed")) is not bool):
+            raise ValueError("Invalid head ablation entry")
+        seen.add(entry["head"])
 
 
 def _validate(trace):
@@ -103,9 +125,13 @@ def _validate(trace):
             received = attribution.get("last_position_attention")
             if received is not None and (not isinstance(received, list) or len(received) != shape[1] or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in received)):
                 raise ValueError("Invalid last-position attention")
+        if "ablation" in trace:
+            _validate_ablation(trace["ablation"], trace["layer"])
         if "layers" in trace:
             if not isinstance(trace["layers"], list) or len(trace["layers"]) > 1024 or any(not isinstance(e, dict) or type(e.get("index")) is not int or any(type(e.get(k)) not in (int, float) or not math.isfinite(e[k]) for k in ("sink_mass", "diagonal_mass", "previous_token_mass", "entropy_bits")) for e in trace["layers"]):
                 raise ValueError("Invalid attention layer summaries")
+    elif trace["kind"] == "head_ablation":
+        _validate_ablation(trace, trace.get("layer"))
     elif trace["kind"] == "pytorch_module_capture":
         events, capture = trace.get("events"), trace.get("capture")
         if not isinstance(events, list) or len(events) > 1024 or not isinstance(capture, dict):

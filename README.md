@@ -116,6 +116,17 @@ ComfyUI, lighting up wherever the trace carries the data.
   (first-token mass, previous-token mass, diagonal mass, mean row entropy) and
   labelled attention sink / previous-token / self-attending / focused / diffuse
   / mixed, with the strongest keys for the selected query.
+- **What happens without this head.** From an attention capture, "Ablate"
+  zeroes the selected head's output (its slice of the layer's output
+  projection) for a full forward pass and records how the next-token
+  distribution moves: top token before and after, probability of the original
+  answer, entropy, and the KL shift in bits. "Sweep" does this for every head
+  of the layer, one forward pass per head, and ranks them; heads whose removal
+  flips the answer are marked. Results attach to the attention capture as a new
+  revision, so they export with it. This is a zero ablation at every position,
+  an intervention rather than natural behaviour, and effects of several heads
+  are not additive. The request is refused when the prompt no longer matches
+  the capture.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

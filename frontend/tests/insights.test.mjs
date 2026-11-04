@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  ablationStory,
   attentionHeadProfile,
   activationStats,
   describeActivation,
@@ -183,4 +184,58 @@ test("matrix comparison reports the largest divergence", () => {
   assert.ok(Math.abs(result.maxDiff - 0.4) < 1e-12);
   assert.equal(compareMatrices([[1]], [[1, 0]]), null);
   assert.ok(Math.abs(entropyBits([0.5, 0.5]) - 1) < 1e-12);
+});
+
+test("ablationStory narrates one head and ranks the sweep", () => {
+  const ablation = {
+    head_count: 3,
+    baseline: {
+      top_tokens: [{ token_id: 1, text: " Paris", probability: 0.6 }],
+      entropy_bits: 2,
+    },
+    heads: [
+      {
+        head: 0,
+        top_tokens: [{ token_id: 1, text: " Paris", probability: 0.59 }],
+        entropy_bits: 2,
+        kl_bits: 0.01,
+        baseline_top_probability: 0.59,
+        top_token_changed: false,
+      },
+      {
+        head: 1,
+        top_tokens: [{ token_id: 2, text: " London", probability: 0.4 }],
+        entropy_bits: 3,
+        kl_bits: 1.5,
+        baseline_top_probability: 0.2,
+        top_token_changed: true,
+      },
+      {
+        head: 2,
+        top_tokens: [{ token_id: 1, text: " Paris", probability: 0.45 }],
+        entropy_bits: 2.5,
+        kl_bits: 0.3,
+        baseline_top_probability: 0.45,
+        top_token_changed: false,
+      },
+    ],
+  };
+  const changed = ablationStory(ablation, 1);
+  assert.equal(changed.effect, "decisive");
+  assert.match(changed.text, /answer changes/);
+  assert.match(changed.text, /rank 1 of 3/);
+  assert.deepEqual(
+    changed.ranked.map((h) => h.head),
+    [1, 2, 0],
+  );
+  assert.deepEqual(changed.changers, [1]);
+  assert.equal(changed.complete, true);
+  const held = ablationStory(ablation, 2);
+  assert.equal(held.effect, "noticeable");
+  assert.match(held.text, /answer holds/);
+  const flat = ablationStory(ablation, 0);
+  assert.equal(flat.effect, "negligible");
+  assert.match(flat.text, /barely moves/);
+  assert.equal(ablationStory(ablation, 9).entry, null);
+  assert.equal(ablationStory(null, 0), null);
 });

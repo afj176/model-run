@@ -70,3 +70,38 @@ class TransformerCaptureTests(unittest.TestCase):
         self.assertNotIn("heads", capture_attention(model, ids, 0, 0, all_heads=False))
         with self.assertRaises(ValueError): capture_attention(model, ids, 0, 99)
         with self.assertRaises(ValueError): capture_attention(model, ids, 0, 0, max_tokens=2)
+
+    def test_head_ablation(self):
+        from model_run.transformers_capture import capture_head_ablation
+        from model_run.trace_store import encode_trace
+        cases = [
+            Qwen2ForCausalLM(Qwen2Config(vocab_size=64, hidden_size=32, intermediate_size=64,
+                num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, attn_implementation="eager")),
+            GPT2LMHeadModel(GPT2Config(vocab_size=64, n_embd=32, n_layer=2, n_head=4, n_positions=32, bos_token_id=1, eos_token_id=2, attn_implementation="eager")),
+        ]
+        ids = torch.tensor([[1, 2, 3, 4]])
+        for model in cases:
+            with self.subTest(model=type(model).__name__):
+                model.eval()
+                with torch.inference_mode(): reference = torch.softmax(model(input_ids=ids, use_cache=False).logits[0, -1].float(), dim=-1)
+                result = capture_head_ablation(model, ids, 1, top_k=5)
+                self.assertEqual(result["head_count"], 4)
+                self.assertEqual(result["head_dim"], 8)
+                self.assertEqual([e["head"] for e in result["heads"]], [0, 1, 2, 3])
+                self.assertEqual(result["baseline"]["top_tokens"][0]["token_id"], int(torch.argmax(reference)))
+                self.assertAlmostEqual(result["baseline"]["top_tokens"][0]["probability"], float(reference.max()), places=5)
+                self.assertTrue(all(e["kl_bits"] >= 0 and 0 <= e["baseline_top_probability"] <= 1 for e in result["heads"]))
+                self.assertTrue(any(e["kl_bits"] > 0 for e in result["heads"]), "ablation must change the distribution")
+                single = capture_head_ablation(model, ids, 1, [2], top_k=5)
+                self.assertEqual(len(single["heads"]), 1)
+                self.assertAlmostEqual(single["heads"][0]["kl_bits"], result["heads"][2]["kl_bits"], places=5)
+                # The model is left unchanged: the baseline forward pass reproduces the reference afterwards.
+                with torch.inference_mode(): again = torch.softmax(model(input_ids=ids, use_cache=False).logits[0, -1].float(), dim=-1)
+                torch.testing.assert_close(again, reference)
+                attention = capture_attention(model, ids, 1, 0)
+                attention["ablation"] = {k: result[k] for k in ("method", "layer", "head_count", "head_dim", "position", "baseline", "heads", "limitations")}
+                encode_trace(attention)
+                encode_trace(result)
+                with self.assertRaises(ValueError): capture_head_ablation(model, ids, 1, [4])
+                with self.assertRaises(ValueError): capture_head_ablation(model, ids, 1, [0, 0])
+                with self.assertRaises(ValueError): capture_head_ablation(model, ids, 9)
