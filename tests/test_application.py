@@ -111,11 +111,22 @@ class AblationAttachTests(unittest.TestCase):
             self.assertEqual(merged["values"], attention["values"])
             self.assertEqual(app.snapshot()["traces"][-1]["revision"], 4)
             self.assertEqual(app.snapshot()["traces"][-1]["name"], "fixture")
+            # Another captured layer gets its own block; an uncaptured layer is refused.
+            attention["layer_stacks"] = [{"index": 0, "mean": [[1.0, 0.0], [0.5, 0.5]]}, {"index": 1, "heads": [[[1.0, 0.0], [0.5, 0.5]], [[1.0, 0.0], [0.5, 0.5]]]}]
+            app.publish(attention, "fixture", replace_id=identifier)
+            other = result(1, 0.3)
+            other["layer"] = 0
+            app._attach_ablation(identifier, other)
+            self.assertEqual([b["layer"] for b in app.trace(identifier)["ablations"]], [0])
+            self.assertNotIn("ablation", app.trace(identifier))  # the republished fixture carried no probed-layer block
+            missing = result(0, 0.1)
+            missing["layer"] = 5
+            with self.assertRaises(ValueError): app._attach_ablation(identifier, missing)
             wrong_prompt = result(0, 0.1)
             wrong_prompt["position"] = 5
             with self.assertRaises(ValueError): app._attach_ablation(identifier, wrong_prompt)
             wrong_layer = result(0, 0.1)
-            wrong_layer["layer"] = 0
+            wrong_layer["layer"] = 7  # not the probed layer and not in layer_stacks
             with self.assertRaises(ValueError): app._attach_ablation(identifier, wrong_layer)
             with self.assertRaises(ValueError): app._attach_ablation("missing", result(0, 0.1))
             with self.assertRaises(ValueError): app.run({"prompt": "hi", "ablate": "head"})

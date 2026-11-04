@@ -64,6 +64,9 @@ class TransformerCaptureTests(unittest.TestCase):
         self.assertAlmostEqual(sum(result["attribution"]["values"]), 1.0, places=5)
         self.assertAlmostEqual(sum(result["attribution"]["last_position_attention"]), 1.0, places=5)
         self.assertEqual([e["index"] for e in result["layers"]], [0, 1])
+        self.assertEqual([st["index"] for st in result["layer_stacks"]], [0, 1])
+        self.assertEqual(len(result["layer_stacks"][1]["heads"]), 4)
+        torch.testing.assert_close(torch.tensor(result["layer_stacks"][0]["heads"][0]), torch.tensor(result["values"]), atol=1e-4, rtol=0)
         self.assertTrue(all(0 <= e["sink_mass"] <= 1 and e["entropy_bits"] >= 0 for e in result["layers"]))
         from model_run.trace_store import encode_trace
         encode_trace(result)

@@ -230,6 +230,39 @@ def _validate(trace):
                 raise ValueError("Invalid last-position attention")
         if "ablation" in trace:
             _validate_ablation(trace["ablation"], trace["layer"])
+        if "ablations" in trace:
+            blocks = trace["ablations"]
+            if not isinstance(blocks, list) or len(blocks) > 1024:
+                raise ValueError("Invalid ablation list")
+            seen = set()
+            for block in blocks:
+                layer = block.get("layer") if isinstance(block, dict) else None
+                if layer in seen:
+                    raise ValueError("Duplicate ablation layer")
+                seen.add(layer)
+                _validate_ablation(block, layer)
+        if "layer_stacks" in trace:
+            stacks = trace["layer_stacks"]
+            if not isinstance(stacks, list) or not 1 <= len(stacks) <= 1024:
+                raise ValueError("Invalid layer stacks")
+            budget = 0
+            for position, stack in enumerate(stacks):
+                if not isinstance(stack, dict) or stack.get("index") != position:
+                    raise ValueError("Layer stacks must be indexed in order")
+                heads = stack.get("heads")
+                mean = stack.get("mean")
+                if heads is not None:
+                    if not isinstance(heads, list) or not 1 <= len(heads) <= 256 or any(not isinstance(m, list) or len(m) != shape[0] or any(not isinstance(r, list) or len(r) != shape[1] or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in r) for r in m) for m in heads):
+                        raise ValueError("Invalid layer stack heads")
+                    budget += len(heads) * shape[0] * shape[1]
+                elif mean is not None:
+                    if not isinstance(mean, list) or len(mean) != shape[0] or any(not isinstance(r, list) or len(r) != shape[1] or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in r) for r in mean):
+                        raise ValueError("Invalid layer stack mean")
+                    budget += shape[0] * shape[1]
+                else:
+                    raise ValueError("Layer stack needs heads or mean")
+            if budget > 1200000:
+                raise ValueError("Layer stacks exceed the value bound")
         if "layers" in trace:
             if not isinstance(trace["layers"], list) or len(trace["layers"]) > 1024 or any(not isinstance(e, dict) or type(e.get("index")) is not int or any(type(e.get(k)) not in (int, float) or not math.isfinite(e[k]) for k in ("sink_mass", "diagonal_mass", "previous_token_mass", "entropy_bits")) for e in trace["layers"]):
                 raise ValueError("Invalid attention layer summaries")

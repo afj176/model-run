@@ -152,12 +152,17 @@ ComfyUI, lighting up wherever the trace carries the data.
 - **Toolbar.** For a text model, Run captures a whole session: the layer
   outputs (the first 32 numbered components, or the components ticked in
   Layer Stack), the greedy response, and an attention probe at the chosen
-  layer and head. Every panel the session produced stacks below the stage:
+  layer and head. The probe records every layer: per-head matrices for all
+  layers when they fit a bound of about a million values (short prompts),
+  otherwise each layer's head-averaged matrix with per-head detail for the
+  probed layer. Every panel the session produced stacks below the stage:
   the prediction with its logit lens, the response with per-token provenance,
   and the stage itself switches between Attention and Layer output. The Layer
   select and the timeline dots mean the same thing everywhere: look at this
-  layer. Choosing one re-probes attention there and moves the layer-output
-  view; the badge reads "Layer n · k of N". Diffusion pipelines run a
+  layer. Choosing one switches the stage to that layer's recorded attention
+  instantly (a re-probe only when the layer was not recorded) and moves the
+  layer-output view; ablation sweeps attach per layer; the badge reads
+  "Layer n · k of N". Diffusion pipelines run a
   denoising capture, and Layer lists steps or blocks instead.
 - **Run View stage.** The 3D Model view is now a model map on the same dark
   stage as the exploration table: one slab per block or step, tinted by its

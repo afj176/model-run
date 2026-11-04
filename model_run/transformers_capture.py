@@ -5,6 +5,7 @@ from .capture import capture_forward
 
 # Aggregate bound for optional per-head matrices returned with an attention capture.
 MAX_HEAD_VALUES = 262144
+MAX_STACK_VALUES = 1048576  # per-head matrices for every layer are kept when they fit this bound
 ROUND_DIGITS = 5
 
 
@@ -210,6 +211,16 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
                                     "limitations": ["Rollout assumes equal head weighting and a residual identity term; it is an attention-flow estimate, not a causal attribution.",
                                                     "last_position_attention is the measured head- and layer-averaged attention from the final query position."]}
             trace["layers"] = _layer_summaries(cpu)
+            # Every layer, so the viewer can move between layers without another forward pass.
+            total = len(cpu) * int(matrix.shape[1]) * size * size
+            if total <= MAX_STACK_VALUES:
+                trace["layer_stacks"] = [{"index": index, "heads": [[[round(v, 4) for v in row] for row in h.tolist()] for h in a[0]]}
+                                         for index, a in enumerate(cpu)]
+                trace["limitations"].append("layer_stacks holds every layer's per-head matrices rounded to 4 decimals; the probed layer keeps full precision in values and heads.")
+            else:
+                trace["layer_stacks"] = [{"index": index, "mean": [[round(v, 4) for v in row] for row in a[0].mean(0).tolist()]}
+                                         for index, a in enumerate(cpu)]
+                trace["limitations"].append(f"Per-head matrices for every layer would exceed {MAX_STACK_VALUES:,} values, so layer_stacks holds each layer's head-averaged matrix; per-head detail is kept for the probed layer only.")
     return trace
 
 

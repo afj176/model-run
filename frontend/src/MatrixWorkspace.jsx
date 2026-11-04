@@ -209,7 +209,7 @@ export default function MatrixWorkspace({
       : layerIndices.indexOf(currentLayer);
   const eventLabel =
     trace?.kind === "attention_capture"
-      ? `L${trace.layer} · H${trace.head} · Attention (Q × K)`
+      ? `L${trace.layer} · ${trace.head_mean ? "head mean" : `H${trace.head}`} · Attention (Q × K)`
       : event?.module
         ? `${event.module.replace(/^model\./, "")}`
         : event?.step !== undefined
@@ -330,7 +330,7 @@ export default function MatrixWorkspace({
                     ? `L${currentLayer} · `
                     : ""}
                   {attention
-                    ? `Attention${trace.head !== undefined ? ` · head ${trace.head}` : ""}`
+                    ? `Attention${trace.head_mean ? " · head mean" : trace.head !== undefined ? ` · head ${trace.head}` : ""}`
                     : data.source}
                 </span>
                 <span>{data.shape.join(" × ")}</span>

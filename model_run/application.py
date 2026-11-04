@@ -401,20 +401,28 @@ class Application:
         self.publish(target, name, replace_id=attach_to)
 
     def _attach_ablation(self, attach_to, result):
-        """Merge an ablation result into the attention trace it was measured against."""
+        """Merge an ablation result into the attention trace it was measured against, per layer."""
         target = self.trace(attach_to)
-        if target.get("kind") != "attention_capture" or target.get("layer") != result["layer"]:
-            raise ValueError("Ablation must target the attention capture of the same layer")
+        captured = {target.get("layer")} | {s["index"] for s in target.get("layer_stacks", []) if isinstance(s, dict)}
+        if target.get("kind") != "attention_capture" or result["layer"] not in captured:
+            raise ValueError("Ablation must target a layer of this attention capture")
         if target.get("input", {}).get("token_count") != result["position"] + 1:
             raise ValueError("The prompt differs from the attention capture; capture attention again first")
         if result["head_count"] != target.get("head_count", result["head_count"]):
             raise ValueError("The attention capture reports a different head count")
-        existing = target.get("ablation")
+        blocks = [b for b in target.get("ablations", []) if isinstance(b, dict)]
+        existing = next((b for b in blocks if b.get("layer") == result["layer"]), None)
+        if existing is None and result["layer"] == target.get("layer") and target.get("ablation"):
+            existing = target["ablation"]
         heads = {entry["head"]: entry for entry in (existing or {}).get("heads", [])}
         for entry in result["heads"]:
             heads[entry["head"]] = entry
-        target["ablation"] = {key: result[key] for key in ("method", "layer", "head_count", "head_dim", "position", "baseline", "limitations")}
-        target["ablation"]["heads"] = [heads[key] for key in sorted(heads)]
+        block = {key: result[key] for key in ("method", "layer", "head_count", "head_dim", "position", "baseline", "limitations")}
+        block["heads"] = [heads[key] for key in sorted(heads)]
+        target["ablations"] = [b for b in blocks if b.get("layer") != result["layer"]] + [block]
+        target["ablations"].sort(key=lambda b: b["layer"])
+        if result["layer"] == target.get("layer"):
+            target["ablation"] = block
         with self._lock:
             record = next((t for t in self._traces if t["id"] == attach_to), None)
             name = record["name"] if record else "Attention capture"

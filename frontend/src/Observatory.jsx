@@ -87,6 +87,7 @@ export function App() {
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [pairB, setPairB] = useState("");
+  const [layerView, setLayerView] = useState(null);
   // A capture session: the companion traces produced by one Run (outputs, response, attention).
   const sessionRef = useRef(null);
   const [session, setSession] = useState(null);
@@ -142,16 +143,39 @@ export function App() {
     [trace, tree],
   );
   const viewTrace = useMemo(() => {
-    if (
-      !trace ||
-      trace.kind !== "attention_capture" ||
-      headView === null ||
-      headView === trace.head ||
-      !Array.isArray(trace.heads?.[headView])
-    )
-      return trace;
-    return { ...trace, head: headView, values: trace.heads[headView] };
-  }, [trace, headView]);
+    if (!trace || trace.kind !== "attention_capture") return trace;
+    const L = layerView ?? trace.layer;
+    const stack = (trace.layer_stacks || []).find((s) => s.index === L);
+    const probed = L === trace.layer;
+    const heads = probed ? trace.heads : stack?.heads;
+    if (!probed && !stack) return trace;
+    const h = headView ?? trace.head;
+    const ablation =
+      (trace.ablations || []).find((a) => a.layer === L) ??
+      (probed ? trace.ablation : null) ??
+      null;
+    if (Array.isArray(heads) && Array.isArray(heads[h]))
+      return {
+        ...trace,
+        layer: L,
+        head: h,
+        values: probed && h === trace.head ? trace.values : heads[h],
+        heads,
+        ablation,
+        head_mean: false,
+      };
+    if (stack?.mean)
+      return {
+        ...trace,
+        layer: L,
+        head: h,
+        values: stack.mean,
+        heads: undefined,
+        ablation,
+        head_mean: true,
+      };
+    return trace;
+  }, [trace, headView, layerView]);
   const replayEvent =
     events[Math.min(eventIndex, Math.max(0, events.length - 1))];
   const event =
@@ -284,6 +308,7 @@ export function App() {
     setTraceId(id);
     setTrace(t);
     setHeadView(null);
+    setLayerView(null);
     setTree(t.structure || null);
     const landing =
       atLayer === null || t.kind === "attention_capture"
@@ -457,10 +482,15 @@ export function App() {
   function pickLayer(index, nextHead = head) {
     setLayer(index);
     if (nextHead !== head) setHead(nextHead);
+    const captured =
+      trace?.kind === "attention_capture" &&
+      (index === trace.layer ||
+        (trace.layer_stacks || []).some((s) => s.index === index));
     const sameSession =
       session &&
       session.key === `${state?.loaded?.name}|${inputMode}|${prompt}`;
-    if (textModel && sameSession && !busy)
+    if (captured) setLayerView(index === trace.layer ? null : index);
+    else if (textModel && sameSession && !busy)
       runSession(["attention"], { layer: index, head: nextHead });
     const at = events.findIndex((e) => layerOf(e.module) === index);
     if (at >= 0) {
