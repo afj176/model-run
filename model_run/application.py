@@ -265,6 +265,8 @@ class Application:
                 if not 1 <= ids.shape[1] <= 128:
                     raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
                 inputs = {"input_ids": ids.to(item["device"])}
+                if request.get("ablate_tokens") is not None or request.get("cross_attention") is not None:
+                    raise ValueError("Token ablation and cross-attention maps apply to diffusion pipelines; load one first")
                 if patching:
                     source_text = tokenizer.apply_chat_template([{"role": "user", "content": source_prompt}], tokenize=False, add_generation_prompt=True) if mode == "chat" else source_prompt
                     source_ids = tokenizer(source_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
