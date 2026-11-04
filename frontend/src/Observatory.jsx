@@ -7,6 +7,7 @@ import {
   FolderOpen,
   UploadSimple,
   DownloadSimple,
+  FileHtml,
   Play,
   Pause,
   Stop,
@@ -30,6 +31,7 @@ import MatrixWorkspace from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import Compare from "./Compare";
+import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
 const num = (n) =>
   Number.isFinite(n)
@@ -339,15 +341,30 @@ export function App() {
       }),
     );
   }
-  function exportTrace() {
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(trace)], { type: "application/json" }),
-    );
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "model-run-trace.json";
+    a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function exportTrace() {
+    download(
+      new Blob([JSON.stringify(trace)], { type: "application/json" }),
+      "model-run-trace.json",
+    );
+  }
+  function exportReport() {
+    try {
+      const name = state?.traces?.find((t) => t.id === traceId)?.name;
+      download(
+        new Blob([buildReport(trace, { name })], { type: "text/html" }),
+        "model-run-report.html",
+      );
+    } catch (e) {
+      setError(e.message);
+    }
   }
   async function importTrace(e) {
     const file = e.target.files[0];
@@ -399,6 +416,14 @@ export function App() {
           <span className="toolbar-rule" />
           <button disabled={!trace} onClick={exportTrace}>
             <DownloadSimple size={19} /> Export
+          </button>
+          <span className="toolbar-rule" />
+          <button
+            disabled={!trace}
+            onClick={exportReport}
+            title="Download a self-contained HTML insight report for this trace"
+          >
+            <FileHtml size={19} /> Report
           </button>
           <span className="toolbar-rule" />
           <button onClick={() => importRef.current?.click()}>

@@ -141,6 +141,14 @@ ComfyUI, lighting up wherever the trace carries the data.
   reads them, shows each token's map (over the preview image when one exists)
   and, for joint attention, how much of each region's attention goes to text
   at all. Attention shows where text is read, not what caused a pixel.
+- **Report.** The toolbar's Report button downloads a self-contained HTML
+  insight report for the open trace: facts, prompt tokens, the head profile
+  with heatmap and strongest keys, last-token attention, ablation results, the
+  head gallery, per-layer series, the prediction story with logit lens,
+  cross-attention maps for the most-read tokens, activation statistics with
+  per-call deltas, and every limitation recorded with the trace. It is built
+  in the browser from the trace alone, so it works identically in ComfyUI,
+  contains no scripts, and prints cleanly.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries
