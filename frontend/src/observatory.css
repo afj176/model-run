@@ -2481,3 +2481,63 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Response: what it wrote ---- */
+.response-text {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 15px;
+  line-height: 2;
+  white-space: pre-wrap;
+  margin: 8px 0 4px;
+  max-width: 760px;
+}
+.response-prompt {
+  color: #6b6489;
+}
+.response-token {
+  --p: 0;
+  display: inline;
+  font: inherit;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 5px;
+  min-height: 0;
+  cursor: pointer;
+  color: #1e1a46;
+  background: color-mix(in srgb, #0f9f86 calc(var(--p) * 70%), #f2efe4);
+}
+.response-token.picked {
+  outline: 2px solid #ff3d8f;
+  outline-offset: 1px;
+}
+.response-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 14px;
+}
+.response-detail h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.response-detail h3 small {
+  font-weight: 400;
+  color: #6b6489;
+  font-size: 12px;
+  margin-left: 8px;
+}
+.response-lens {
+  height: 96px;
+}
+.response-lens .lens-cell {
+  flex: 1 0 22px;
+  min-width: 22px;
+}
+.matrix-attribution span.generated {
+  border-style: dashed;
+}
+@media (max-width: 900px) {
+  .response-detail {
+    grid-template-columns: 1fr;
+  }
+}

@@ -199,6 +199,15 @@ ComfyUI, lighting up wherever the trace carries the data.
   run that leaves it empty; the trace records which tokens were masked and how
   many attention calls applied the mask. The tokens still pass through the
   text encoder, so this is an intervention on attention only.
+- **What it wrote, and where each token came from.** Tensor → "Response ·
+  where it came from" greedy-decodes up to 32 tokens from the prompt, one full
+  eager forward pass per token. The panel shows the response with every token
+  shaded by the probability the model gave it; click one to see its runners-up
+  and entropy, the logit lens of that token across layers (which layer first
+  put it on top and where it stayed on top), and the measured attention from
+  the generating position to every earlier token, prompt and generated alike,
+  averaged over all layers and heads, with the first-token attention sink
+  called out. Greedy only: no sampling, repetition control or chat loop.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

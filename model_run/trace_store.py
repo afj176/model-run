@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 MAX_TRACE_BYTES = 16 * 1024 * 1024
-SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching"}
+SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching", "generation_capture"}
 
 
 def _unique_pairs(pairs):
@@ -46,6 +46,35 @@ def _validate_cross_attention(section):
             values = event.get(key)
             if not isinstance(values, list) or len(values) != length or any(type(v) not in (int, float) or not 0 <= v <= 1.0001 for v in values):
                 raise ValueError(f"Invalid cross-attention {key}")
+
+
+def _validate_generation(trace):
+    """A greedy response with per-token provenance."""
+    def _tokens_ok(tokens):
+        return (isinstance(tokens, list) and 1 <= len(tokens) <= 100
+                and all(isinstance(t, dict) and type(t.get("token_id")) is int and type(t.get("probability")) in (int, float) and 0 <= t["probability"] <= 1 for t in tokens))
+    steps = trace.get("steps")
+    if (trace.get("decoding") != "greedy" or trace.get("stopped") not in ("max_new_tokens", "eos", "context_limit")
+            or not isinstance(trace.get("input"), dict) or type(trace["input"].get("token_count")) is not int
+            or not isinstance(steps, list) or not 1 <= len(steps) <= 64 or type(trace.get("provenance")) is not bool):
+        raise ValueError("Invalid generation capture")
+    for index, step in enumerate(steps):
+        if (not isinstance(step, dict) or step.get("index") != index or type(step.get("position")) is not int or step["position"] < 1
+                or type(step.get("token_id")) is not int or type(step.get("probability")) not in (int, float) or not 0 <= step["probability"] <= 1
+                or type(step.get("entropy_bits")) not in (int, float) or not math.isfinite(step["entropy_bits"]) or not _tokens_ok(step.get("top_tokens"))):
+            raise ValueError("Invalid generation step")
+        attention = step.get("attention")
+        if attention is not None and (not isinstance(attention, list) or len(attention) != step["position"] or any(type(v) not in (int, float) or not 0 <= v <= 1.0001 for v in attention)):
+            raise ValueError("Invalid generation attention")
+        lens = step.get("lens")
+        if lens is not None:
+            track = lens.get("chosen_probability_by_layer") if isinstance(lens, dict) else None
+            if (not isinstance(track, list) or not 1 <= len(track) <= 1025 or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in track)
+                    or any(lens.get(k) is not None and (type(lens.get(k)) is not int or not 0 <= lens[k] < len(track)) for k in ("first_layer", "settled_layer"))):
+                raise ValueError("Invalid generation lens")
+    tokens = trace.get("tokens")
+    if tokens is not None and (not isinstance(tokens, list) or len(tokens) != trace["input"]["token_count"]):
+        raise ValueError("Invalid generation prompt tokens")
 
 
 def _validate_patching(block):
@@ -104,7 +133,7 @@ def _validate(trace):
         raise ValueError("Trace requires model and runtime provenance")
     if not isinstance(trace.get("limitations"), list) or any(not isinstance(item, str) for item in trace["limitations"]):
         raise ValueError("Trace requires a list of limitations")
-    for field in ("model_name", "source", "status", "input_mode"):
+    for field in ("model_name", "source", "status", "input_mode", "response"):
         if field in trace and not isinstance(trace[field], str):
             raise ValueError(f"Invalid {field}")
     if "cross_attention" in trace:
@@ -208,6 +237,8 @@ def _validate(trace):
         _validate_ablation(trace, trace.get("layer"))
     elif trace["kind"] == "activation_patching":
         _validate_patching(trace)
+    elif trace["kind"] == "generation_capture":
+        _validate_generation(trace)
     elif trace["kind"] == "pytorch_module_capture":
         events, capture = trace.get("events"), trace.get("capture")
         if not isinstance(events, list) or len(events) > 1024 or not isinstance(capture, dict):

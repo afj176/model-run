@@ -57,6 +57,17 @@ class MeasureTests(unittest.TestCase):
         torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
         self.assertTrue(all(0 <= v <= 1 for v in result["text_mass"]))
 
+    def test_grouped_query_keys_are_expanded(self):
+        torch.manual_seed(2)
+        q = torch.randn(1, 4, 16, 8)
+        k = torch.randn(1, 2, 5, 8)
+        result = measure(q, k, heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        expected = measure(q, k.repeat_interleave(2, dim=1), heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertEqual(result["maps"], expected["maps"])
+        flat = measure(q.transpose(1, 2).reshape(1, 16, 32), k.transpose(1, 2).reshape(1, 5, 16), heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertEqual(flat["maps"], expected["maps"])
+        self.assertIn("unavailable", measure(q, torch.randn(1, 3, 5, 8), heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4]))
+
     def test_unsupported_geometry_is_reported(self):
         q = torch.randn(1, 2, 17, 8)
         k = torch.randn(1, 2, 5, 8)

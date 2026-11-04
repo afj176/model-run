@@ -30,6 +30,7 @@ import Scene from "./Scene";
 import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
+import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import { layerNodePath, railLabel } from "./insights";
 import Compare from "./Compare";
@@ -435,6 +436,17 @@ export function App() {
       }),
     );
   }
+  function runGenerate(count = 32) {
+    setPlaying(false);
+    action(() =>
+      api("run", {
+        prompt,
+        input_mode: inputMode,
+        modules: [],
+        generate: count,
+      }),
+    );
+  }
   function runAblation(tokens) {
     if (!trace?.sampling?.prompt || !tokens?.length) return;
     variantOf.current = traceId;
@@ -624,6 +636,9 @@ export function App() {
                 <option value="attention">Attention</option>
               )}
               {textModel && <option value="layers">Layer outputs</option>}
+              {textModel && (
+                <option value="generate">Response · where it came from</option>
+              )}
               {blockMode && (
                 <option value="latents">
                   {native ? "Denoiser outputs" : "Denoising latents"}
@@ -653,7 +668,9 @@ export function App() {
                   )
                 : busy
                   ? action(() => api("cancel", {}))
-                  : run(tensor === "attention" && textModel)
+                  : tensor === "generate" && textModel
+                    ? runGenerate()
+                    : run(tensor === "attention" && textModel)
             }
           >
             {native ? "ComfyUI" : busy ? "Cancel" : "Run"}
@@ -1351,14 +1368,18 @@ export function App() {
       )}
       <section className="output panel">
         <div className="output-main">
-          {!trace?.output?.top_tokens && !trace?.cross_attention && (
-            <h2>
-              {trace?.preview ? "Generated output" : "Capture history"}
-              <small>Local session · up to 8 traces / 32 MiB</small>
-            </h2>
-          )}
+          {!trace?.output?.top_tokens &&
+            !trace?.cross_attention &&
+            trace?.kind !== "generation_capture" && (
+              <h2>
+                {trace?.preview ? "Generated output" : "Capture history"}
+                <small>Local session · up to 8 traces / 32 MiB</small>
+              </h2>
+            )}
           {trace?.output?.top_tokens ? (
             <Prediction trace={trace} />
+          ) : trace?.kind === "generation_capture" ? (
+            <Response trace={trace} />
           ) : trace?.cross_attention ? (
             <CrossAttention trace={trace} />
           ) : trace?.preview?.mime === "image/png" ? (

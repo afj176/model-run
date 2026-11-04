@@ -803,3 +803,50 @@ export function layerNodePath(nodes, layer) {
   );
   return nodes.find((n) => pattern.test(n.path))?.path ?? null;
 }
+
+/** Narrative for a greedy response: how sure the model was and where its tokens settled. */
+export function responseStory(trace) {
+  const steps = trace?.steps;
+  if (!Array.isArray(steps) || !steps.length) return null;
+  const probabilities = steps.map((s) => s.probability);
+  const meanProbability =
+    probabilities.reduce((a, b) => a + b, 0) / probabilities.length;
+  let most = steps[0],
+    least = steps[0];
+  for (const s of steps) {
+    if (s.probability > most.probability) most = s;
+    if (s.probability < least.probability) least = s;
+  }
+  const settled = steps
+    .map((s) => s.lens?.settled_layer)
+    .filter((v) => Number.isInteger(v));
+  const layerCount = steps[0].lens?.chosen_probability_by_layer?.length ?? 0;
+  const parts = [];
+  const text = (
+    trace.response ?? steps.map((s) => s.text ?? "").join("")
+  ).trim();
+  parts.push(
+    `The model wrote \u201c${tokenText(text.length > 160 ? `${text.slice(0, 157)}\u2026` : text)}\u201d.`,
+  );
+  parts.push(
+    `It was surest of \u201c${tokenText(most.text)}\u201d (${pct(most.probability)}) and least sure of \u201c${tokenText(least.text)}\u201d (${pct(least.probability)}, ${least.entropy_bits.toFixed(1)} bits).`,
+  );
+  if (settled.length && layerCount > 1) {
+    const sorted = [...settled].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const late = settled.filter((v) => v >= layerCount - 1).length;
+    parts.push(
+      `${settled.length === steps.length ? "Every token" : `${settled.length} of ${steps.length} tokens`} settled by the output; the typical token was decided at ${median === 0 ? "the embeddings" : `layer ${median - 1} of ${layerCount - 1}`}${late ? `, and ${late} only at the final layer` : ""}.`,
+    );
+  }
+  if (trace.stopped === "eos") parts.push("It chose to stop.");
+  else if (trace.stopped === "context_limit")
+    parts.push("It hit the context limit.");
+  return {
+    text: parts.join(" "),
+    meanProbability,
+    mostConfident: most,
+    leastConfident: least,
+    settledCount: settled.length,
+  };
+}

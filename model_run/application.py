@@ -237,6 +237,9 @@ class Application:
         attach_to = request.get("attach_to")
         if ablate and not isinstance(attach_to, str):
             raise ValueError("Capture attention for this prompt before ablating heads")
+        generate = request.get("generate")
+        if generate is not None:
+            generate = bounded_int(generate, 1, 64, "generate")
         patching = request.get("patch")
         if patching not in (None, "last", "all"):
             raise ValueError("patch must be last or all")
@@ -276,7 +279,10 @@ class Application:
                 attention = request.get("attention", False)
                 if type(attention) is not bool:
                     raise ValueError("attention must be boolean")
-                if patching:
+                if generate is not None:
+                    operation = "generate"
+                    options = {"max_new_tokens": generate, "top_k": 5}
+                elif patching:
                     operation = "patch_layers"
                     options = {"positions": patching}
                 elif ablate:
@@ -287,7 +293,7 @@ class Application:
                     operation = "probe_attention" if attention else "next_token"
                     options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
                                "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
-                if not paths and not attention and not ablate and not patching:
+                if not paths and not attention and not ablate and not patching and generate is None:
                     paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
                 def decorate(output, trace):
                     trace["input_mode"] = mode
@@ -301,6 +307,12 @@ class Application:
                         for entry in [trace["baseline"], *trace["heads"]]:
                             for token in entry["top_tokens"]:
                                 token["text"] = tokenizer.decode([token["token_id"]])
+                    if trace.get("kind") == "generation_capture":
+                        for step in trace["steps"]:
+                            step["text"] = tokenizer.decode([step["token_id"]])
+                            for token in step["top_tokens"]:
+                                token["text"] = tokenizer.decode([token["token_id"]])
+                        trace["response"] = tokenizer.decode([s["token_id"] for s in trace["steps"]], skip_special_tokens=False)
                     if trace.get("kind") == "activation_patching":
                         for entry in [trace["source_run"], trace["target_run"], *trace["layers"]]:
                             for token in entry["top_tokens"]:

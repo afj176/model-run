@@ -143,6 +143,10 @@ class DenoiserObserver:
                     label, allow_joint = f"{options['block'][0]}:{options['block'][1]}", False
                 else:
                     label, allow_joint = None, False
+                if label is not None:
+                    seen = current.setdefault("seen", [])
+                    if label not in seen and len(seen) < 64:
+                        seen.append(label)
                 if label == self.attention_block:
                     mask = kwargs.get("mask", args[0] if args else None)
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
@@ -210,7 +214,9 @@ class DenoiserObserver:
                 else:
                     section["events"].append(record)
             else:
-                self._skip(call, current["reason"] or f"No attention call matched block {self.attention_block}")
+                seen = current.get("seen") or []
+                hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
+                self._skip(call, current["reason"] or f"No attention call matched block {self.attention_block}{hint}")
             current["record"] = None
         if "cross_attention" in self.trace and self._skipped:
             self.trace["cross_attention"]["skipped"] = list(self._skipped)
@@ -311,7 +317,9 @@ def token_labels(clip, prompt):
         tokenized = clip.tokenize(prompt[:8192])
         best = []
         for value in (tokenized.values() if isinstance(tokenized, dict) else [tokenized]):
-            flat = [pair for chunk in value for pair in chunk]
+            if not isinstance(value, list):
+                continue  # tokenizers may attach flags such as keep_vision
+            flat = [pair for chunk in value if isinstance(chunk, (list, tuple)) for pair in chunk]
             if len(flat) > len(best):
                 best = flat
         if not best:

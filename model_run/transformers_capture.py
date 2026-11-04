@@ -52,7 +52,8 @@ def _logit_lens(model, hidden_states, final_logits, top_k):
             vector = state[0, -1].detach()
             residual_norm = float(vector.float().norm().item())
             projected = vector.unsqueeze(0).unsqueeze(0)
-            if norm is not None:
+            # The last hidden state already carries the final norm; applying it again would distort the output layer.
+            if norm is not None and index < len(hidden_states) - 1:
                 projected = norm(projected)
             logits = head(projected)[0, -1].float()
             if not torch.isfinite(logits).all().item():
@@ -67,7 +68,7 @@ def _logit_lens(model, hidden_states, final_logits, top_k):
     return {"method": "final_norm_and_output_embeddings" if norm is not None else "output_embeddings_without_norm",
             "position": "last_input_token", "final_token_id": final_token, "layers": layers,
             "limitations": ["Intermediate predictions apply the final norm and output head to earlier residual states; they are a lens, not the model's own output.",
-                            "Index 0 is the embedding output; index k is the residual stream after decoder layer k-1."]}
+                            "Index 0 is the embedding output; index k is the residual stream after decoder layer k-1; the last index is the normalised final state."]}
 
 
 def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=10, max_tensor_elements=4096, logit_lens=True, control=None):
@@ -462,3 +463,100 @@ def capture_activation_patching(model, source_ids, target_ids, *, layers=None, p
                             "The patched state is the layer's output residual stream at the chosen positions; attention from later positions still sees the target prompt.",
                             "recovery is the fraction of the gap between the target's and the source's own probability of the source answer that the patch restores; it can exceed 1 or go negative.",
                             "kl_bits is the KL divergence from the target baseline to the patched next-token distribution."]}
+
+
+MAX_GENERATED_TOKENS = 64
+
+
+def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_tokens=128, provenance=True, control=None):
+    """Greedy-decode a bounded response and record, for every generated token, where it came from.
+
+    Each step is a full eager forward pass over the prompt plus the tokens generated so far,
+    with hidden states and attention requested. Per token the trace keeps the top-k
+    distribution and entropy, the logit lens of the chosen token across layers (which layer
+    first ranked it top and how its probability grew), and the measured attention from the
+    generating position to every earlier token, averaged over all layers and heads.
+    """
+    import torch
+    if any(module.training for module in model.modules()):
+        raise ValueError("all model modules must already be in evaluation mode")
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 256:
+        raise ValueError("max_tokens must be between 1 and 256")
+    if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
+        raise ValueError("input_ids must be a bounded batch of one integer token sequence")
+    if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= MAX_GENERATED_TOKENS:
+        raise ValueError(f"max_new_tokens must be between 1 and {MAX_GENERATED_TOKENS}")
+    if type(top_k) is not int or not 1 <= top_k <= 20:
+        raise ValueError("top_k must be between 1 and 20")
+    if type(provenance) is not bool:
+        raise ValueError("provenance must be boolean")
+    eos = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    eos_ids = set(eos if isinstance(eos, (list, tuple)) else [eos]) if eos is not None else set()
+    config_eos = getattr(getattr(model, "config", None), "eos_token_id", None)
+    if config_eos is not None:
+        eos_ids |= set(config_eos if isinstance(config_eos, (list, tuple)) else [config_eos])
+    norm = _final_norm(model) if provenance else None
+    head = model.get_output_embeddings()
+    sequence = input_ids.clone()
+    steps = []
+    stopped = "max_new_tokens"
+    if control is not None:
+        control.checkpoint("generation_start")
+    with torch.inference_mode():
+        for step in range(max_new_tokens):
+            if control is not None:
+                control.check()
+            output = model(input_ids=sequence, use_cache=False, output_hidden_states=provenance, output_attentions=provenance)
+            logits = getattr(output, "logits", None)
+            if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
+                raise ValueError("Model did not return causal language model logits")
+            last = logits[0, -1].detach().float().cpu()
+            if not torch.isfinite(last).all().item():
+                raise ValueError("Model returned non-finite logits")
+            probabilities, distribution = _distribution(last, top_k)
+            chosen = int(torch.argmax(last).item())
+            record = {"index": step, "position": int(sequence.shape[1]), "token_id": chosen,
+                      "probability": float(probabilities[chosen].item()), "entropy_bits": distribution["entropy_bits"],
+                      "top_tokens": distribution["top_tokens"]}
+            if provenance:
+                hidden_states = getattr(output, "hidden_states", None)
+                attentions = getattr(output, "attentions", None)
+                if isinstance(hidden_states, (tuple, list)) and hidden_states:
+                    track, tops = [], []
+                    for index, state in enumerate(hidden_states):
+                        projected = state[0, -1].detach().unsqueeze(0).unsqueeze(0)
+                        if norm is not None and index < len(hidden_states) - 1:
+                            projected = norm(projected)
+                        layer_logits = head(projected)[0, -1].float()
+                        track.append(round(float(torch.softmax(layer_logits, dim=-1)[chosen].item()), 5))
+                        tops.append(int(torch.argmax(layer_logits).item()))
+                    first = next((i for i, t in enumerate(tops) if t == chosen), None)
+                    # settled: the first layer from which the chosen token stays on top through to the output.
+                    settled = None
+                    for index in range(len(tops) - 1, -1, -1):
+                        if tops[index] == chosen:
+                            settled = index
+                        else:
+                            break
+                    record["lens"] = {"chosen_probability_by_layer": track, "first_layer": first, "settled_layer": settled}
+                if isinstance(attentions, (tuple, list)) and attentions and all(isinstance(a, torch.Tensor) and a.ndim == 4 for a in attentions):
+                    received = torch.stack([a[0, :, -1, :].detach().float().mean(0) for a in attentions]).mean(0).cpu()
+                    record["attention"] = [round(float(v), 5) for v in received.tolist()]
+            steps.append(record)
+            if control is not None:
+                control.checkpoint("generation_step", completed=step + 1, total=max_new_tokens)
+            if chosen in eos_ids:
+                stopped = "eos"
+                break
+            if sequence.shape[1] >= 256:
+                stopped = "context_limit"
+                break
+            sequence = torch.cat([sequence, torch.tensor([[chosen]], dtype=sequence.dtype, device=sequence.device)], dim=1)
+    return {"schema_version": "1.0", "kind": "generation_capture", "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
+            "torch_version": str(torch.__version__), "decoding": "greedy", "stopped": stopped,
+            "input": {"token_count": int(input_ids.shape[1]), "token_ids_included": False},
+            "steps": steps, "provenance": provenance,
+            "limitations": ["Greedy decoding without sampling, repetition control or a chat loop; the response is what the raw model would write next.",
+                            "Every step is a full forward pass; attention is the measured head- and layer-averaged weight from the generating position and is not a causal attribution.",
+                            "The logit lens applies the final norm and output head to earlier residual states; it is a lens, not the model's own output.",
+                            "No tokenizer text is recorded here; the application decodes tokens separately."]}

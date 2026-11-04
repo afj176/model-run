@@ -2,6 +2,7 @@
  * from the recorded trace; heatmaps are drawn from recorded values. */
 import {
   ablationStory,
+  responseStory,
   patchStory,
   activationStats,
   attentionHeadProfile,
@@ -385,6 +386,7 @@ export function buildReport(trace, { name = "", generated = new Date() } = {}) {
     );
   if (trace.kind === "attention_capture") body += attentionSections(trace);
   body += predictionSection(trace);
+  body += responseSection(trace);
   body += patchingSection(trace);
   body += crossAttentionSection(trace);
   if (trace.kind !== "attention_capture") body += activationSections(trace);
@@ -431,6 +433,7 @@ table{border-collapse:collapse;font-size:13px;width:100%}th,td{text-align:left;p
 .lens{display:flex;align-items:flex-end;gap:3px;height:118px;border-bottom:1px solid #d9d0e8;padding-bottom:4px;overflow-x:auto}.lens div{flex:1 0 34px;max-width:60px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px}.lens i{display:block;width:100%;border-radius:4px 4px 0 0;background:#c9c1e6}.lens .final i{background:linear-gradient(180deg,#ff6fae,var(--pink))}.lens span{font-family:Consolas,monospace;font-size:10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lens small{font-size:9px;color:var(--muted)}
 .spark{margin:12px 0 0}.spark figcaption{font-size:12px;color:var(--muted)}.spark svg path{fill:none;stroke:#6a52d6;stroke-width:1.5}.spark-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);max-width:320px}
 .preview{max-height:260px;border-radius:8px}.plain-list{margin:0;padding-left:18px;font-size:13px;color:#2f2a55}footer{margin-top:20px;font-size:12px;color:var(--muted)}
+.rtext{font-family:Consolas,"Cascadia Mono",monospace;font-size:14px;line-height:1.9;white-space:pre-wrap}.rprompt{color:var(--muted)}.rtok{--p:0;border-radius:4px;padding:1px 2px;background:color-mix(in srgb,var(--mint) calc(var(--p)*70%),#f2efe4)}
 @media print{section{break-inside:avoid}body{background:#fff}}
 `;
 
@@ -451,5 +454,33 @@ function patchingSection(trace) {
     "Which layer carries the source answer",
     body,
     block.limitations?.join(" "),
+  );
+}
+
+function responseSection(trace) {
+  const story = responseStory(trace);
+  if (!story) return "";
+  const prompt = esc((trace.tokens || []).map((t) => t.text).join(""));
+  const tokens = trace.steps
+    .map(
+      (s) =>
+        `<span class="rtok" style="--p:${s.probability.toFixed(3)}" title="${esc(`${pct(s.probability)} · ${s.entropy_bits.toFixed(2)} bits`)}">${esc(s.text === "" ? "∅" : s.text)}</span>`,
+    )
+    .join("");
+  const rows = trace.steps
+    .map((s) => {
+      const settled = s.lens?.settled_layer;
+      return `<tr><td>${s.index}</td><td>“${esc(tokenText(s.text))}”</td><td>${pct(s.probability)}</td><td>${num(s.entropy_bits, 2)}</td><td>${settled === null || settled === undefined ? "—" : settled === 0 ? "embeddings" : `L${settled - 1}`}</td><td>${esc(
+        s.top_tokens
+          .slice(1, 3)
+          .map((t) => `“${tokenText(t.text)}” ${pct(t.probability)}`)
+          .join(", "),
+      )}</td></tr>`;
+    })
+    .join("");
+  return section(
+    "What it wrote",
+    `<p>${esc(story.text)}</p><p class="rtext"><span class="rprompt">${prompt}</span>${tokens}</p><table><tr><th>#</th><th>Token</th><th>P</th><th>Bits</th><th>Settled</th><th>Runners-up</th></tr>${rows}</table>`,
+    (trace.limitations || []).slice(0, 2).join(" "),
   );
 }

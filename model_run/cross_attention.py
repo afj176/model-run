@@ -54,12 +54,22 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     if type(max_grid) is not int or not 1 <= max_grid <= MAX_GRID:
         raise ValueError(f"max_grid must be between 1 and {MAX_GRID}")
     if q.ndim == 3:
-        if q.shape[-1] % heads or k.shape[-1] != q.shape[-1]:
+        if q.shape[-1] % heads:
             return {"unavailable": "Query width is not divisible by the head count"}
-        q = q.reshape(q.shape[0], q.shape[1], heads, -1).transpose(1, 2)
-        k = k.reshape(k.shape[0], k.shape[1], heads, -1).transpose(1, 2)
-    if q.shape[1] != heads or k.shape[1] != heads or q.shape[0] != k.shape[0] or not 0 <= batch_index < q.shape[0]:
+        head_dim = q.shape[-1] // heads
+        if k.shape[-1] % head_dim:
+            return {"unavailable": "Key width is not a multiple of the head width"}
+        q = q.reshape(q.shape[0], q.shape[1], heads, head_dim).transpose(1, 2)
+        k = k.reshape(k.shape[0], k.shape[1], k.shape[-1] // head_dim, head_dim).transpose(1, 2)
+    if q.shape[1] != heads or q.shape[0] != k.shape[0] or not 0 <= batch_index < q.shape[0]:
         return {"unavailable": "Query/key head layout does not match the head count"}
+    if k.shape[1] != heads:
+        # Grouped-query attention: each key head serves several query heads.
+        if k.shape[1] < 1 or heads % k.shape[1]:
+            return {"unavailable": f"{k.shape[1]} key heads cannot serve {heads} query heads"}
+        k = k.repeat_interleave(heads // k.shape[1], dim=1)
+    if q.shape[-1] != k.shape[-1]:
+        return {"unavailable": "Query and key head widths differ"}
     key_count, query_count, dim = int(k.shape[2]), int(q.shape[2]), int(q.shape[3])
     if key_count == text_tokens and query_count != text_tokens:
         kind, first_image_query = "cross", 0

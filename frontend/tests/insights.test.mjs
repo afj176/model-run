@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  responseStory,
   layerNodePath,
   diffusionCompareStory,
   stepDeltas,
@@ -516,4 +517,45 @@ test("layerNodePath finds the layer node across families", () => {
   );
   assert.equal(layerNodePath(nodes, 99), null);
   assert.equal(layerNodePath(null, 0), null);
+});
+
+test("responseStory summarises confidence and where tokens settled", () => {
+  const trace = {
+    response: " Paris, the city",
+    stopped: "eos",
+    steps: [
+      {
+        index: 0,
+        text: " Paris",
+        probability: 0.66,
+        entropy_bits: 2.1,
+        lens: { chosen_probability_by_layer: [0, 0.1, 0.6], settled_layer: 1 },
+      },
+      {
+        index: 1,
+        text: ",",
+        probability: 0.3,
+        entropy_bits: 3.3,
+        lens: { chosen_probability_by_layer: [0, 0.2, 0.3], settled_layer: 2 },
+      },
+      {
+        index: 2,
+        text: " the",
+        probability: 0.9,
+        entropy_bits: 0.5,
+        lens: { chosen_probability_by_layer: [0, 0.8, 0.9], settled_layer: 1 },
+      },
+    ],
+  };
+  const story = responseStory(trace);
+  assert.match(story.text, /wrote “Paris,␣the␣city”/);
+  assert.match(story.text, /surest of “␣the” \(90%\)/);
+  assert.match(story.text, /least sure of “,” \(30%, 3.3 bits\)/);
+  assert.match(
+    story.text,
+    /Every token settled by the output; the typical token was decided at layer 0 of 2, and 1 only at the final layer/,
+  );
+  assert.match(story.text, /chose to stop/);
+  assert.equal(story.leastConfident.index, 1);
+  assert.equal(responseStory({ steps: [] }), null);
 });
