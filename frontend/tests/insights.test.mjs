@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  compareOverlap,
+  headReactions,
+  layerReactions,
+  lensDivergence,
+  promptCompareStory,
+  promptFromTokens,
+  tokenDiff,
   railLabel,
   crossAttentionStory,
   attentionHeadProfile,
@@ -281,4 +288,122 @@ test("railLabel keeps block families distinct and labels steps", () => {
   assert.equal(railLabel("transformer.h.4", 0), "L4");
   assert.equal(railLabel("Step 7", 0), "S7");
   assert.equal(railLabel("encoder", 4), "5");
+});
+
+test("tokenDiff aligns prefix and suffix and promptFromTokens rebuilds text", () => {
+  const a = [
+    { id: 1, text: "The" },
+    { id: 2, text: " cat" },
+    { id: 3, text: " sat" },
+  ];
+  const b = [
+    { id: 1, text: "The" },
+    { id: 4, text: " dog" },
+    { id: 3, text: " sat" },
+  ];
+  const d = tokenDiff(a, b);
+  assert.deepEqual(
+    [d.prefix, d.suffix, d.changedA, d.changedB, d.same],
+    [1, 1, [1, 2], [1, 2], false],
+  );
+  assert.equal(tokenDiff(a, a).same, true);
+  assert.equal(promptFromTokens(a), "The cat sat");
+  assert.equal(promptFromTokens(null), "");
+});
+
+test("compareOverlap handles different shapes and headReactions ranks heads", () => {
+  const a = [
+    [1, 0, 0],
+    [0.5, 0.5, 0],
+    [0.2, 0.3, 0.5],
+  ];
+  const b = [
+    [1, 0],
+    [0.1, 0.9],
+  ];
+  const o = compareOverlap(a, b);
+  assert.deepEqual([o.rows, o.cols, o.truncated], [2, 2, true]);
+  assert.ok(Math.abs(o.maxDiff - 0.4) < 1e-9);
+  const traceA = { heads: [a, a] };
+  const traceB = {
+    heads: [
+      a,
+      [
+        [1, 0, 0],
+        [0.5, 0.5, 0],
+        [0.9, 0.05, 0.05],
+      ],
+    ],
+  };
+  const heads = headReactions(traceA, traceB);
+  assert.equal(heads[0].head, 1);
+  assert.equal(heads[1].meanAbs, 0);
+  assert.deepEqual(headReactions({}, traceB), []);
+});
+
+test("layerReactions, lensDivergence and promptCompareStory read both traces", () => {
+  const traceA = {
+    tokens: [
+      { id: 1, text: "The" },
+      { id: 2, text: " cat" },
+    ],
+    output: {
+      top_tokens: [
+        { token_id: 9, text: " sat", probability: 0.5 },
+        { token_id: 8, text: " ran", probability: 0.2 },
+      ],
+    },
+    logit_lens: {
+      layers: [
+        { label: "embeddings", top_tokens: [{ token_id: 1 }] },
+        { label: "layer 0", top_tokens: [{ token_id: 9 }] },
+      ],
+    },
+    layers: [
+      { index: 0, entropy_bits: 1, sink_mass: 0.5, previous_token_mass: 0.1 },
+      { index: 1, entropy_bits: 2, sink_mass: 0.4, previous_token_mass: 0.1 },
+    ],
+  };
+  const traceB = {
+    tokens: [
+      { id: 1, text: "The" },
+      { id: 3, text: " dog" },
+    ],
+    output: {
+      top_tokens: [
+        { token_id: 8, text: " ran", probability: 0.6 },
+        { token_id: 9, text: " sat", probability: 0.1 },
+      ],
+    },
+    logit_lens: {
+      layers: [
+        { label: "embeddings", top_tokens: [{ token_id: 1 }] },
+        { label: "layer 0", top_tokens: [{ token_id: 8 }] },
+      ],
+    },
+    layers: [
+      { index: 0, entropy_bits: 1.1, sink_mass: 0.5, previous_token_mass: 0.1 },
+      { index: 1, entropy_bits: 1.2, sink_mass: 0.6, previous_token_mass: 0.1 },
+    ],
+  };
+  const layers = layerReactions(traceA, traceB);
+  assert.equal(layers[0].layer, 1);
+  assert.ok(Math.abs(layers[0].entropyDelta + 0.8) < 1e-9);
+  const lens = lensDivergence(traceA.logit_lens, traceB.logit_lens);
+  assert.deepEqual(
+    [lens.firstDisagreement, lens.agreeCount, lens.firstLabel],
+    [1, 1, "layer 0"],
+  );
+  const story = promptCompareStory(traceA, traceB);
+  assert.match(story.text, /changed “␣cat” to “␣dog” after 1 shared token\./);
+  assert.match(
+    story.text,
+    /answer changes from “␣sat” \(50%\) to “␣ran” \(60%\); the old answer keeps 10%/,
+  );
+  assert.match(story.text, /first disagrees at layer 0/);
+  assert.match(
+    story.text,
+    /Layer 1's attention reacted most: entropy down 0.80 bits/,
+  );
+  assert.equal(promptCompareStory(traceA, null), null);
 });

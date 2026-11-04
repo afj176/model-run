@@ -475,3 +475,197 @@ export function railLabel(path, index) {
     }[family] || family.replace(/_blocks?$/, "").slice(0, 2);
   return `${prefix}${n}`;
 }
+
+/** The raw prompt text as the tokenizer saw it (decoded tokens joined). */
+export function promptFromTokens(tokens) {
+  if (!Array.isArray(tokens) || !tokens.length) return "";
+  return tokens.map((t) => t.text ?? "").join("");
+}
+
+/** Align two token lists by common prefix and suffix; the middle is what changed. */
+export function tokenDiff(a = [], b = []) {
+  const idA = a.map((t) => t.id ?? t.text),
+    idB = b.map((t) => t.id ?? t.text);
+  let prefix = 0;
+  while (
+    prefix < idA.length &&
+    prefix < idB.length &&
+    idA[prefix] === idB[prefix]
+  )
+    prefix++;
+  let suffix = 0;
+  while (
+    suffix < idA.length - prefix &&
+    suffix < idB.length - prefix &&
+    idA[idA.length - 1 - suffix] === idB[idB.length - 1 - suffix]
+  )
+    suffix++;
+  return {
+    prefix,
+    suffix,
+    changedA: [prefix, idA.length - suffix],
+    changedB: [prefix, idB.length - suffix],
+    same: prefix === idA.length && idA.length === idB.length,
+  };
+}
+
+/** Compare two matrices over their shared top-left block; reports truncation. */
+export function compareOverlap(a, b) {
+  if (!a?.length || !b?.length) return null;
+  const rows = Math.min(a.length, b.length);
+  const cols = Math.min(a[0].length, b[0].length);
+  const result = compareMatrices(
+    a.slice(0, rows).map((r) => r.slice(0, cols)),
+    b.slice(0, rows).map((r) => r.slice(0, cols)),
+  );
+  if (!result) return null;
+  return {
+    ...result,
+    rows,
+    cols,
+    truncated:
+      rows !== a.length ||
+      rows !== b.length ||
+      cols !== a[0].length ||
+      cols !== b[0].length,
+  };
+}
+
+/** Which heads of the shared layer moved most between two attention captures. */
+export function headReactions(traceA, traceB) {
+  if (!Array.isArray(traceA?.heads) || !Array.isArray(traceB?.heads)) return [];
+  const count = Math.min(traceA.heads.length, traceB.heads.length);
+  const list = [];
+  for (let h = 0; h < count; h++) {
+    const diff = compareOverlap(traceA.heads[h], traceB.heads[h]);
+    if (!diff) continue;
+    const before = attentionHeadProfile(traceA.heads[h]);
+    const after = attentionHeadProfile(traceB.heads[h]);
+    list.push({
+      head: h,
+      meanAbs: diff.meanAbs,
+      maxDiff: diff.maxDiff,
+      before: before?.label,
+      after: after?.label,
+      relabelled: before?.label !== after?.label,
+      entropyDelta: (after?.entropyBits ?? 0) - (before?.entropyBits ?? 0),
+    });
+  }
+  return list.sort((x, y) => y.meanAbs - x.meanAbs);
+}
+
+/** Per-layer reactions from head-averaged layer summaries of two attention captures. */
+export function layerReactions(traceA, traceB) {
+  if (!Array.isArray(traceA?.layers) || !Array.isArray(traceB?.layers))
+    return [];
+  const byIndex = new Map(traceB.layers.map((l) => [l.index, l]));
+  return traceA.layers
+    .filter((l) => byIndex.has(l.index))
+    .map((l) => {
+      const o = byIndex.get(l.index);
+      return {
+        layer: l.index,
+        entropyDelta: o.entropy_bits - l.entropy_bits,
+        sinkDelta: o.sink_mass - l.sink_mass,
+        previousDelta: o.previous_token_mass - l.previous_token_mass,
+      };
+    })
+    .sort((x, y) => Math.abs(y.entropyDelta) - Math.abs(x.entropyDelta));
+}
+
+/** Where two logit-lens tracks stop agreeing on the top token. */
+export function lensDivergence(lensA, lensB) {
+  const a = lensA?.layers,
+    b = lensB?.layers;
+  if (!Array.isArray(a) || !Array.isArray(b) || !a.length || !b.length)
+    return null;
+  const count = Math.min(a.length, b.length);
+  const agree = [];
+  let first = null;
+  for (let i = 0; i < count; i++) {
+    const same = a[i].top_tokens[0]?.token_id === b[i].top_tokens[0]?.token_id;
+    agree.push(same);
+    if (!same && first === null) first = i;
+  }
+  let last = null;
+  for (let i = count - 1; i >= 0; i--)
+    if (!agree[i]) {
+      last = i;
+      break;
+    }
+  return {
+    layers: count,
+    agree,
+    firstDisagreement: first,
+    lastDisagreement: last,
+    firstLabel: first === null ? null : a[first].label,
+    agreeCount: agree.filter(Boolean).length,
+  };
+}
+
+/** Narrative for a prompt-to-prompt comparison; every figure is read from the two traces. */
+export function promptCompareStory(traceA, traceB) {
+  if (!traceA || !traceB) return null;
+  const parts = [];
+  const diff = tokenDiff(traceA.tokens, traceB.tokens);
+  if (traceA.tokens && traceB.tokens) {
+    const removed = traceA.tokens
+      .slice(...diff.changedA)
+      .map((t) => t.text)
+      .join("");
+    const added = traceB.tokens
+      .slice(...diff.changedB)
+      .map((t) => t.text)
+      .join("");
+    if (diff.same) parts.push("Both prompts tokenise identically.");
+    else if (removed && added)
+      parts.push(
+        `The prompt changed “${tokenText(removed)}” to “${tokenText(added)}” after ${diff.prefix} shared token${diff.prefix === 1 ? "" : "s"}.`,
+      );
+    else if (added)
+      parts.push(
+        `The prompt gained “${tokenText(added)}” after ${diff.prefix} shared tokens.`,
+      );
+    else if (removed)
+      parts.push(
+        `The prompt lost “${tokenText(removed)}” after ${diff.prefix} shared tokens.`,
+      );
+  }
+  const topA = traceA.output?.top_tokens?.[0],
+    topB = traceB.output?.top_tokens?.[0];
+  if (topA && topB) {
+    const under = traceB.output.top_tokens.find(
+      (t) => t.token_id === topA.token_id,
+    );
+    if (topA.token_id === topB.token_id)
+      parts.push(
+        `The answer holds: “${tokenText(topA.text)}” goes from ${pct(topA.probability)} to ${pct(topB.probability)}.`,
+      );
+    else
+      parts.push(
+        `The answer changes from “${tokenText(topA.text)}” (${pct(topA.probability)}) to “${tokenText(topB.text)}” (${pct(topB.probability)})${under ? `; the old answer keeps ${pct(under.probability)}` : "; the old answer leaves the top ten"}.`,
+      );
+  }
+  const lens = lensDivergence(traceA.logit_lens, traceB.logit_lens);
+  if (lens)
+    parts.push(
+      lens.firstDisagreement === null
+        ? `The logit lens agrees on the top token at every one of ${lens.layers} layers.`
+        : `The logit lens first disagrees at ${lens.firstLabel} and agrees at ${lens.agreeCount} of ${lens.layers} layers.`,
+    );
+  const layers = layerReactions(traceA, traceB);
+  if (layers.length) {
+    const l = layers[0];
+    parts.push(
+      `Layer ${l.layer}'s attention reacted most: entropy ${l.entropyDelta >= 0 ? "up" : "down"} ${Math.abs(l.entropyDelta).toFixed(2)} bits, sink mass ${l.sinkDelta >= 0 ? "+" : ""}${pct(l.sinkDelta)}.`,
+    );
+  }
+  const heads = headReactions(traceA, traceB);
+  if (heads.length) {
+    const h = heads[0];
+    parts.push(
+      `Head ${h.head} moved most (mean |Δ| ${h.meanAbs.toFixed(3)}${h.relabelled ? `, ${h.before} → ${h.after}` : ""}).`,
+    );
+  }
+  return { text: parts.join(" "), diff, lens, layers, heads };
+}

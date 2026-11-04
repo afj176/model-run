@@ -2172,3 +2172,137 @@ main {
   font-size: 11px;
   color: #6b6489;
 }
+
+/* ---- Prompt compare ---- */
+.compare-variant {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f6f2ff;
+  border: 1px solid #e3dbf5;
+}
+.compare-variant label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #514a77;
+  font-weight: 600;
+}
+.compare-variant textarea {
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #c9bdf0;
+  background: #fff;
+  color: #1e1a46;
+}
+.compare-variant button {
+  align-self: end;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 0;
+  background: #3f31a3;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.compare-variant button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.compare-variant .micro {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.compare-story {
+  font-size: 15px;
+  line-height: 1.5;
+  color: #2f2a55;
+  margin: 0 0 14px;
+}
+.compare-story svg {
+  color: #6a52d6;
+  vertical-align: -2px;
+}
+.compare-tokens-diff {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+.compare-tokens-diff span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #ece7fa;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+.compare-tokens-diff span.changed {
+  background: #ff3d8f;
+  color: #fff;
+}
+.compare-tokens-diff b {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #3f31a3;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.compare-react {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.compare-react .matrix-attends button {
+  cursor: default;
+}
+.compare-react .matrix-attends-bar.down {
+  background: linear-gradient(90deg, #ff9ec9, #ff3d8f);
+}
+.compare-lens {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.compare-lens span {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #d9f5ec;
+  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #0a7f6a;
+}
+.compare-lens span.differs {
+  background: #ffe1ec;
+  color: #b4215a;
+}
+.compare-strips {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .compare-variant,
+  .compare-strips {
+    grid-template-columns: 1fr;
+  }
+}

@@ -163,6 +163,16 @@ ComfyUI, lighting up wherever the trace carries the data.
   captures and the activation insight with per-call deltas for everything
   else, and Run Metrics adds a per-event statistics table, per-layer series
   and the per-layer attention summary.
+- **Prompt compare.** Compare now has a Prompt B box prefilled with trace A's
+  decoded prompt. Edit one word and Run B reruns the same capture (the attention
+  probe at the same layer and head, or the module capture with the same
+  components), keeps A open and pairs the new trace as B. The view then tells
+  the story in measured terms: which tokens changed (aligned by id), whether
+  the answer held or changed and what the old answer kept, where the logit
+  lens first disagrees, which layers' attention entropy moved most, which
+  heads of the shared layer moved most (over the shared block when shapes
+  differ), both last-token attention strips, and per-layer RMS of the retained
+  prefixes.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

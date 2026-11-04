@@ -86,6 +86,8 @@ export function App() {
   const native = state?.host === "comfyui";
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
+  const [pairB, setPairB] = useState("");
+  const variantOf = useRef("");
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
     [size, setSize] = useState(256),
@@ -306,7 +308,11 @@ export function App() {
         if (latest && version !== lastPublished.current) {
           const sameRun = lastPublished.current.startsWith(`${latest.id}:`);
           lastPublished.current = version;
-          if (!sameRun) {
+          if (!sameRun && variantOf.current) {
+            // A variant-prompt run: keep A open and pair the new trace as B.
+            variantOf.current = "";
+            setPairB(latest.id);
+          } else if (!sameRun) {
             await openTrace(latest.id);
           } else if (selectedTrace.current === latest.id) {
             const updated = await api(`traces/${latest.id}`);
@@ -375,6 +381,26 @@ export function App() {
     a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function runVariant(promptB) {
+    if (!trace || !promptB) return;
+    variantOf.current = traceId;
+    setPlaying(false);
+    const attention = trace.kind === "attention_capture";
+    action(() =>
+      api("run", {
+        prompt: promptB,
+        input_mode: trace.input_mode || inputMode,
+        modules: attention ? [] : trace.capture?.modules || [],
+        elements: trace.capture?.max_tensor_elements || elements,
+        attention,
+        layer: attention ? trace.layer : layer,
+        head: attention ? trace.head : head,
+      }).catch((e) => {
+        variantOf.current = "";
+        throw e;
+      }),
+    );
   }
   function exportTrace() {
     download(
@@ -589,7 +615,19 @@ export function App() {
         onChange={importTrace}
       />
       {view === "compare" ? (
-        <Compare traceA={trace} traces={state?.traces} traceId={traceId} />
+        <Compare
+          traceA={trace}
+          traces={state?.traces}
+          traceId={traceId}
+          pairedId={pairB}
+          busy={busy}
+          canRun={
+            state?.loaded?.task === "text" &&
+            (trace?.model_name ? trace.model_name === state.loaded.name : true)
+          }
+          onRunVariant={runVariant}
+          fallbackPrompt={prompt}
+        />
       ) : view === "matrix" ? (
         <MatrixWorkspace
           trace={viewTrace}
