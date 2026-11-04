@@ -8,6 +8,7 @@ import {
   headReactions,
   layerReactions,
   lensDivergence,
+  layerOf,
   pct,
   promptCompareStory,
   promptFromTokens,
@@ -18,13 +19,6 @@ import {
 import { mix } from "./MatrixWorkspace";
 
 const short = (n) => (Number.isFinite(n) ? n.toPrecision(3) : "—");
-const layerOf = (module) => {
-  const m =
-    /(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\.(\d+)/.exec(
-      module || "",
-    );
-  return m ? Number(m[1]) : null;
-};
 
 function describe(trace) {
   if (!trace) return "—";

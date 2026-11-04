@@ -159,7 +159,9 @@ export function App() {
         pick = i;
     });
     setValueIndex(pick);
-  }, [event]);
+    // Keyed on the event's identity so a trace revision with the same values keeps the pick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceId, event ? eventPath(event) : "", event?.values?.length ?? 0]);
   const selectedValue =
     valueIndex !== null ? (event?.values || []).flat()[valueIndex] : undefined;
   const expandedComponents = useMemo(() => {
@@ -302,6 +304,7 @@ export function App() {
             setCapturePaths([]);
           }
           if (s.job.status === "failed") setError(s.job.error);
+          if (s.job.status !== "completed") variantOf.current = "";
         }
         const latest = s.traces.at(-1);
         const version = latest && `${latest.id}:${latest.revision || 1}`;

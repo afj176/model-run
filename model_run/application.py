@@ -280,6 +280,8 @@ class Application:
                                 token["text"] = tokenizer.decode([token["token_id"]])
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
             else:
+                if ablate:
+                    raise ValueError("Head ablation needs a loaded text model")
                 import inspect
                 parameters = inspect.signature(type(item["adapter"].pipeline).__call__).parameters
                 if "prompt" not in parameters or "output_type" not in parameters:

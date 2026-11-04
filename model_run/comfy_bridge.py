@@ -7,6 +7,7 @@ from .structure import inspect_module_tree
 from .cross_attention import measure, block_record, new_section
 
 MAX_ATTENTION_CALLS = 4
+MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 
 
 class DenoiserObserver:
@@ -171,15 +172,43 @@ class DenoiserObserver:
         self.trace["captured_calls"] = call + 1
         current = self._current
         if current is not None and "cross_attention" in self.trace:
-            if current["record"] is not None:
-                self.trace["cross_attention"]["events"].append(current["record"])
+            section = self.trace["cross_attention"]
+            record = current["record"]
+            if record is not None:
+                used = sum(len(e["maps"]) * len(e["maps"][0]) for e in section["events"] if e.get("maps"))
+                if used + len(record["maps"]) * len(record["maps"][0]) > MAX_SECTION_VALUES:
+                    self._skip(call, f"Cross-attention value budget of {MAX_SECTION_VALUES:,} reached; earlier calls are kept")
+                else:
+                    section["events"].append(record)
             else:
                 self._skip(call, current["reason"] or f"No attention call matched block {self.attention_block}")
             current["record"] = None
         if "cross_attention" in self.trace and self._skipped:
             self.trace["cross_attention"]["skipped"] = list(self._skipped)
         if self.publish is not None:
+            self._publish_safely(call)
+
+    def _publish_safely(self, call):
+        """Publishing must never abort the user's sampling run; shrink and retry, then give up quietly."""
+        try:
             self.publish(self.trace)
+            return
+        except ValueError as exc:
+            section = self.trace.get("cross_attention")
+            if section and section.get("events"):
+                section["events"].pop()
+                self._skip(call, f"Dropped this call's map so the trace fits: {str(exc)[:120]}")
+                section["skipped"] = list(self._skipped)
+                try:
+                    self.publish(self.trace)
+                    return
+                except Exception as retry:  # noqa: BLE001 - reported below
+                    exc = retry
+            import logging
+            logging.getLogger(__name__).warning("Model Run could not publish the observation trace: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - sampling continues regardless
+            import logging
+            logging.getLogger(__name__).warning("Model Run could not publish the observation trace: %s", exc)
 
 
 _application = None

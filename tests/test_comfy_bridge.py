@@ -126,3 +126,42 @@ class CrossAttentionOverrideTests(unittest.TestCase):
         self.assertEqual(len(section["skipped"]), 1)
         encode_trace(observer.trace)
         with self.assertRaises(ValueError): DenoiserObserver(patcher, ["layer"], attention_block="")
+
+
+@unittest.skipIf(torch is None, "optional torch dependency unavailable")
+class PublishSafetyTests(unittest.TestCase):
+    def test_publish_failure_never_breaks_sampling(self):
+        patcher = Patcher()
+        attempts = []
+        def failing_publish(trace):
+            attempts.append(len(trace.get("cross_attention", {}).get("events", [])))
+            raise ValueError("Trace exceeds the size bound")
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, publish=failing_publish, attention_block="double:0")
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            q = torch.randn(1, 2, 3 + 16, 4)
+            observer.attention_override(lambda q, k, v, h, **kw: v, q, q, q, 2, transformer_options={"block_type": "double", "block_index": 0})
+            return patcher.model.diffusion_model(x)
+        output = observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+        self.assertIsNotNone(output)
+        self.assertEqual(attempts, [1, 0])  # retried once without the map, then gave up quietly
+        self.assertTrue(any("fits" in s["reason"] for s in observer.trace["cross_attention"]["skipped"]))
+
+    def test_section_value_budget(self):
+        from model_run import comfy_bridge
+        patcher = Patcher()
+        original = comfy_bridge.MAX_SECTION_VALUES
+        comfy_bridge.MAX_SECTION_VALUES = 3 * 16
+        try:
+            observer = DenoiserObserver(patcher, ["layer"], max_calls=3, elements=3, attention_block="double:0")
+            def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+                q = torch.randn(1, 2, 3 + 16, 4)
+                observer.attention_override(lambda q, k, v, h, **kw: v, q, q, q, 2, transformer_options={"block_type": "double", "block_index": 0})
+                return patcher.model.diffusion_model(x)
+            for _ in range(2):
+                observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+            section = observer.trace["cross_attention"]
+            self.assertEqual(len(section["events"]), 1)
+            self.assertIn("budget", section["skipped"][0]["reason"])
+            encode_trace(observer.trace)
+        finally:
+            comfy_bridge.MAX_SECTION_VALUES = original

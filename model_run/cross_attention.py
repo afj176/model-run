@@ -56,8 +56,8 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     if q.ndim == 3:
         if q.shape[-1] % heads or k.shape[-1] != q.shape[-1]:
             return {"unavailable": "Query width is not divisible by the head count"}
-        q = q.view(q.shape[0], q.shape[1], heads, -1).transpose(1, 2)
-        k = k.view(k.shape[0], k.shape[1], heads, -1).transpose(1, 2)
+        q = q.reshape(q.shape[0], q.shape[1], heads, -1).transpose(1, 2)
+        k = k.reshape(k.shape[0], k.shape[1], heads, -1).transpose(1, 2)
     if q.shape[1] != heads or k.shape[1] != heads or q.shape[0] != k.shape[0] or not 0 <= batch_index < q.shape[0]:
         return {"unavailable": "Query/key head layout does not match the head count"}
     key_count, query_count, dim = int(k.shape[2]), int(q.shape[2]), int(q.shape[3])

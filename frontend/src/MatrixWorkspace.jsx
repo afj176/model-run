@@ -20,6 +20,7 @@ import {
   attentionHeadProfile,
   callDeltas,
   describeActivation,
+  layerOf,
   layerSeries,
   pct,
   rowSummary,
@@ -49,13 +50,6 @@ const axisTitle = (axis) =>
     key_position: "key index",
   })[axis] || axis.replaceAll("_", " ");
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const layerOf = (module) => {
-  const m =
-    /(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\.(\d+)/.exec(
-      module || "",
-    );
-  return m ? Number(m[1]) : null;
-};
 const WINDOW = 64;
 
 export function mix(t) {

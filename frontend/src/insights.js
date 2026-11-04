@@ -182,7 +182,7 @@ export function describeActivation(stats, module) {
   return parts.join(" ");
 }
 
-const layerOf = (module) => {
+export const layerOf = (module) => {
   const m =
     /(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\.(\d+)/.exec(
       module || "",

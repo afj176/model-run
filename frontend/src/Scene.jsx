@@ -308,6 +308,8 @@ export default function Scene({
     rt.pick.bars = null;
     rt.pick.barIndex = [];
     rt.pick.anchor = null;
+    rt.field = null;
+    rt.overlay = null;
     if (!nodes.length && !event) return;
     const add = (o) => rt.content.add(o);
     const color = new THREE.Color();
@@ -597,14 +599,6 @@ export default function Scene({
       t.updateMatrix();
       bars.setMatrixAt(i, t.matrix);
       tint(v, color);
-      if (valueIndex !== null) {
-        if (i === valueIndex) color.copy(pink);
-        else if (
-          !volume &&
-          (cx === valueIndex % cols || cy === Math.floor(valueIndex / cols))
-        )
-          color.lerp(pink, 0.3);
-      }
       bars.setColorAt(i, color);
       rt.pick.barIndex[i] = i;
     });
@@ -612,6 +606,24 @@ export default function Scene({
     if (bars.instanceColor) bars.instanceColor.needsUpdate = true;
     add(bars);
     rt.pick.bars = bars;
+    rt.field = {
+      bars,
+      raw,
+      cols,
+      rows,
+      cell,
+      depth,
+      fieldY,
+      x0,
+      z0,
+      maxHeight,
+      volume,
+      normalize,
+      tint,
+      n,
+    };
+    rt.overlay = new THREE.Group();
+    add(rt.overlay);
 
     if (!volume) {
       // Floating platform with its own grid, linked to the selected slab.
@@ -699,8 +711,48 @@ export default function Scene({
         ends.forEach(add);
       }
     }
+  }, [nodes, selected, event, view, spread, logScale, events, components]);
 
-    // Selected value: outline, bands and callout anchor.
+  // Selection overlay: recolour bars and rebuild only the bands, outline and callout anchor.
+  useEffect(() => {
+    const rt = runtime.current;
+    if (!rt?.field || !rt.overlay) return;
+    const {
+      bars,
+      raw,
+      cols,
+      rows,
+      cell,
+      depth,
+      fieldY,
+      x0,
+      z0,
+      maxHeight,
+      volume,
+      normalize,
+      tint,
+      n,
+    } = rt.field;
+    disposeGroup(rt.overlay);
+    rt.pick.anchor = null;
+    const color = new THREE.Color();
+    const pink = new THREE.Color(C.pink);
+    raw.forEach((v, i) => {
+      tint(v, color);
+      if (valueIndex !== null) {
+        const cx = i % cols;
+        const cy = Math.floor(i / cols) % rows;
+        if (i === valueIndex) color.copy(pink);
+        else if (
+          !volume &&
+          (cx === valueIndex % cols || cy === Math.floor(valueIndex / cols))
+        )
+          color.lerp(pink, 0.3);
+      }
+      bars.setColorAt(i, color);
+    });
+    if (bars.instanceColor) bars.instanceColor.needsUpdate = true;
+    const add = (o) => rt.overlay.add(o);
     if (valueIndex !== null && valueIndex < n) {
       const v = raw[valueIndex];
       const cx = valueIndex % cols;
@@ -758,6 +810,7 @@ export default function Scene({
         .add(new THREE.Vector3(0, outlineSize[1] / 2 + 0.05, 0));
     }
   }, [
+    valueIndex,
     nodes,
     selected,
     event,
@@ -766,7 +819,6 @@ export default function Scene({
     logScale,
     events,
     components,
-    valueIndex,
   ]);
 
   return (
