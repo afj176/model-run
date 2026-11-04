@@ -28,6 +28,8 @@ class DenoiserObserver:
         self.previous_attention = None
         self._current = None
         self._skipped = []
+        # Families that pack the text tokens after the video tokens in joint attention.
+        self.text_last = type(patcher.model.diffusion_model).__name__ in ("NaDiT",)
         self.core = patcher.model.diffusion_model
         names = dict(self.core.named_modules())
         if not module_paths or len(module_paths) > 16 or any(p not in names for p in module_paths):
@@ -119,11 +121,16 @@ class DenoiserObserver:
     def attention_override(self, func, q, k, v, heads, *args, **kwargs):
         """ComfyUI optimized_attention_override: measure the selected block, then run the real kernel."""
         current = self._current
+        if current is not None:
+            current["override_seen"] = True
         if current is not None and self.ablate_tokens:
             try:
                 options = kwargs.get("transformer_options") or {}
-                span = text_key_range(int(q.shape[-2] if q.ndim == 4 else q.shape[1]), int(k.shape[-2] if k.ndim == 4 else k.shape[1]),
-                                      current["text_tokens"], allow_joint="block_type" in options)
+                key_count = int(k.shape[-2] if k.ndim == 4 else k.shape[1])
+                span = text_key_range(int(q.shape[-2] if q.ndim == 4 else q.shape[1]), key_count,
+                                      current["text_tokens"], allow_joint="block_type" in options or "block" not in options)
+                if span is not None and self.text_last and span[1] - span[0] < key_count:
+                    span = (key_count - current["text_tokens"], key_count)
                 if span is not None:
                     existing = kwargs["mask"] if "mask" in kwargs else (args[0] if args else None)
                     bias = key_mask(self.ablate_tokens, int(k.shape[-2] if k.ndim == 4 else k.shape[1]), start=span[0], existing=existing, device=q.device, dtype=q.dtype)
@@ -142,7 +149,10 @@ class DenoiserObserver:
                 elif isinstance(options.get("block"), (tuple, list)) and len(options["block"]) == 2:
                     label, allow_joint = f"{options['block'][0]}:{options['block'][1]}", False
                 else:
-                    label, allow_joint = None, False
+                    # Unlabelled attention: number the calls within this denoiser call so they can still be selected.
+                    ordinal = current.get("ordinal", 0)
+                    current["ordinal"] = ordinal + 1
+                    label, allow_joint = f"call:{ordinal}", True
                 if label is not None:
                     seen = current.setdefault("seen", [])
                     if label not in seen and len(seen) < 64:
@@ -150,7 +160,8 @@ class DenoiserObserver:
                 if label == self.attention_block:
                     mask = kwargs.get("mask", args[0] if args else None)
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid)
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid,
+                                          text_first=not self.text_last)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
                     elif measurement["attention_kind"] == "joint" and not allow_joint:
@@ -215,8 +226,13 @@ class DenoiserObserver:
                     section["events"].append(record)
             else:
                 seen = current.get("seen") or []
-                hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
-                self._skip(call, current["reason"] or f"No attention call matched block {self.attention_block}{hint}")
+                if current["reason"]:
+                    self._skip(call, current["reason"])
+                elif not current.get("override_seen"):
+                    self._skip(call, "This denoiser's attention calls bypass ComfyUI's attention override (no transformer_options reach the kernel), so attention maps are unavailable for this model family; module outputs are still captured")
+                else:
+                    hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
+                    self._skip(call, f"No attention call matched block {self.attention_block}{hint}")
             current["record"] = None
         if "cross_attention" in self.trace and self._skipped:
             self.trace["cross_attention"]["skipped"] = list(self._skipped)

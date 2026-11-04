@@ -45,7 +45,7 @@ def pooled_grid(rows, cols, text_tokens, max_grid):
         scale += 1
 
 
-def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32):
+def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, text_first=True):
     """Return a bounded map record, or ``{"unavailable": reason}`` when the geometry is not understood.
 
     ``q`` and ``k`` are either ``[B, heads, L, D]`` or ``[B, L, heads*D]``. Text keys occupy
@@ -79,18 +79,20 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         return {"unavailable": "Query and key head widths differ"}
     key_count, query_count, dim = int(k.shape[2]), int(q.shape[2]), int(q.shape[3])
     if key_count == text_tokens and query_count != text_tokens:
-        kind, first_image_query = "cross", 0
+        kind, first_image_query, text_start = "cross", 0, 0
     elif key_count == query_count and key_count > text_tokens:
-        kind, first_image_query = "joint", text_tokens
+        kind = "joint"
+        first_image_query = text_tokens if text_first else 0
+        text_start = 0 if text_first else key_count - text_tokens
     else:
         return {"unavailable": f"Sequence lengths (queries {query_count}, keys {key_count}, text {text_tokens}) do not form cross or joint attention"}
-    image_tokens = query_count - first_image_query
+    image_tokens = query_count - text_tokens if kind == "joint" else query_count
     grid = image_grid(image_tokens, latent_shape)
     if grid is None:
         return {"unavailable": f"{image_tokens} image tokens do not map onto the latent grid {list(latent_shape)}"}
     rows, cols, factor, frames = grid
     scale = float(scale) if scale is not None else dim ** -0.5
-    qb = q[batch_index, :, first_image_query:].detach()
+    qb = q[batch_index, :, first_image_query:first_image_query + image_tokens].detach()
     kb = k[batch_index].detach()
     row_mask = None
     if mask is not None:
@@ -106,7 +108,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         if m.ndim == 2:
             if m.shape[0] != query_count:
                 return {"unavailable": "Attention mask layout is not understood"}
-            m = m[first_image_query:]
+            m = m[first_image_query:first_image_query + image_tokens]
         row_mask = m.to(device=qb.device)
     with torch.inference_mode():
         total = None
@@ -117,7 +119,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
                     scores = scores.masked_fill(~row_mask, float("-inf"))
                 else:
                     scores = scores + row_mask.float()
-            probabilities = torch.softmax(scores, dim=-1)[:, :text_tokens]
+            probabilities = torch.softmax(scores, dim=-1)[:, text_start:text_start + text_tokens]
             total = probabilities if total is None else total + probabilities
             del scores
         mean = (total / heads).cpu()  # [image_tokens, text_tokens]
@@ -138,7 +140,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         token_mass = maps.mean(1)
     return {"attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
             "source_grid": [rows, cols], "grid_factor": factor, "grid": [out_rows, out_cols], "scale": scale,
-            "frames": kept, "frame_indices": frame_indices, "source_frames": frames,
+            "frames": kept, "frame_indices": frame_indices, "source_frames": frames, "text_first": text_first,
             "mask_applied": row_mask is not None,
             "maps": [[round(v, ROUND_DIGITS) for v in row] for row in maps.tolist()],
             "text_mass": [round(v, ROUND_DIGITS) for v in text_mass.tolist()],

@@ -227,7 +227,16 @@ ComfyUI, lighting up wherever the trace carries the data.
 - **Video latents.** Cross-attention maps understand 5-D video latents
   (frames × height × width, temporal patch 1, 2 or 4): maps are recorded per
   frame, up to 16 evenly chosen frames, and the panel has a frame picker.
-  Module and step captures already worked for video denoisers.
+  Module and step captures already worked for video denoisers. Verified on
+  SeedVR2 (a 3B video upscaler) through the ComfyUI node: its NaDiT denoiser
+  produces 5-D latents that the table and Run View show with frame and
+  spatial axes. Denoisers that do not label their attention calls can still
+  be measured by ordinal: the skip reason lists the calls seen as `call:N`,
+  and `attention_block: call:3` selects the fourth attention call of each
+  denoiser call. SeedVR2 itself packs text after video (handled, recorded as
+  `text_first: false`) but its attention kernel bypasses ComfyUI's override
+  hook entirely, so its maps are reported as unavailable with that reason;
+  module and latent captures work.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

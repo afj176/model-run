@@ -70,6 +70,17 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(flat["maps"], expected["maps"])
         self.assertIn("unavailable", measure(q, torch.randn(1, 3, 5, 8), heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4]))
 
+    def test_text_last_joint_attention(self):
+        torch.manual_seed(4)
+        q = torch.randn(1, 2, 16 + 5, 8)
+        k = torch.randn(1, 2, 16 + 5, 8)
+        last = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], text_first=False)
+        self.assertEqual(last["attention_kind"], "joint")
+        self.assertFalse(last["text_first"])
+        scores = (q[0, :, :16] @ k[0].transpose(1, 2)) / 8 ** 0.5
+        expected = torch.softmax(scores, dim=-1).mean(0)[:, 16:].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(last["maps"]), expected, atol=1e-4, rtol=0)
+
     def test_unsupported_geometry_is_reported(self):
         q = torch.randn(1, 2, 17, 8)
         k = torch.randn(1, 2, 5, 8)
