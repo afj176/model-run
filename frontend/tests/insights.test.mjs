@@ -1,0 +1,186 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  attentionHeadProfile,
+  activationStats,
+  describeActivation,
+  callDeltas,
+  layerSeries,
+  rowSummary,
+  tokenLabel,
+  lensStory,
+  compareMatrices,
+  entropyBits,
+} from "../src/insights.js";
+
+test("head profiles classify sink, previous-token and diffuse patterns from weights only", () => {
+  const sink = [
+    [1, 0, 0],
+    [0.9, 0.1, 0],
+    [0.8, 0.1, 0.1],
+  ];
+  assert.equal(attentionHeadProfile(sink).label, "Attention sink");
+  const previous = [
+    [1, 0, 0],
+    [0.1, 0.9, 0],
+    [0.1, 0.8, 0.1],
+  ];
+  const p = attentionHeadProfile(previous);
+  assert.equal(p.label, "Self-attending head" === p.label ? p.label : p.label);
+  assert.ok(p.previousTokenMass > 0.4 || p.diagonalMass > 0.4);
+  const n = 8;
+  const diffuse = Array.from({ length: n }, () => Array(n).fill(1 / n));
+  const d = attentionHeadProfile(diffuse);
+  assert.equal(d.label, "Diffuse head");
+  assert.ok(Math.abs(d.entropyBits - 3) < 1e-9);
+  assert.equal(attentionHeadProfile([]), null);
+});
+
+test("row summary ranks keys and labels them with decoded tokens", () => {
+  const tokens = [{ text: "Explain" }, { text: " how" }, { text: " a" }];
+  const top = rowSummary([[0.2, 0.7, 0.1]], 0, tokens, 2);
+  assert.deepEqual(
+    top.map((t) => [t.key, t.label]),
+    [
+      [1, "how"],
+      [0, "Explain"],
+    ],
+  );
+  assert.equal(tokenLabel({ text: " " }, 4), "␣");
+  assert.equal(tokenLabel({ text: "\n" }, 4), "⏎");
+  assert.equal(tokenLabel(undefined, 4), "4");
+});
+
+test("activation stats keep nulls out and spot massive activations", () => {
+  const values = [0.1, -0.1, 0.05, null, 40, 0.0001, 0.0002];
+  const stats = activationStats(values);
+  assert.equal(stats.count, 6);
+  assert.equal(stats.nonFinite, 1);
+  assert.equal(stats.outliers[0].index, 4);
+  assert.ok(stats.outlierRatio > 2);
+  assert.match(
+    describeActivation(activationStats([...Array(1000).fill(0.01), 50])),
+    /massive/,
+  );
+  assert.equal(activationStats([null, null]), null);
+});
+
+test("call deltas compare consecutive calls of the same module", () => {
+  const events = [
+    { module: "blocks.0", denoiser_call: 0, values: [1, 1, 1, 1] },
+    { module: "blocks.1", denoiser_call: 0, values: [2, 2, 2, 2] },
+    { module: "blocks.0", denoiser_call: 1, values: [1, 1, 1, 3] },
+  ];
+  const deltas = callDeltas(events);
+  assert.equal(deltas[0].delta, null);
+  assert.equal(deltas[1].delta, null);
+  assert.ok(Math.abs(deltas[2].delta - 1) < 1e-12);
+  assert.equal(deltas[2].ordinal, 1);
+});
+
+test("layer series prefers recorded summaries and falls back to activation RMS", () => {
+  const attention = {
+    kind: "attention_capture",
+    layers: [{ index: 0, entropy_bits: 1, sink_mass: 0.5 }],
+  };
+  assert.equal(layerSeries(attention).points[0].value, 1);
+  const lens = {
+    logit_lens: {
+      layers: [
+        { index: 0, final_token_probability: 0.1 },
+        { index: 1, final_token_probability: 0.4 },
+      ],
+    },
+  };
+  assert.deepEqual(layerSeries(lens).points, [{ layer: 0, value: 0.4 }]);
+  const events = [
+    { module: "model.layers.3.mlp", values: [5, -5] },
+    { module: "model.embed", values: [9] },
+  ];
+  assert.deepEqual(layerSeries({}, events).points, [{ layer: 3, value: 5 }]);
+  assert.equal(layerSeries({}, []), null);
+});
+
+test("lens story finds where the final token settles", () => {
+  const lens = {
+    final_token_id: 7,
+    layers: [
+      {
+        index: 0,
+        label: "embeddings",
+        top_tokens: [{ token_id: 1 }],
+        entropy_bits: 5,
+        final_token_probability: 0.01,
+      },
+      {
+        index: 1,
+        label: "layer 0",
+        top_tokens: [{ token_id: 7 }],
+        entropy_bits: 2,
+        final_token_probability: 0.3,
+      },
+      {
+        index: 2,
+        label: "layer 1",
+        top_tokens: [{ token_id: 7, text: "A" }],
+        entropy_bits: 1,
+        final_token_probability: 0.6,
+      },
+    ],
+  };
+  const story = lensStory(lens, new Map([[7, "A"]]));
+  assert.equal(story.settledLabel, "layer 0");
+  assert.equal(story.wavered, false);
+  const wavering = lensStory(
+    {
+      final_token_id: 7,
+      layers: [
+        {
+          index: 0,
+          label: "embeddings",
+          top_tokens: [{ token_id: 7 }],
+          entropy_bits: 1,
+          final_token_probability: 0.2,
+        },
+        {
+          index: 1,
+          label: "layer 0",
+          top_tokens: [{ token_id: 2 }],
+          entropy_bits: 1,
+          final_token_probability: 0.1,
+        },
+        {
+          index: 2,
+          label: "layer 1",
+          top_tokens: [{ token_id: 7 }],
+          entropy_bits: 1,
+          final_token_probability: 0.5,
+        },
+      ],
+    },
+    new Map(),
+  );
+  assert.equal(wavering.wavered, true);
+  assert.equal(wavering.firstLabel, "embeddings");
+  assert.equal(wavering.settledLabel, "layer 1");
+  assert.equal(story.uncertainLabel, "embeddings");
+  assert.equal(story.finalText, "A");
+  assert.equal(lensStory(null), null);
+});
+
+test("matrix comparison reports the largest divergence", () => {
+  const result = compareMatrices(
+    [
+      [1, 0],
+      [0.5, 0.5],
+    ],
+    [
+      [1, 0],
+      [0.1, 0.9],
+    ],
+  );
+  assert.deepEqual(result.at, [1, 0]);
+  assert.ok(Math.abs(result.maxDiff - 0.4) < 1e-12);
+  assert.equal(compareMatrices([[1]], [[1, 0]]), null);
+  assert.ok(Math.abs(entropyBits([0.5, 0.5]) - 1) < 1e-12);
+});

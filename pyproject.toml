@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-run"
+version = "0.1.0"
+description = "Local model observatory and ComfyUI runtime visualization extension"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+onnx = ["onnx>=1.17,<2"]
+torch = ["torch>=2.3,<3"]
+transformers = ["torch>=2.3,<3", "transformers>=4.51,<6"]
+diffusers = ["torch>=2.3,<3", "diffusers>=0.35,<1"]
+comfy-paths = ["PyYAML>=6,<7"]
+
+[project.scripts]
+model-run = "model_run.__main__:main"
+model-run-catalog = "model_run.catalog_cli:main"
+model-run-serve = "model_run.server:main"
+
+[tool.setuptools]
+packages = ["model_run"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+model_run = ["web/*", "web/assets/*"]
