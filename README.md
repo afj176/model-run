@@ -149,6 +149,13 @@ ComfyUI, lighting up wherever the trace carries the data.
   per-call deltas, and every limitation recorded with the trace. It is built
   in the browser from the trace alone, so it works identically in ComfyUI,
   contains no scripts, and prints cleanly.
+- **Run View.** The 3D Model stack labels slabs by block family (L12, DB3,
+  SB0, Dn1, Up0, M) and, for diffusion step captures, by step (S0…); each
+  slab carries that event's first samples and selecting one drives the
+  inspector. The Component inspector shows the head profile for attention
+  captures and the activation insight with per-call deltas for everything
+  else, and Run Metrics adds a per-event statistics table, per-layer series
+  and the per-layer attention summary.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

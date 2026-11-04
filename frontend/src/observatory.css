@@ -2061,3 +2061,76 @@ main {
   color: #6b6489;
   padding: 3px 8px;
 }
+
+/* ---- Run View insights ---- */
+.inspector .matrix-insight {
+  margin-top: 12px;
+}
+.metrics-insights h3 {
+  margin-top: 18px;
+}
+.metrics-table-wrap {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.metrics-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  width: 100%;
+}
+.metrics-table th,
+.metrics-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid #e3dbf5;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.metrics-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b6489;
+}
+.metrics-table td.reading {
+  white-space: normal;
+  min-width: 220px;
+  color: #2f2a55;
+}
+.metrics-table td small {
+  color: #6b6489;
+}
+.metrics-table tbody tr {
+  cursor: pointer;
+}
+.metrics-table tbody tr:hover {
+  background: #f6f2ff;
+}
+.metrics-table tbody tr.picked {
+  background: #ece7fa;
+}
+.metrics-spark {
+  margin: 8px 0 0;
+  max-width: 360px;
+}
+.metrics-spark figcaption {
+  font-size: 12px;
+  color: #6b6489;
+}
+.metrics-spark svg {
+  width: 100%;
+  height: 44px;
+  display: block;
+}
+.metrics-spark path {
+  fill: none;
+  stroke: #6a52d6;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.metrics-spark div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #6b6489;
+}

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  railLabel,
   crossAttentionStory,
   attentionHeadProfile,
   activationStats,
@@ -268,4 +269,16 @@ test("crossAttentionStory ranks tokens and locates the peak region", () => {
   assert.match(other.text, /broadly across 100%/);
   assert.equal(Math.round(other.textShare * 100), 50);
   assert.equal(crossAttentionStory({}, null), null);
+});
+
+test("railLabel keeps block families distinct and labels steps", () => {
+  assert.equal(railLabel("model.layers.12", 0), "L12");
+  assert.equal(railLabel("double_blocks.3", 0), "DB3");
+  assert.equal(railLabel("single_blocks.0", 0), "SB0");
+  assert.equal(railLabel("down_blocks.1", 0), "Dn1");
+  assert.equal(railLabel("up_blocks.0", 0), "Up0");
+  assert.equal(railLabel("mid_block", 0), "M");
+  assert.equal(railLabel("transformer.h.4", 0), "L4");
+  assert.equal(railLabel("Step 7", 0), "S7");
+  assert.equal(railLabel("encoder", 4), "5");
 });

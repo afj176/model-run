@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { eventPath } from "./api";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
@@ -211,7 +212,7 @@ export default function Scene({
       edges.rotation.copy(plate.rotation);
       rt.content.add(edges);
       // The first retained event for each component supplies the plate samples.
-      const recorded = events.find((e) => e.module === node.path);
+      const recorded = events.find((e) => eventPath(e) === node.path);
       const retained = (recorded?.values || []).slice(0, 64);
       if (retained.length) {
         const dots = new THREE.InstancedMesh(

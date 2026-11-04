@@ -450,3 +450,28 @@ export function crossAttentionStory(event, labels, token = null) {
     textShare,
   };
 }
+
+/** Compact slab label: distinct per block family, steps as S<n>. */
+export function railLabel(path, index) {
+  const step = /^Step (\d+)$/.exec(path);
+  if (step) return `S${step[1]}`;
+  const m =
+    /(?:^|\.)([a-z_]+)\.(\d+)$/.exec(path) || /(?:^|\.)(mid_block)$/.exec(path);
+  if (!m) return String(index + 1);
+  const family = m[1],
+    n = m[2] ?? "";
+  const prefix =
+    {
+      layers: "L",
+      double_blocks: "DB",
+      single_blocks: "SB",
+      joint_blocks: "J",
+      transformer_blocks: "T",
+      down_blocks: "Dn",
+      up_blocks: "Up",
+      mid_block: "M",
+      blocks: "B",
+      h: "L",
+    }[family] || family.replace(/_blocks?$/, "").slice(0, 2);
+  return `${prefix}${n}`;
+}

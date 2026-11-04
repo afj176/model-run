@@ -30,6 +30,8 @@ import Scene from "./Scene";
 import MatrixWorkspace from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
+import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
+import { railLabel } from "./insights";
 import Compare from "./Compare";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
@@ -97,7 +99,16 @@ export function App() {
     lastPublished = useRef(""),
     selectedTrace = useRef("");
   const busy = state?.job.status === "running",
-    nodes = useMemo(() => displayNodes(tree, trace), [tree, trace]),
+    nodes = useMemo(
+      () =>
+        trace?.kind === "diffusion_step_capture" && trace.events?.length
+          ? trace.events.slice(0, 64).map((e) => ({
+              path: eventPath(e),
+              type: `Denoising step · t=${Number.isFinite(e.timestep) ? Math.round(e.timestep) : "?"}`,
+            }))
+          : displayNodes(tree, trace),
+      [tree, trace],
+    ),
     allNodes = tree?.nodes || nodes;
   const events = useMemo(
     () =>
@@ -755,6 +766,16 @@ export function App() {
                   <dt>Model class</dt>
                   <dd>{trace?.model_class || "—"}</dd>
                 </dl>
+                <MetricsTable
+                  trace={trace}
+                  events={events}
+                  eventIndex={eventIndex}
+                  onPickEvent={(i) => {
+                    setEventIndex(i);
+                    setSelected(eventPath(events[i]));
+                    setPlaying(false);
+                  }}
+                />
                 <h3>Measurement context</h3>
                 <ul>
                   {trace?.limitations?.map((l, i) => <li key={i}>{l}</li>) || (
@@ -851,9 +872,7 @@ export function App() {
                         }
                         onClick={() => choose(n.path)}
                       >
-                        {/\d+$/.test(n.path)
-                          ? `${n.path.includes("double_blocks") ? "D" : n.path.includes("single_blocks") ? "S" : "L"}${n.path.match(/\d+$/)[0]}`
-                          : i + 1}
+                        {railLabel(n.path, i)}
                       </button>
                     ))}
                   </div>
@@ -955,6 +974,7 @@ export function App() {
               <>
                 <h3>
                   {activeNode?.type?.split(".").pop() ||
+                    nodes.find((n) => n.path === selected)?.type ||
                     event?.module ||
                     "Select a component"}
                 </h3>
@@ -996,6 +1016,16 @@ export function App() {
                     </div>
                   </>
                 )}
+                <HeadInsight trace={trace} />
+                <ActivationInsight
+                  event={event}
+                  events={events}
+                  onPickEvent={(i) => {
+                    setEventIndex(i);
+                    setSelected(eventPath(events[i]));
+                    setPlaying(false);
+                  }}
+                />
                 <h3>Captured prefix statistics</h3>
                 <dl>
                   <dt>Minimum</dt>
