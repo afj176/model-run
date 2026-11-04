@@ -350,7 +350,16 @@ main {
 }
 .scene-mount {
   position: absolute;
-  inset: 63px 0 57px;
+  inset: 74px 0 57px;
+  background: radial-gradient(
+    120% 90% at 30% 15%,
+    #2b2157 0%,
+    #171131 55%,
+    #0e0a21 100%
+  );
+  border-radius: 14px;
+  margin: 0 12px;
+  overflow: hidden;
 }
 .scene-mount canvas {
   display: block;
@@ -379,10 +388,16 @@ main {
   font-size: 10px;
   border: 0;
   background: transparent;
+  color: #b9b0dd;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.layer-rail button:hover {
+  color: #fff;
+  background: #ffffff1a;
 }
 .layer-rail button.selected {
   color: #fff;
-  background: var(--indigo);
+  background: var(--pink, #ff3d8f);
 }
 .scene-caption {
   position: absolute;
@@ -392,7 +407,7 @@ main {
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  color: var(--muted);
+  color: #b9b0dd;
   font-size: 9px;
   pointer-events: none;
 }
@@ -407,16 +422,39 @@ main {
   width: 224px;
   justify-content: space-between;
 }
+.legend {
+  color: #ebe6ff;
+  background: #1e1738d9;
+  border: 1px solid #ffffff22;
+  border-radius: 10px;
+  padding: 8px 12px;
+  width: 240px;
+  bottom: 68px;
+  right: 24px;
+}
 .legend .negative {
-  color: #ba4848;
+  color: #ff9ec9;
 }
 .legend .positive {
-  color: #147f6a;
+  color: #7fe6cd;
 }
 .legend small {
   font-size: 9px;
   width: 100%;
   text-align: right;
+  color: #b9b0dd;
+}
+.scene-caption {
+  bottom: 20px;
+  left: 28px;
+  right: 28px;
+}
+.values-grid > div.picked {
+  outline: 2px solid #ff3d8f;
+  outline-offset: -2px;
+}
+.values-grid > div {
+  cursor: pointer;
 }
 .empty-stage {
   position: absolute;

@@ -149,6 +149,13 @@ ComfyUI, lighting up wherever the trace carries the data.
   per-call deltas, and every limitation recorded with the trace. It is built
   in the browser from the trace alone, so it works identically in ComfyUI,
   contains no scripts, and prints cleanly.
+- **Run View stage.** The 3D Model view is now a model map on the same dark
+  stage as the exploration table: one slab per block or step, tinted by its
+  captured RMS and carrying a strip of its first retained values, with the
+  selected slab pulled forward in pink and linked to a floating field of the
+  event's values as mint and coral bars. Click a slab to select it, click a bar
+  to select a value (callout, inspector row and the Values grid follow), and
+  click a child tile behind the field to drill into a sub-component.
 - **Run View.** The 3D Model stack labels slabs by block family (L12, DB3,
   SB0, Dn1, Up0, M) and, for diffusion step captures, by step (S0…); each
   slab carries that event's first samples and selecting one drives the

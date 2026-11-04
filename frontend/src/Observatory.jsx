@@ -85,6 +85,7 @@ export function App() {
   const [headView, setHeadView] = useState(null);
   const native = state?.host === "comfyui";
   const [crossModule, setCrossModule] = useState("");
+  const [valueIndex, setValueIndex] = useState(null);
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
     [size, setSize] = useState(256),
@@ -144,6 +145,21 @@ export function App() {
     !selected || eventPath(replayEvent) === selected ? replayEvent : null;
   const activeNode = allNodes.find((n) => n.path === selected),
     vals = samples(event);
+  useEffect(() => {
+    const values = (event?.values || []).flat().slice(0, 2048);
+    let pick = null;
+    values.forEach((v, i) => {
+      if (
+        v !== null &&
+        Number.isFinite(v) &&
+        (pick === null || Math.abs(v) > Math.abs(values[pick]))
+      )
+        pick = i;
+    });
+    setValueIndex(pick);
+  }, [event]);
+  const selectedValue =
+    valueIndex !== null ? (event?.values || []).flat()[valueIndex] : undefined;
   const expandedComponents = useMemo(() => {
     const parent = nodes.find(
       (n) => n.path === selected || selected.startsWith(n.path + "."),
@@ -857,6 +873,25 @@ export function App() {
                   onSelect={choose}
                   resetKey={resetKey}
                   logScale={logScale}
+                  valueIndex={valueIndex}
+                  onPickValue={setValueIndex}
+                  callout={
+                    event && valueIndex !== null ? (
+                      <>
+                        <span>
+                          {short(eventPath(event))} · #{valueIndex}
+                        </span>
+                        <strong>
+                          Value{" "}
+                          <em>
+                            {selectedValue === null
+                              ? "non-finite"
+                              : num(selectedValue)}
+                          </em>
+                        </strong>
+                      </>
+                    ) : null
+                  }
                 />
                 {nodes.length > 0 && (
                   <div className="layer-rail" aria-label="Model components">
@@ -1001,6 +1036,17 @@ export function App() {
                       <dd>{event.denoiser_call}</dd>
                     </>
                   )}
+                  {valueIndex !== null && event && (
+                    <>
+                      <dt>Selected value</dt>
+                      <dd>
+                        #{valueIndex} ={" "}
+                        {selectedValue === null
+                          ? "non-finite"
+                          : num(selectedValue)}
+                      </dd>
+                    </>
+                  )}
                 </dl>
                 {activeNode?.parameters?.length > 0 && (
                   <>
@@ -1059,7 +1105,15 @@ export function App() {
                     .map((v, i) => (
                       <div
                         key={i}
+                        role="button"
+                        tabIndex={0}
+                        className={i === valueIndex ? "picked" : ""}
                         title={`Index ${i}: ${v}`}
+                        onClick={() => setValueIndex(i)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ")
+                            setValueIndex(i);
+                        }}
                         style={{
                           background:
                             v === null
