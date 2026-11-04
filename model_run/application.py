@@ -319,12 +319,12 @@ class Application:
                     if key in parameters:
                         inputs[key] = size
                 operation, options = "denoising_steps", {"max_tensor_elements": elements, "max_events": 32}
+                ablate_tokens = request.get("ablate_tokens")
+                if ablate_tokens is not None:
+                    from .cross_attention import parse_token_list
+                    options["ablate_tokens"] = parse_token_list(ablate_tokens)
                 cross = request.get("cross_attention")
-                if cross is not None:
-                    if not isinstance(cross, str) or not 1 <= len(cross) <= 512:
-                        raise ValueError("cross_attention must name one attention module")
-                    options["cross_attention"] = cross
-                    options["attention_grid"] = bounded_int(request.get("attention_grid", 32), 4, 64, "attention_grid")
+                if cross is not None or ablate_tokens is not None:
                     tokenizer = getattr(item["adapter"].pipeline, "tokenizer", None)
                     if tokenizer is not None and hasattr(tokenizer, "convert_ids_to_tokens"):
                         try:
@@ -332,6 +332,11 @@ class Application:
                             options["token_labels"] = [str(t).replace("</w>", "") for t in tokenizer.convert_ids_to_tokens(encoded["input_ids"])][:1024]
                         except Exception:
                             options["token_labels"] = None
+                if cross is not None:
+                    if not isinstance(cross, str) or not 1 <= len(cross) <= 512:
+                        raise ValueError("cross_attention must name one attention module")
+                    options["cross_attention"] = cross
+                    options["attention_grid"] = bounded_int(request.get("attention_grid", 32), 4, 64, "attention_grid")
                 def decorate(output, trace):
                     import base64
                     import io
@@ -341,7 +346,8 @@ class Application:
                         images[0].save(buffer, format="PNG")
                         if buffer.tell() <= 4 * 1024 * 1024:
                             trace["preview"] = {"mime": "image/png", "base64": base64.b64encode(buffer.getvalue()).decode()}
-                    trace["sampling"] = {"seed": seed, "steps": steps, "size": size}
+                    trace["sampling"] = {"seed": seed, "steps": steps, "size": size, "prompt": prompt}
+                    trace["limitations"].append("This application trace records the prompt text so a run can be repeated; exported traces may contain private text.")
             with self._lock:
                 if self._cancelled:
                     return

@@ -2400,3 +2400,84 @@ main {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---- Diffusion compare ---- */
+.diffusion-images {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.diffusion-images figure {
+  margin: 0;
+}
+.diffusion-images img,
+.diffusion-images canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #1a1437;
+  image-rendering: auto;
+}
+.diffusion-images canvas.hidden {
+  display: none;
+}
+.diffusion-missing {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  background: #ece7fa;
+  color: #6b6489;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.diffusion-images figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b6489;
+}
+.diffusion-images figcaption b {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #3f31a3;
+  color: #fff;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  margin-right: 6px;
+}
+.ablate-strip {
+  max-height: 120px;
+}
+.ablate-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #514a77;
+  max-width: 320px;
+}
+.ablate-manual input {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #c9bdf0;
+}
+.ablate-manual small {
+  font-weight: 400;
+  color: #6b6489;
+}
+.compare-deltas {
+  max-width: 480px;
+}
+@media (max-width: 900px) {
+  .diffusion-images {
+    grid-template-columns: 1fr;
+  }
+}

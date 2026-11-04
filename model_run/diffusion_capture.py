@@ -162,3 +162,51 @@ class CrossAttentionProbe:
         if self.skipped:
             data["skipped"] = list(self.skipped)
         return data
+
+
+class TokenAblation:
+    """Mask chosen text tokens out of every Diffusers cross-attention module for one run."""
+
+    def __init__(self, pipeline, tokens, *, token_labels=None):
+        import torch
+        from .cross_attention import parse_token_list, ABLATION_LIMITATIONS
+        denoiser = getattr(pipeline, "unet", None)
+        if not isinstance(denoiser, torch.nn.Module):
+            raise ValueError("Token ablation needs a pipeline with a UNet denoiser")
+        self.tokens = parse_token_list(tokens)
+        if not self.tokens:
+            raise ValueError("Select at least one token to ablate")
+        self.modules = [m for m in denoiser.modules() if getattr(m, "is_cross_attention", False) and hasattr(m, "set_processor") and hasattr(m, "processor")]
+        if not self.modules:
+            raise ValueError("The denoiser has no cross-attention modules to mask")
+        labels = token_labels or []
+        self.block = {"method": "cross_attention_key_mask", "tokens": list(self.tokens),
+                      "labels": [labels[t] if t < len(labels) else str(t) for t in self.tokens],
+                      "attention_modules": len(self.modules), "applied_attention_calls": 0, "limitations": list(ABLATION_LIMITATIONS)}
+        self._originals = []
+
+    def install(self):
+        ablation = self
+        for module in self.modules:
+            inner = module.processor
+            self._originals.append((module, inner))
+
+            class Masked:
+                def __call__(self, attn, hidden_states, encoder_hidden_states=None, attention_mask=None, *args, **kwargs):
+                    if encoder_hidden_states is not None:
+                        from .cross_attention import key_mask
+                        keys = int(encoder_hidden_states.shape[1])
+                        bias = key_mask(ablation.tokens, keys, existing=attention_mask, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
+                        # Diffusers expects [batch, 1, keys]; broadcast our [1, 1, 1, keys] bias accordingly.
+                        attention_mask = bias[0].expand(encoder_hidden_states.shape[0], 1, keys)
+                        ablation.block["applied_attention_calls"] += 1
+                    return inner(attn, hidden_states, encoder_hidden_states, attention_mask, *args, **kwargs)
+            module.set_processor(Masked())
+
+    def remove(self):
+        for module, inner in self._originals:
+            module.set_processor(inner)
+        self._originals = []
+
+    def section(self):
+        return dict(self.block)

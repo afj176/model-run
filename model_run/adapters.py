@@ -183,8 +183,8 @@ class DiffusersPipelineAdapter:
                 "verification": "Declared callback readiness; checkpoint and workload require a runtime probe"}
 
     def capture_steps(self, inputs, *, every_n_steps=1, max_events=32, max_tensor_elements=1024, control=None,
-                      cross_attention=None, attention_grid=32, token_labels=None):
-        from .diffusion_capture import DiffusionCapture, CrossAttentionProbe
+                      cross_attention=None, attention_grid=32, token_labels=None, ablate_tokens=None):
+        from .diffusion_capture import DiffusionCapture, CrossAttentionProbe, TokenAblation
         if self.capabilities()["features"]["denoising_steps"]["status"] != "available":
             raise UnsupportedCapability("Pipeline does not expose the required latent callback interface")
         if not isinstance(inputs, dict) or any(key in inputs for key in ("callback_on_step_end", "callback_on_step_end_tensor_inputs")):
@@ -194,11 +194,14 @@ class DiffusersPipelineAdapter:
             raise ValueError("Provide num_inference_steps between 1 and 128")
         recorder = DiffusionCapture(every_n_steps=every_n_steps, max_events=max_events, max_tensor_elements=max_tensor_elements, control=control)
         probe = CrossAttentionProbe(self.pipeline, cross_attention, max_grid=attention_grid, token_labels=token_labels) if cross_attention else None
+        ablation = TokenAblation(self.pipeline, ablate_tokens, token_labels=token_labels) if ablate_tokens else None
         if not self._capture_lock.acquire(blocking=False):
             raise RuntimeError("An observation is already running on this adapter")
         try:
             if control is not None:
                 control.checkpoint("pipeline_start")
+            if ablation is not None:
+                ablation.install()
             if probe is not None:
                 probe.install()
             try:
@@ -206,12 +209,16 @@ class DiffusersPipelineAdapter:
             finally:
                 if probe is not None:
                     probe.remove()
+                if ablation is not None:
+                    ablation.remove()
             if control is not None:
                 control.checkpoint("pipeline_complete")
             trace = recorder.trace(self.pipeline)
             trace["adapter_id"] = self.adapter_id
             if probe is not None:
                 trace["cross_attention"] = probe.section()
+            if ablation is not None:
+                trace["token_ablation"] = ablation.section()
             return output, trace
         except ObservationCancelled as exc:
             try:

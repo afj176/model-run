@@ -132,3 +132,63 @@ def new_section(selection, source, *, token_labels=None, max_grid=32):
     if token_labels is not None:
         section["text_labels"] = [str(label)[:48] for label in token_labels][:MAX_TEXT_TOKENS]
     return section
+
+
+MASK_BIAS = -10000.0
+ABLATION_LIMITATIONS = ["Ablated text tokens are masked out of every attention call that reads text keys for the whole run; remaining attention renormalises over the other keys.",
+                        "Masking a token's keys is an intervention on attention only; the token still passed through the text encoder and may influence other tokens' embeddings.",
+                        "Compare against a run with the same prompt, seed, steps and size and no ablation.",
+                        "applied_attention_calls counts attention calls inside the recorded denoiser calls; the mask also applies to later, unrecorded calls."]
+
+
+def parse_token_list(value, *, limit=64, bound=1024):
+    """Distinct token indices from an int list or a comma/space separated string."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [p for p in value.replace(",", " ").split() if p]
+        try:
+            value = [int(p) for p in parts]
+        except ValueError as exc:
+            raise ValueError("Token indices must be integers") from exc
+    if not isinstance(value, list) or len(value) > limit or any(type(v) is not int or not 0 <= v < bound for v in value):
+        raise ValueError(f"Ablate at most {limit} token indices below {bound}")
+    return sorted(set(value))
+
+
+def text_key_range(query_count, key_count, text_tokens, allow_joint=False):
+    """Where text keys sit in an attention call: (start, stop) or None when keys carry no text.
+
+    Joint attention (text and image concatenated, keys == queries) is only recognised when the
+    caller knows the block is a joint-attention block; a UNet self-attention has the same shape
+    and no text keys.
+    """
+    if key_count == text_tokens and query_count != text_tokens:
+        return 0, text_tokens
+    if allow_joint and key_count == query_count and key_count > text_tokens:
+        return 0, text_tokens
+    return None
+
+
+def key_mask(ablated, key_count, *, start=0, existing=None, device=None, dtype=None):
+    """Additive attention mask of shape [1, 1, 1, key_count] that removes the ablated text keys.
+
+    ``existing`` (bool or additive float, any broadcastable shape) is folded in so the model's own
+    mask still applies. Returns None when nothing is ablated and no existing mask is given.
+    """
+    import torch
+    positions = [start + t for t in ablated if 0 <= start + t < key_count]
+    if not positions and existing is None:
+        return None
+    dtype = dtype if dtype in (torch.float16, torch.bfloat16, torch.float32) else torch.float32
+    bias = torch.zeros(1, 1, 1, key_count, device=device, dtype=dtype)
+    if positions:
+        bias[..., positions] = MASK_BIAS
+    if existing is not None:
+        current = existing
+        if current.dtype == torch.bool:
+            current = torch.zeros(current.shape, device=current.device, dtype=dtype).masked_fill(~current, MASK_BIAS)
+        while current.ndim < 4:
+            current = current.unsqueeze(0)
+        bias = bias + current.to(device=bias.device, dtype=dtype)
+    return bias

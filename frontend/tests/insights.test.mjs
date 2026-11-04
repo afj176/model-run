@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  diffusionCompareStory,
+  stepDeltas,
+  tokenMassShift,
   patchStory,
   compareOverlap,
   headReactions,
@@ -458,4 +461,42 @@ test("patchStory reports flips and the strongest layer", () => {
   });
   assert.match(same.text, /already answer/);
   assert.equal(patchStory(null), null);
+});
+
+test("stepDeltas, tokenMassShift and diffusionCompareStory read the two runs", () => {
+  const a = [
+    { step: 0, values: [1, 1, 1, 1] },
+    { step: 1, values: [2, 2, 2, 2] },
+  ];
+  const b = [
+    { step: 0, values: [1, 1, 1, 1] },
+    { step: 1, values: [2, 2, 0, 0] },
+  ];
+  const deltas = stepDeltas(a, b);
+  assert.equal(deltas.length, 2);
+  assert.equal(deltas[0].relative, 0);
+  assert.ok(Math.abs(deltas[1].relative - Math.sqrt(2) / 2) < 1e-9);
+  const shift = tokenMassShift(
+    {
+      text_labels: ["a", " cat", "<|endoftext|>", "<|endoftext|>"],
+      events: [{ token_mass: [0.1, 0.3, 0.01, 0.01] }],
+    },
+    { events: [{ token_mass: [0.2, 0.05, 0.01, 0.01] }] },
+  );
+  assert.equal(shift.ranked[0].index, 1);
+  assert.equal(shift.ranked.length, 3);
+  const story = diffusionCompareStory({
+    ablation: { labels: [" cat"], applied_attention_calls: 12 },
+    pixels: {
+      mean: 0.12,
+      grid: [0, 0, 0, 0.4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    },
+    deltas,
+    shift,
+  });
+  assert.match(story.text, /“␣cat” masked out/);
+  assert.match(story.text, /most at the top right/);
+  assert.match(story.text, /diverge from step 1/);
+  assert.match(story.text, /Attention moved most for “␣cat”/);
+  assert.equal(diffusionCompareStory({}), null);
 });

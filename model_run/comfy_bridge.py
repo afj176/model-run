@@ -4,7 +4,7 @@ import time
 
 from .capture import capture_forward
 from .structure import inspect_module_tree
-from .cross_attention import measure, block_record, new_section
+from .cross_attention import measure, block_record, new_section, key_mask, text_key_range, parse_token_list, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -12,7 +12,7 @@ MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 
 class DenoiserObserver:
     def __init__(self, patcher, module_paths, *, max_calls=8, elements=1024, publish=None, output_selectors=None,
-                 attention_block=None, attention_grid=32, token_labels=None):
+                 attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None):
         from .application import bounded_int
         self.max_calls = bounded_int(max_calls, 1, 32, "max_calls")
         self.elements = bounded_int(elements, 1, 4096, "elements")
@@ -23,6 +23,8 @@ class DenoiserObserver:
         if token_labels is not None and (not isinstance(token_labels, list) or len(token_labels) > 1024):
             raise ValueError("token_labels must be a bounded list")
         self.token_labels = token_labels
+        self.ablate_tokens = parse_token_list(ablate_tokens)
+        self._ablation_applied = 0
         self.previous_attention = None
         self._current = None
         self._skipped = []
@@ -56,6 +58,9 @@ class DenoiserObserver:
             raise RuntimeError("Concurrent use of the same observed MODEL is unsupported")
         try:
             if self.calls >= self.max_calls:
+                if self.ablate_tokens:
+                    # The intervention covers every denoiser call, not just the recorded ones.
+                    self._current = self._attention_context(self.calls, arguments, measure_call=False)
                 return self._invoke(function, arguments)
             import torch
             observer = self
@@ -85,9 +90,10 @@ class DenoiserObserver:
             self._current = None
             self._lock.release()
 
-    def _attention_context(self, call, arguments):
+    def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""
-        if self.attention_block is None or call >= MAX_ATTENTION_CALLS:
+        measure_call = measure_call and self.attention_block is not None and call < MAX_ATTENTION_CALLS
+        if not measure_call and not self.ablate_tokens:
             return None
         import torch
         conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
@@ -103,7 +109,8 @@ class DenoiserObserver:
         if isinstance(order, list) and len(order) == int(latent.shape[0]) and 0 in order:
             batch_index, batch_label = order.index(0), "conditional (cond_or_uncond)"
         return {"call": call, "latent_shape": list(latent.shape), "text_tokens": int(context.shape[1]),
-                "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None}
+                "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
+                "measure": measure_call}
 
     def _skip(self, call, reason):
         if len(self._skipped) < 32:
@@ -112,7 +119,22 @@ class DenoiserObserver:
     def attention_override(self, func, q, k, v, heads, *args, **kwargs):
         """ComfyUI optimized_attention_override: measure the selected block, then run the real kernel."""
         current = self._current
-        if current is not None and current["record"] is None:
+        if current is not None and self.ablate_tokens:
+            try:
+                options = kwargs.get("transformer_options") or {}
+                span = text_key_range(int(q.shape[-2] if q.ndim == 4 else q.shape[1]), int(k.shape[-2] if k.ndim == 4 else k.shape[1]),
+                                      current["text_tokens"], allow_joint="block_type" in options)
+                if span is not None:
+                    existing = kwargs["mask"] if "mask" in kwargs else (args[0] if args else None)
+                    bias = key_mask(self.ablate_tokens, int(k.shape[-2] if k.ndim == 4 else k.shape[1]), start=span[0], existing=existing, device=q.device, dtype=q.dtype)
+                    if "mask" in kwargs or not args:
+                        kwargs["mask"] = bias
+                    else:
+                        args = (bias, *args[1:])
+                    self._ablation_applied += 1
+            except Exception as exc:  # the intervention must fail loudly in the trace, never in sampling
+                current["reason"] = f"ablation: {type(exc).__name__}: {exc}"
+        if current is not None and current.get("measure", True) and current["record"] is None:
             try:
                 options = kwargs.get("transformer_options") or {}
                 if "block_type" in options:
@@ -162,6 +184,11 @@ class DenoiserObserver:
                                                             token_labels=self.token_labels, max_grid=self.attention_grid)
                 self.trace["cross_attention"]["max_calls"] = MAX_ATTENTION_CALLS
                 self.trace["cross_attention"]["limitations"].append("Text token labels come from the node's optional clip and prompt inputs; without them tokens are numbered.")
+            if self.ablate_tokens:
+                labels = self.token_labels or []
+                self.trace["token_ablation"] = {"method": "cross_attention_key_mask", "tokens": list(self.ablate_tokens),
+                                                "labels": [labels[t] if t < len(labels) else str(t) for t in self.ablate_tokens],
+                                                "applied_attention_calls": 0, "limitations": list(ABLATION_LIMITATIONS)}
             self.trace["limitations"].extend(["Denoiser calls are not sampler steps; guidance may invoke the denoiser multiple times.",
                 "Call budget applies to this node instance until it is re-executed. ComfyUI owns sampling and cancellation."])
         else:
@@ -170,6 +197,8 @@ class DenoiserObserver:
             self.trace["status"] = trace["status"]
             self.trace["dropped_events"] += trace["dropped_events"]
         self.trace["captured_calls"] = call + 1
+        if "token_ablation" in self.trace:
+            self.trace["token_ablation"]["applied_attention_calls"] = self._ablation_applied
         current = self._current
         if current is not None and "cross_attention" in self.trace:
             section = self.trace["cross_attention"]
@@ -243,19 +272,21 @@ class ModelRunObserve:
                     "attention_block": ("STRING", {"default": "", "tooltip": "Measure image-to-text attention in one block: double:0 or single:3 for DiT models, input:4 / middle:0 / output:1 for UNets. Empty disables."}),
                     "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
                     "clip": ("CLIP", {"tooltip": "Optional: with prompt, labels text tokens in the attention maps."}),
-                    "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."})}}
+                    "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."}),
+                    "ablate_tokens": ("STRING", {"default": "", "tooltip": "Intervention: comma-separated text token indices whose keys are masked out of every attention call for this run. Compare the result with a run that leaves this empty."})}}
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
         return float("nan")  # Fresh observation budget for every queued execution.
 
-    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt=""):
+    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens=""):
         import json
         if not isinstance(output_selectors, str) or len(output_selectors) > 8192:
             raise ValueError("Output selector JSON exceeds 8 KiB")
         selectors = json.loads(output_selectors)
         block = attention_block.strip() if isinstance(attention_block, str) else ""
-        labels = token_labels(clip, prompt) if block and clip is not None and isinstance(prompt, str) and prompt.strip() else None
+        ablated = parse_token_list(ablate_tokens if isinstance(ablate_tokens, str) else "")
+        labels = token_labels(clip, prompt) if (block or ablated) and clip is not None and isinstance(prompt, str) and prompt.strip() else None
         clone = model.clone()
         app = application()
         last_id = [None]
@@ -265,9 +296,9 @@ class ModelRunObserve:
             last_id[0] = result["id"]
         observer = DenoiserObserver(model, [s.strip() for s in modules.splitlines()] or [""],
                                     max_calls=max_calls, elements=elements, publish=publish, output_selectors=selectors,
-                                    attention_block=block or None, attention_grid=attention_grid, token_labels=labels)
+                                    attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)
         clone.set_model_unet_function_wrapper(observer)
-        if block:
+        if block or ablated:
             options = clone.model_options.setdefault("transformer_options", {})
             observer.previous_attention = options.get("optimized_attention_override")
             options["optimized_attention_override"] = observer.attention_override

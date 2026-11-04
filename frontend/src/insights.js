@@ -331,6 +331,12 @@ export function compareMatrices(a, b) {
   return { diff, meanAbs: n ? sum / n : 0, maxDiff, at };
 }
 
+/** Percent with two decimals below 1%, so small but real effects do not read as zero. */
+export function pctFine(v) {
+  const x = finite(v) ? v * 100 : 0;
+  return `${Math.abs(x) < 1 && x !== 0 ? x.toFixed(2) : Math.round(x)}%`;
+}
+
 export function pct(v) {
   return `${Math.round((finite(v) ? v : 0) * 100)}%`;
 }
@@ -690,4 +696,101 @@ export function patchStory(block) {
     text = `No single layer flips B's answer to ${name(source)}; the strongest is layer ${best.layer}, which recovers ${pct(best.recovery)} of the gap (${pct(block.target_run.source_answer_probability)} \u2192 ${pct(best.source_answer_probability)}).`;
   const peak = Math.max(1e-9, ...layers.map((l) => Math.abs(l.recovery)));
   return { text, ranked, best, flips, peak, sameAnswer, source, target };
+}
+
+/** Per-step divergence between two diffusion runs over their retained latent prefixes. */
+export function stepDeltas(eventsA = [], eventsB = []) {
+  const byStep = new Map();
+  for (const e of eventsB || [])
+    if (e.step !== undefined) byStep.set(e.step, e);
+  const out = [];
+  for (const a of eventsA || []) {
+    const b = byStep.get(a.step);
+    if (!b || !Array.isArray(a.values) || !Array.isArray(b.values)) continue;
+    const n = Math.min(a.values.length, b.values.length);
+    let sum = 0,
+      sumA = 0,
+      count = 0;
+    for (let i = 0; i < n; i++) {
+      const x = a.values[i],
+        y = b.values[i];
+      if (!finite(x) || !finite(y)) continue;
+      sum += (x - y) * (x - y);
+      sumA += x * x;
+      count++;
+    }
+    if (!count) continue;
+    const rms = Math.sqrt(sum / count),
+      rmsA = Math.sqrt(sumA / count);
+    out.push({ step: a.step, rms, rmsA, relative: rmsA > 0 ? rms / rmsA : 0 });
+  }
+  return out;
+}
+
+/** How each text token's mean attention moved between two cross-attention sections. */
+export function tokenMassShift(sectionA, sectionB) {
+  const a = sectionA?.events?.[0],
+    b = sectionB?.events?.[0];
+  if (!a?.token_mass || !b?.token_mass) return null;
+  const labels = sectionA.text_labels || sectionB.text_labels || null;
+  const n = Math.min(a.token_mass.length, b.token_mass.length);
+  const ranked = [];
+  for (let i = 0; i < n; i++) {
+    const pad =
+      labels?.[i] !== undefined &&
+      /^<\|?(endoftext|pad)\|?>$/i.test(labels[i]) &&
+      i > 0 &&
+      labels[i - 1] === labels[i];
+    if (pad) continue;
+    ranked.push({
+      index: i,
+      label: labels?.[i] ?? null,
+      before: a.token_mass[i],
+      after: b.token_mass[i],
+      delta: b.token_mass[i] - a.token_mass[i],
+    });
+  }
+  ranked.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  return {
+    ranked,
+    peak: Math.max(1e-9, ...ranked.map((r) => Math.abs(r.delta))),
+  };
+}
+
+/** Narrative for two diffusion runs, usually a token-ablation pair. */
+export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
+  const parts = [];
+  if (ablation?.labels?.length)
+    parts.push(
+      `B ran with ${ablation.labels.map((l) => `\u201c${tokenText(l)}\u201d`).join(", ")} masked out of every cross-attention call (${ablation.applied_attention_calls} calls in the recorded steps).`,
+    );
+  if (pixels) {
+    const grid = pixels.grid || [];
+    let peak = 0;
+    for (let i = 1; i < grid.length; i++) if (grid[i] > grid[peak]) peak = i;
+    const row = Math.floor(peak / 4),
+      col = peak % 4;
+    const where = `${row < 1 ? "top" : row > 2 ? "bottom" : "middle"} ${col < 1 ? "left" : col > 2 ? "right" : "centre"}`;
+    parts.push(
+      pixels.mean < 0.001
+        ? "The images are practically identical (under 0.1% mean pixel difference)."
+        : `The images differ by ${pctFine(pixels.mean)} of full scale on average, most at the ${where} (${pctFine(grid[peak])}).`,
+    );
+  }
+  if (deltas?.length) {
+    const first = deltas.find((d) => d.relative >= 0.05);
+    const last = deltas.at(-1);
+    parts.push(
+      first
+        ? `Latents diverge from step ${first.step} and end ${pctFine(last.relative)} apart relative to A.`
+        : `Latents stay within ${pctFine(Math.max(...deltas.map((d) => d.relative)))} of A throughout.`,
+    );
+  }
+  if (shift?.ranked?.length) {
+    const s = shift.ranked[0];
+    parts.push(
+      `Attention moved most for ${s.label ? `\u201c${tokenText(s.label)}\u201d` : `token ${s.index}`} (${s.delta >= 0 ? "+" : ""}${pctFine(s.delta)} mean per region).`,
+    );
+  }
+  return parts.length ? { text: parts.join(" ") } : null;
 }

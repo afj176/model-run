@@ -18,6 +18,7 @@ import {
   tokenText,
 } from "./insights";
 import { mix } from "./MatrixWorkspace";
+import DiffusionCompare from "./DiffusionCompare";
 
 const short = (n) => (Number.isFinite(n) ? n.toPrecision(3) : "—");
 
@@ -37,8 +38,10 @@ export default function Compare({
   pairedId = "",
   busy = false,
   canRun = false,
+  canRunDiffusionModel = false,
   onRunVariant,
   onRunPatch,
+  onRunAblation,
   fallbackPrompt = "",
 }) {
   const [otherId, setOtherId] = useState("");
@@ -86,6 +89,10 @@ export default function Compare({
     Array.isArray(patching.source_run.tokens) &&
     patching.source_run.tokens.length === traceA.tokens.length &&
     patching.source_run.tokens.every((t, i) => t.id === traceA.tokens[i].id);
+  const canRunDiffusion =
+    traceA?.kind === "diffusion_step_capture" &&
+    canRunDiffusionModel &&
+    traceA?.sampling?.prompt;
   const canPatch =
     Boolean(onRunPatch) &&
     canRun &&
@@ -224,6 +231,15 @@ export default function Compare({
             {changed ? "" : " Prompt B currently matches A."}
           </p>
         </form>
+      )}
+      {traceA?.kind === "diffusion_step_capture" && (
+        <DiffusionCompare
+          traceA={traceA}
+          traceB={traceB?.kind === "diffusion_step_capture" ? traceB : null}
+          busy={busy}
+          canRun={Boolean(canRunDiffusion)}
+          onRunAblation={onRunAblation}
+        />
       )}
       {traceA && !traceB && (
         <p className="muted">

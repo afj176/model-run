@@ -188,6 +188,17 @@ ComfyUI, lighting up wherever the trace carries the data.
   per-layer track and in the report. This is a causal test of where the answer
   is carried; each layer is patched on its own and later positions still see
   the target prompt.
+- **Token ablation (diffusion).** Mask chosen prompt tokens out of every
+  cross-attention call for a whole run. In the standalone app, Compare offers
+  "Run without a token" on a diffusion capture: pick tokens from the
+  cross-attention labels (or type indices), and the rerun with the same
+  prompt, seed, steps and size is paired as B, with both images, a pixel
+  difference map, per-step latent divergence and the tokens whose attention
+  moved most. In ComfyUI, set `ablate_tokens` on Model Run · Observe (for
+  example `4, 5`) to generate with those tokens masked and compare against a
+  run that leaves it empty; the trace records which tokens were masked and how
+  many attention calls applied the mask. The tokens still pass through the
+  text encoder, so this is an intervention on attention only.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

@@ -362,6 +362,14 @@ export function buildReport(trace, { name = "", generated = new Date() } = {}) {
         ]
       : null,
     trace.captured_calls ? ["Denoiser calls", trace.captured_calls] : null,
+    trace.token_ablation
+      ? [
+          "Ablated tokens",
+          trace.token_ablation.labels
+            .map((l) => `“${tokenText(l)}”`)
+            .join(", "),
+        ]
+      : null,
     trace.status ? ["Status", trace.status] : null,
   ].filter((f) => f && f[1] !== undefined && f[1] !== "");
   let body = "";

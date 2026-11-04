@@ -439,6 +439,31 @@ export function App() {
       }),
     );
   }
+  function runAblation(tokens) {
+    if (!trace?.sampling?.prompt || !tokens?.length) return;
+    variantOf.current = traceId;
+    setPlaying(false);
+    action(() =>
+      api("run", {
+        prompt: trace.sampling.prompt,
+        modules: [],
+        elements: trace.capture?.max_tensor_elements || elements,
+        steps: trace.sampling.steps,
+        size: trace.sampling.size,
+        seed: trace.sampling.seed,
+        ...(trace.cross_attention?.selection
+          ? {
+              cross_attention: trace.cross_attention.selection,
+              attention_grid: trace.cross_attention.grid_limit || 32,
+            }
+          : {}),
+        ablate_tokens: tokens,
+      }).catch((e) => {
+        variantOf.current = "";
+        throw e;
+      }),
+    );
+  }
   function runPatch(sourcePrompt, targetPrompt, targetId, positions = "last") {
     if (!sourcePrompt || !targetPrompt || !targetId) return;
     setPlaying(false);
@@ -699,8 +724,14 @@ export function App() {
             state?.loaded?.task === "text" &&
             (trace?.model_name ? trace.model_name === state.loaded.name : true)
           }
+          canRunDiffusionModel={
+            Boolean(state?.loaded) &&
+            state.loaded.task !== "text" &&
+            (trace?.model_name ? trace.model_name === state.loaded.name : true)
+          }
           onRunVariant={native ? null : runVariant}
           onRunPatch={native ? null : runPatch}
+          onRunAblation={native ? null : runAblation}
           fallbackPrompt={prompt}
         />
       ) : view === "matrix" ? (
