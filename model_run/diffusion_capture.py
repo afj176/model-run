@@ -86,9 +86,10 @@ class CrossAttentionProbe:
     """
     MAX_CALLS = 4
 
-    def __init__(self, pipeline, module_path, *, max_grid=32, token_labels=None):
+    def __init__(self, pipeline, module_path, *, max_grid=32, token_labels=None, ablated_tokens=None):
         import torch
-        from .cross_attention import new_section
+        from .cross_attention import new_section, parse_token_list
+        self.ablated_tokens = parse_token_list(ablated_tokens)
         denoiser = getattr(pipeline, "unet", None)
         if not isinstance(denoiser, torch.nn.Module):
             raise ValueError("Cross-attention maps need a pipeline with a UNet denoiser")
@@ -131,12 +132,13 @@ class CrossAttentionProbe:
             if q is None or k is None or self.latent_shape is None:
                 self._skip("Projections were not captured for this call")
                 return
-            from .cross_attention import measure, block_record
+            from .cross_attention import measure, block_record, key_mask
             batch = int(q.shape[0])
             index, label = (1, "positive prompt (second of the guidance pair)") if batch == 2 else (0, "batch 0")
             try:
+                mask = key_mask(self.ablated_tokens, int(k.shape[1]), device=k.device, dtype=torch.float32) if self.ablated_tokens else None
                 result = measure(q, k, heads=self.heads, text_tokens=int(k.shape[1]), latent_shape=self.latent_shape,
-                                 scale=self.scale, batch_index=index, max_grid=self.max_grid)
+                                 scale=self.scale, mask=mask, batch_index=index, max_grid=self.max_grid)
             except Exception as exc:
                 self._skip(f"{type(exc).__name__}: {exc}")
                 return
@@ -186,6 +188,7 @@ class TokenAblation:
         self._originals = []
 
     def install(self):
+        import torch
         ablation = self
         for module in self.modules:
             inner = module.processor
@@ -194,11 +197,17 @@ class TokenAblation:
             class Masked:
                 def __call__(self, attn, hidden_states, encoder_hidden_states=None, attention_mask=None, *args, **kwargs):
                     if encoder_hidden_states is not None:
-                        from .cross_attention import key_mask
+                        from .cross_attention import key_mask, MASK_BIAS
                         keys = int(encoder_hidden_states.shape[1])
-                        bias = key_mask(ablation.tokens, keys, existing=attention_mask, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
-                        # Diffusers expects [batch, 1, keys]; broadcast our [1, 1, 1, keys] bias accordingly.
-                        attention_mask = bias[0].expand(encoder_hidden_states.shape[0], 1, keys)
+                        bias = key_mask(ablation.tokens, keys, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)[0, 0]  # [1, keys]
+                        if attention_mask is None:
+                            attention_mask = bias.expand(encoder_hidden_states.shape[0], 1, keys)
+                        else:
+                            # Keep the pipeline's own mask shape ([B, keys] or [B, 1, keys]); add the bias along the key axis.
+                            current = attention_mask
+                            if current.dtype == torch.bool:
+                                current = torch.zeros(current.shape, device=current.device, dtype=bias.dtype).masked_fill(~current, MASK_BIAS)
+                            attention_mask = current.to(bias.dtype) + bias.reshape(*([1] * (current.ndim - 1)), keys)
                         ablation.block["applied_attention_calls"] += 1
                     return inner(attn, hidden_states, encoder_hidden_states, attention_mask, *args, **kwargs)
             module.set_processor(Masked())

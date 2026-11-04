@@ -794,3 +794,12 @@ export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
   }
   return parts.length ? { text: parts.join(" ") } : null;
 }
+
+/** The structure node that is decoder layer ``layer``, across the block families the app knows. */
+export function layerNodePath(nodes, layer) {
+  if (!Array.isArray(nodes) || !Number.isInteger(layer)) return null;
+  const pattern = new RegExp(
+    `(?:^|\\.)(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks|h)\\.${layer}$`,
+  );
+  return nodes.find((n) => pattern.test(n.path))?.path ?? null;
+}

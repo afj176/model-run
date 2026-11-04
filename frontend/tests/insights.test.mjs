@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  layerNodePath,
   diffusionCompareStory,
   stepDeltas,
   tokenMassShift,
@@ -499,4 +500,20 @@ test("stepDeltas, tokenMassShift and diffusionCompareStory read the two runs", (
   assert.match(story.text, /diverge from step 1/);
   assert.match(story.text, /Attention moved most for “␣cat”/);
   assert.equal(diffusionCompareStory({}), null);
+});
+
+test("layerNodePath finds the layer node across families", () => {
+  const nodes = [
+    { path: "model" },
+    { path: "model.layers.0" },
+    { path: "model.layers.12" },
+    { path: "model.layers.12.self_attn" },
+  ];
+  assert.equal(layerNodePath(nodes, 12), "model.layers.12");
+  assert.equal(
+    layerNodePath([{ path: "transformer.h.3" }], 3),
+    "transformer.h.3",
+  );
+  assert.equal(layerNodePath(nodes, 99), null);
+  assert.equal(layerNodePath(null, 0), null);
 });

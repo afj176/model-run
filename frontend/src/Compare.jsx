@@ -99,6 +99,7 @@ export default function Compare({
     traceA?.tokens &&
     traceB?.tokens &&
     traceB.kind !== "diffusion_step_capture" &&
+    (traceA.input_mode || "raw") === (traceB.input_mode || "raw") &&
     promptOf(traceA) &&
     promptOf(traceB);
   const attention =
@@ -564,8 +565,9 @@ export default function Compare({
                   onRunPatch(
                     promptOf(traceA),
                     promptOf(traceB),
-                    traceB.id ?? otherId,
+                    otherId,
                     "last",
+                    traceB.input_mode || "raw",
                   )
                 }
               >
@@ -579,8 +581,9 @@ export default function Compare({
                     onRunPatch(
                       promptOf(traceA),
                       promptOf(traceB),
-                      traceB.id ?? otherId,
+                      otherId,
                       "all",
+                      traceB.input_mode || "raw",
                     )
                   }
                   title="Patch every position (prompts have the same length)"

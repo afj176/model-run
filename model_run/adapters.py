@@ -193,7 +193,7 @@ class DiffusersPipelineAdapter:
         if type(steps) is not int or not 1 <= steps <= 128:
             raise ValueError("Provide num_inference_steps between 1 and 128")
         recorder = DiffusionCapture(every_n_steps=every_n_steps, max_events=max_events, max_tensor_elements=max_tensor_elements, control=control)
-        probe = CrossAttentionProbe(self.pipeline, cross_attention, max_grid=attention_grid, token_labels=token_labels) if cross_attention else None
+        probe = CrossAttentionProbe(self.pipeline, cross_attention, max_grid=attention_grid, token_labels=token_labels, ablated_tokens=ablate_tokens) if cross_attention else None
         ablation = TokenAblation(self.pipeline, ablate_tokens, token_labels=token_labels) if ablate_tokens else None
         if not self._capture_lock.acquire(blocking=False):
             raise RuntimeError("An observation is already running on this adapter")

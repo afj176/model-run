@@ -67,6 +67,8 @@ class Application:
     def snapshot(self):
         with self._lock:
             loaded = None if self._loaded is None else {k: self._loaded[k] for k in ("id", "name", "task", "device")}
+            if loaded is not None:
+                loaded["chat_template"] = bool(getattr(self._loaded.get("tokenizer"), "chat_template", None))
             return {"host": self.host_kind, "job": deepcopy(self._state), "loaded": loaded,
                     "observation": self.host.snapshot(), "models": self.host.models(),
                     "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision")} for t in self._traces]}
@@ -254,6 +256,8 @@ class Application:
                 if mode not in ("raw", "chat"):
                     raise ValueError("Input mode must be raw or chat")
                 if mode == "chat":
+                    if not getattr(tokenizer, "chat_template", None):
+                        raise ValueError("This tokenizer has no chat template; use the raw prompt mode")
                     prompt_text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True)
                 else:
                     prompt_text = prompt
@@ -323,6 +327,8 @@ class Application:
                 if ablate_tokens is not None:
                     from .cross_attention import parse_token_list
                     options["ablate_tokens"] = parse_token_list(ablate_tokens)
+                    if not options["ablate_tokens"]:
+                        raise ValueError("Select at least one token to ablate")
                 cross = request.get("cross_attention")
                 if cross is not None or ablate_tokens is not None:
                     tokenizer = getattr(item["adapter"].pipeline, "tokenizer", None)

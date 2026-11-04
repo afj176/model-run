@@ -165,11 +165,17 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
     if control is not None:
         control.checkpoint("attention_forward_complete")
     attentions = getattr(output, "attentions", None)
-    if attentions is None or layer >= len(attentions) or attentions[layer] is None:
+    if attentions is None or not len(attentions):
         raise ValueError("Requested attention is unavailable; use a compatible attention implementation")
+    if layer >= len(attentions):
+        raise ValueError(f"Layer {layer} is out of range; this model returns attention for {len(attentions)} layers")
+    if attentions[layer] is None:
+        raise ValueError(f"Layer {layer} returned no attention; use a compatible attention implementation")
     matrix = attentions[layer]
-    if not isinstance(matrix, torch.Tensor) or matrix.ndim != 4 or matrix.shape[0] != 1 or head >= matrix.shape[1]:
-        raise ValueError("Requested attention head or tensor shape is unavailable")
+    if not isinstance(matrix, torch.Tensor) or matrix.ndim != 4 or matrix.shape[0] != 1:
+        raise ValueError("Requested attention tensor shape is unavailable")
+    if head >= matrix.shape[1]:
+        raise ValueError(f"Head {head} is out of range; layer {layer} has {int(matrix.shape[1])} heads")
     selected = matrix[0, head].detach().float().cpu()
     if not torch.isfinite(selected).all().item():
         raise ValueError("Attention contains non-finite values")

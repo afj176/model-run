@@ -31,7 +31,7 @@ import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
-import { railLabel } from "./insights";
+import { layerNodePath, railLabel } from "./insights";
 import Compare from "./Compare";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
@@ -123,11 +123,8 @@ export function App() {
         ? [
             {
               module:
-                (tree?.nodes || []).find((n) =>
-                  new RegExp(
-                    `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks|h)\\.${trace.layer}$`,
-                  ).test(n.path),
-                )?.path ?? `Attention L${trace.layer} / H${trace.head}`,
+                layerNodePath(tree?.nodes, trace.layer) ??
+                `Attention L${trace.layer} / H${trace.head}`,
               label: `Attention L${trace.layer} / H${trace.head}`,
               values: trace.values.flat(),
               shape: trace.shape,
@@ -255,6 +252,9 @@ export function App() {
   const textModel = state?.loaded?.task === "text";
   // Layer choices: numeric decoder layers for text models, block nodes otherwise.
   const blockMode = !textModel && (Boolean(state?.loaded) || native);
+  useEffect(() => {
+    if (blockMode && tensor === "attention") setTensor("latents");
+  }, [blockMode, tensor]);
   const layerChoices = useMemo(() => {
     if (!blockMode)
       return [...new Set(layerOptions)].map((n) => ({
@@ -299,11 +299,7 @@ export function App() {
     setEventIndex(0);
     setSelected(
       t.kind === "attention_capture"
-        ? (t.structure?.nodes || []).find((n) =>
-            new RegExp(
-              `(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks|h)\\.${t.layer}$`,
-            ).test(n.path),
-          )?.path || ""
+        ? layerNodePath(t.structure?.nodes, t.layer) || ""
         : eventPath(t.events?.[0]),
     );
     setPlaying(false);
@@ -464,14 +460,20 @@ export function App() {
       }),
     );
   }
-  function runPatch(sourcePrompt, targetPrompt, targetId, positions = "last") {
+  function runPatch(
+    sourcePrompt,
+    targetPrompt,
+    targetId,
+    positions = "last",
+    mode = null,
+  ) {
     if (!sourcePrompt || !targetPrompt || !targetId) return;
     setPlaying(false);
     action(() =>
       api("run", {
         prompt: targetPrompt,
         source_prompt: sourcePrompt,
-        input_mode: trace?.input_mode || inputMode,
+        input_mode: mode || trace?.input_mode || inputMode,
         modules: [],
         patch: positions,
         attach_to: targetId,
@@ -1675,7 +1677,15 @@ export function App() {
                     onChange={(e) => setInputMode(e.target.value)}
                   >
                     <option value="raw">Raw prompt</option>
-                    <option value="chat">Tokenizer chat template</option>
+                    <option
+                      value="chat"
+                      disabled={state?.loaded?.chat_template === false}
+                    >
+                      Tokenizer chat template
+                      {state?.loaded?.chat_template === false
+                        ? " (not available for this tokenizer)"
+                        : ""}
+                    </option>
                   </select>
                 </Field>
                 <Field label="Values per event">
