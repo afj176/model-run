@@ -79,3 +79,50 @@ class ComfyBridgeTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+@unittest.skipIf(torch is None, "optional torch dependency unavailable")
+class CrossAttentionOverrideTests(unittest.TestCase):
+    def test_override_measures_selected_block_and_passes_through(self):
+        patcher = Patcher()
+        published = []
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=2, elements=3, publish=lambda t: published.append(encode_trace(t)),
+                                    attention_block="double:1", attention_grid=4, token_labels=["a", "b", "c"])
+        calls = []
+        def kernel(q, k, v, heads, *args, **kwargs):
+            calls.append(kwargs.get("transformer_options", {}).get("block_index"))
+            return v
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            q = torch.randn(2, 2, 3 + 16, 4)
+            for index in range(2):
+                options = {"block_type": "double", "block_index": index}
+                observer.attention_override(kernel, q, q, q, 2, transformer_options=options, skip_reshape=True)
+            return patcher.model.diffusion_model(x)
+        context = torch.zeros(2, 3, 8)
+        for call in range(3):
+            observer(denoiser, {"input": torch.ones(2, 4, 4, 4), "timestep": None,
+                                "c": {"c_crossattn": context, "transformer_options": {}}, "cond_or_uncond": [1, 0]})
+        self.assertEqual(calls, [0, 1] * 3)
+        section = observer.trace["cross_attention"]
+        self.assertEqual(section["text_labels"], ["a", "b", "c"])
+        self.assertEqual([e["denoiser_call"] for e in section["events"]], [0, 1])
+        event = section["events"][0]
+        self.assertEqual((event["block"], event["attention_kind"], event["grid"], event["batch"]), ("double:1", "joint", [4, 4], "conditional (cond_or_uncond)"))
+        self.assertEqual(len(event["maps"]), 3)
+        self.assertNotIn("skipped", section)
+        self.assertIsNone(observer._current)
+        self.assertEqual(len(published), 2)
+
+    def test_override_reports_unsupported_geometry(self):
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="output:1")
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            q = torch.randn(1, 7, 8)
+            observer.attention_override(lambda q, k, v, h, **kw: v, q, q, q, 2, transformer_options={"block": ("output", 1), "block_index": 0})
+            return patcher.model.diffusion_model(x)
+        observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+        section = observer.trace["cross_attention"]
+        self.assertEqual(section["events"], [])
+        self.assertEqual(len(section["skipped"]), 1)
+        encode_trace(observer.trace)
+        with self.assertRaises(ValueError): DenoiserObserver(patcher, ["layer"], attention_block="")

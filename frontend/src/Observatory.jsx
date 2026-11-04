@@ -28,6 +28,7 @@ import {
 import Scene from "./Scene";
 import MatrixWorkspace from "./MatrixWorkspace";
 import Prediction from "./Prediction";
+import CrossAttention from "./CrossAttention";
 import Compare from "./Compare";
 import { api, displayNodes, samples, eventPath } from "./api";
 const num = (n) =>
@@ -79,6 +80,7 @@ export function App() {
   const [tensor, setTensor] = useState("attention");
   const [headView, setHeadView] = useState(null);
   const native = state?.host === "comfyui";
+  const [crossModule, setCrossModule] = useState("");
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
     [size, setSize] = useState(256),
@@ -331,6 +333,9 @@ export function App() {
         layer,
         head,
         ...(ablate ? { ablate, attach_to: traceId } : {}),
+        ...(crossModule && state?.loaded?.task !== "text"
+          ? { cross_attention: crossModule }
+          : {}),
       }),
     );
   }
@@ -1090,7 +1095,7 @@ export function App() {
       )}
       <section className="output panel">
         <div className="output-main">
-          {!trace?.output?.top_tokens && (
+          {!trace?.output?.top_tokens && !trace?.cross_attention && (
             <h2>
               {trace?.preview ? "Generated output" : "Capture history"}
               <small>Local session · up to 8 traces / 32 MiB</small>
@@ -1098,6 +1103,8 @@ export function App() {
           )}
           {trace?.output?.top_tokens ? (
             <Prediction trace={trace} />
+          ) : trace?.cross_attention ? (
+            <CrossAttention trace={trace} />
           ) : trace?.preview?.mime === "image/png" ? (
             <img
               className="output-image"
@@ -1453,6 +1460,24 @@ export function App() {
                     onChange={(e) => setSeed(Number(e.target.value))}
                   />
                 </Field>
+                {state?.loaded?.task !== "text" && (
+                  <Field label="Cross-attention map">
+                    <select
+                      value={crossModule}
+                      onChange={(e) => setCrossModule(e.target.value)}
+                      aria-label="Cross-attention module"
+                    >
+                      <option value="">Off</option>
+                      {(tree?.nodes || [])
+                        .filter((n) => /\.attn2$/.test(n.path))
+                        .map((n) => (
+                          <option key={n.path} value={n.path}>
+                            {n.path}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
+                )}
               </div>
               <p>
                 Text captures accept up to 128 tokens.{" "}

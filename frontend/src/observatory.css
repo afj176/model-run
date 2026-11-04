@@ -1894,3 +1894,170 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Cross-attention: where the prompt is read ---- */
+.xattn-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.xattn-head h2 {
+  margin-bottom: 4px;
+}
+.xattn-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #6b6489;
+}
+.xattn-story {
+  font-size: 15px;
+  line-height: 1.5;
+  color: #2f2a55;
+  margin: 8px 0 12px;
+}
+.xattn-story svg {
+  color: #6a52d6;
+  vertical-align: -2px;
+}
+.xattn-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.xattn-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1a1437;
+}
+.xattn-canvas.small {
+  max-width: 150px;
+  margin-top: 10px;
+}
+.xattn-canvas img,
+.xattn-canvas canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.xattn-canvas canvas {
+  image-rendering: pixelated;
+}
+.xattn-map-caption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b6489;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.xattn-map-caption b {
+  color: #1e1a46;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.xattn-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.xattn-sub {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #514a77;
+}
+.xattn-sub small {
+  font-weight: 400;
+  color: #6b6489;
+}
+.xattn-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding-right: 4px;
+}
+.xattn-strip button {
+  --heat: 0;
+  min-height: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #0f9f8633;
+  font-size: 12px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: #1e1a46;
+  background: color-mix(in srgb, #0f9f86 calc(var(--heat) * 85%), #f2efe4);
+  cursor: pointer;
+  white-space: pre;
+}
+.xattn-strip button.picked {
+  outline: 2px solid #ff3d8f;
+  outline-offset: 1px;
+}
+.xattn-rank {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 460px;
+}
+.xattn-rank button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(70px, 120px) 1fr 48px;
+  gap: 8px;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  padding: 3px 4px;
+  min-height: 0;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.xattn-rank button:hover {
+  background: #efe9ff;
+}
+.xattn-rank-token {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.xattn-rank-bar {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #7fd9c2, #0f9f86);
+}
+.xattn-rank b {
+  text-align: right;
+  color: #0a7f6a;
+}
+.xattn .micro {
+  margin-top: 10px;
+}
+@media (max-width: 900px) {
+  .xattn-body {
+    grid-template-columns: 1fr;
+  }
+}
+.xattn-pad {
+  align-self: center;
+  font-size: 11px;
+  color: #6b6489;
+  padding: 3px 8px;
+}

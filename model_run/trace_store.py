@@ -18,6 +18,36 @@ def _unique_pairs(pairs):
     return result
 
 
+def _validate_cross_attention(section):
+    """Measured image-to-text attention maps attached to a diffusion or module trace."""
+    if (not isinstance(section, dict) or section.get("method") != "measured_attention_probabilities" or not isinstance(section.get("source"), str)
+            or not isinstance(section.get("selection"), str) or not isinstance(section.get("events"), list) or len(section["events"]) > 32
+            or not isinstance(section.get("limitations"), list) or type(section.get("grid_limit")) is not int):
+        raise ValueError("Invalid cross-attention section")
+    labels = section.get("text_labels")
+    if labels is not None and (not isinstance(labels, list) or len(labels) > 1024 or any(not isinstance(l, str) or len(l) > 48 for l in labels)):
+        raise ValueError("Invalid cross-attention token labels")
+    skipped = section.get("skipped")
+    if skipped is not None and (not isinstance(skipped, list) or len(skipped) > 32 or any(not isinstance(s, dict) or not isinstance(s.get("reason"), str) for s in skipped)):
+        raise ValueError("Invalid cross-attention skip list")
+    for event in section["events"]:
+        if (not isinstance(event, dict) or type(event.get("denoiser_call")) is not int or event["denoiser_call"] < 0
+                or event.get("attention_kind") not in ("cross", "joint") or type(event.get("text_tokens")) is not int or not 1 <= event["text_tokens"] <= 1024
+                or not isinstance(event.get("grid"), list) or len(event["grid"]) != 2 or any(type(n) is not int or not 1 <= n <= 64 for n in event["grid"])
+                or not isinstance(event.get("source_grid"), list) or len(event["source_grid"]) != 2 or any(type(n) is not int or n < 1 for n in event["source_grid"])
+                or type(event.get("heads")) is not int or not isinstance(event.get("batch"), str) or not isinstance(event.get("block"), str)):
+            raise ValueError("Invalid cross-attention event")
+        cells = event["grid"][0] * event["grid"][1]
+        maps = event.get("maps")
+        if (not isinstance(maps, list) or len(maps) != event["text_tokens"] or event["text_tokens"] * cells > 262144
+                or any(not isinstance(row, list) or len(row) != cells or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in row) for row in maps)):
+            raise ValueError("Invalid cross-attention maps")
+        for key, length in (("text_mass", cells), ("token_mass", event["text_tokens"])):
+            values = event.get(key)
+            if not isinstance(values, list) or len(values) != length or any(type(v) not in (int, float) or not 0 <= v <= 1.0001 for v in values):
+                raise ValueError(f"Invalid cross-attention {key}")
+
+
 def _validate_ablation(ablation, layer):
     """A zero-ablation result: a baseline next-token distribution and one entry per ablated head."""
     def _tokens_ok(entry):
@@ -50,6 +80,10 @@ def _validate(trace):
     for field in ("model_name", "source", "status", "input_mode"):
         if field in trace and not isinstance(trace[field], str):
             raise ValueError(f"Invalid {field}")
+    if "cross_attention" in trace:
+        if trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture"):
+            raise ValueError("Cross-attention maps belong to denoiser traces")
+        _validate_cross_attention(trace["cross_attention"])
     structure = trace.get("structure")
     if structure is not None:
         if not isinstance(structure, dict) or not isinstance(structure.get("nodes"), list) or len(structure["nodes"]) > 10000:

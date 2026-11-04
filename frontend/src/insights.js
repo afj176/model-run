@@ -385,3 +385,68 @@ export function ablationStory(ablation, head) {
     changers: ranked.filter((h) => h.top_token_changed).map((h) => h.head),
   };
 }
+
+/** Ranking and narrative for one cross-attention event; ``token`` focuses one map. */
+export function crossAttentionStory(event, labels, token = null) {
+  const mass = event?.token_mass;
+  if (!Array.isArray(mass) || !mass.length || !Array.isArray(event.maps))
+    return null;
+  const ranked = mass
+    .map((m, index) => ({ index, mass: m }))
+    .sort((a, b) => b.mass - a.mass);
+  const peakMass = Math.max(1e-9, ranked[0].mass);
+  const index = token ?? ranked[0].index;
+  const map = event.maps[index] || [];
+  const [rows, cols] = event.grid;
+  let peak = 0,
+    peakAt = 0,
+    sum = 0;
+  map.forEach((v, i) => {
+    sum += v;
+    if (v > peak) {
+      peak = v;
+      peakAt = i;
+    }
+  });
+  const mean = map.length ? sum / map.length : 0;
+  // Share of regions where this token gets at least half its peak weight.
+  const spread = map.length
+    ? map.filter((v) => v >= peak / 2).length / map.length
+    : 0;
+  const name = labels?.[index]
+    ? `\u201c${tokenText(labels[index])}\u201d`
+    : `token ${index}`;
+  const rank = ranked.findIndex((r) => r.index === index) + 1;
+  const row = Math.floor(peakAt / cols),
+    col = peakAt % cols;
+  const vertical =
+    row < rows / 3 ? "top" : row >= (2 * rows) / 3 ? "bottom" : "middle";
+  const horizontal =
+    col < cols / 3 ? "left" : col >= (2 * cols) / 3 ? "right" : "centre";
+  const where =
+    vertical === "middle" && horizontal === "centre"
+      ? "centre"
+      : `${vertical} ${horizontal}`;
+  const text =
+    `${name} is read most at the ${where} (${pct(peak)} of that region's attention) and ` +
+    (spread >= 0.5
+      ? `broadly across ${pct(spread)} of the image`
+      : `in a focused area covering ${pct(spread)} of the image`) +
+    `; it ranks ${rank} of ${mass.length} tokens by mean attention (${pct(mean)}).`;
+  const textShare =
+    Array.isArray(event.text_mass) && event.text_mass.length
+      ? event.text_mass.reduce((a, b) => a + b, 0) / event.text_mass.length
+      : null;
+  return {
+    ranked,
+    peakMass,
+    index,
+    peak,
+    peakCell: [row, col],
+    mean,
+    spread,
+    where,
+    text,
+    textShare,
+  };
+}

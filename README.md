@@ -127,6 +127,20 @@ ComfyUI, lighting up wherever the trace carries the data.
   an intervention rather than natural behaviour, and effects of several heads
   are not additive. The request is refused when the prompt no longer matches
   the capture.
+- **Where the prompt is read (diffusion).** Image-to-text attention maps
+  measured from the exact query and key tensors the attention kernel receives,
+  head-averaged and area-pooled to a grid of at most 32×32 (64 with the node
+  setting). In the standalone app pick a `attn2` module under "Cross-attention
+  map" before running a Diffusers UNet pipeline; the prompt is tokenised with
+  the pipeline's tokenizer for labels. In ComfyUI set `attention_block` on
+  Model Run · Observe (`double:0` or `single:3` for Flux, Qwen-Image and other
+  joint-attention DiTs, `output:1` style for UNets) and optionally wire `clip`
+  plus the prompt to label tokens. ComfyUI maps come from the attention
+  override hook, so they include rotary embeddings and masks; up to four
+  denoiser calls are recorded. The panel ranks tokens by how much the image
+  reads them, shows each token's map (over the preview image when one exists)
+  and, for joint attention, how much of each region's attention goes to text
+  at all. Attention shows where text is read, not what caused a pixel.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

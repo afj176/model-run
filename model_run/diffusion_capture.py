@@ -74,3 +74,91 @@ class DiffusionCapture:
                                 "Flattened prefixes converted to float32 are not representative samples.",
                                 "Non-contiguous tensors may require a full reshape copy.",
                                 "Pipeline must support callback_on_step_end with latents."]}
+
+
+class CrossAttentionProbe:
+    """Measure image-to-text attention of one classic cross-attention module in a Diffusers UNet.
+
+    Forward hooks on the module's ``to_q`` and ``to_k`` capture the exact projected tensors;
+    the module's own forward hook turns them into head-averaged probabilities with the
+    module's scale. Rotary or joint-attention transformers are refused, since their kernel
+    inputs are not module outputs.
+    """
+    MAX_CALLS = 4
+
+    def __init__(self, pipeline, module_path, *, max_grid=32, token_labels=None):
+        import torch
+        from .cross_attention import new_section
+        denoiser = getattr(pipeline, "unet", None)
+        if not isinstance(denoiser, torch.nn.Module):
+            raise ValueError("Cross-attention maps need a pipeline with a UNet denoiser")
+        if not isinstance(module_path, str) or not 1 <= len(module_path) <= 512:
+            raise ValueError("Select one cross-attention module path")
+        module = dict(denoiser.named_modules()).get(module_path)
+        if module is None:
+            raise ValueError("Unknown cross-attention module path")
+        to_q, to_k = getattr(module, "to_q", None), getattr(module, "to_k", None)
+        heads, scale = getattr(module, "heads", None), getattr(module, "scale", None)
+        if not isinstance(to_q, torch.nn.Module) or not isinstance(to_k, torch.nn.Module) or type(heads) is not int or type(scale) not in (int, float):
+            raise ValueError("Module is not a Diffusers attention block with to_q/to_k projections")
+        if getattr(module, "is_cross_attention", None) is False:
+            raise ValueError("Select a cross-attention (attn2) module; self-attention has no text keys")
+        self.denoiser, self.module, self.to_q, self.to_k = denoiser, module, to_q, to_k
+        self.heads, self.scale, self.path = heads, float(scale), module_path
+        self.section_data = new_section(module_path, "diffusers_module_hooks", token_labels=token_labels, max_grid=max_grid)
+        self.section_data["max_calls"] = self.MAX_CALLS
+        self.section_data["limitations"].append("Diffusers classifier-free guidance batches the negative prompt first; the positive element is recorded when the batch has two entries.")
+        self.max_grid = max_grid
+        self.handles, self.call, self.latent_shape, self.stash, self.skipped = [], -1, None, {}, []
+
+    def install(self):
+        import torch
+        def on_denoiser(_module, args, kwargs):
+            sample = args[0] if args else kwargs.get("sample")
+            self.call += 1
+            self.latent_shape = list(sample.shape) if isinstance(sample, torch.Tensor) else None
+            self.stash = {}
+        def keep(name):
+            def hook(_module, _args, output):
+                if self.call < self.MAX_CALLS and isinstance(output, torch.Tensor):
+                    self.stash[name] = output.detach()
+            return hook
+        def on_attention(_module, _args, _output):
+            if self.call >= self.MAX_CALLS or self.call in {e["denoiser_call"] for e in self.section_data["events"]}:
+                return
+            q, k = self.stash.get("q"), self.stash.get("k")
+            self.stash = {}
+            if q is None or k is None or self.latent_shape is None:
+                self._skip("Projections were not captured for this call")
+                return
+            from .cross_attention import measure, block_record
+            batch = int(q.shape[0])
+            index, label = (1, "positive prompt (second of the guidance pair)") if batch == 2 else (0, "batch 0")
+            try:
+                result = measure(q, k, heads=self.heads, text_tokens=int(k.shape[1]), latent_shape=self.latent_shape,
+                                 scale=self.scale, batch_index=index, max_grid=self.max_grid)
+            except Exception as exc:
+                self._skip(f"{type(exc).__name__}: {exc}")
+                return
+            if "unavailable" in result:
+                self._skip(result["unavailable"])
+            else:
+                self.section_data["events"].append(block_record(self.path, denoiser_call=self.call, batch_label=label, measurement=result, block_label=self.path))
+        self.handles = [self.denoiser.register_forward_pre_hook(on_denoiser, with_kwargs=True),
+                        self.to_q.register_forward_hook(keep("q")), self.to_k.register_forward_hook(keep("k")),
+                        self.module.register_forward_hook(on_attention)]
+
+    def _skip(self, reason):
+        if len(self.skipped) < 32:
+            self.skipped.append({"denoiser_call": self.call, "reason": str(reason)[:200]})
+
+    def remove(self):
+        for handle in self.handles:
+            handle.remove()
+        self.handles = []
+
+    def section(self):
+        data = dict(self.section_data)
+        if self.skipped:
+            data["skipped"] = list(self.skipped)
+        return data

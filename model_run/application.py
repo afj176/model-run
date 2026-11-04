@@ -295,6 +295,19 @@ class Application:
                     if key in parameters:
                         inputs[key] = size
                 operation, options = "denoising_steps", {"max_tensor_elements": elements, "max_events": 32}
+                cross = request.get("cross_attention")
+                if cross is not None:
+                    if not isinstance(cross, str) or not 1 <= len(cross) <= 512:
+                        raise ValueError("cross_attention must name one attention module")
+                    options["cross_attention"] = cross
+                    options["attention_grid"] = bounded_int(request.get("attention_grid", 32), 4, 64, "attention_grid")
+                    tokenizer = getattr(item["adapter"].pipeline, "tokenizer", None)
+                    if tokenizer is not None and hasattr(tokenizer, "convert_ids_to_tokens"):
+                        try:
+                            encoded = tokenizer(prompt, padding="max_length", truncation=True, max_length=getattr(tokenizer, "model_max_length", 77))
+                            options["token_labels"] = [str(t).replace("</w>", "") for t in tokenizer.convert_ids_to_tokens(encoded["input_ids"])][:1024]
+                        except Exception:
+                            options["token_labels"] = None
                 def decorate(output, trace):
                     import base64
                     import io

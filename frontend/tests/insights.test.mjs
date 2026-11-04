@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ablationStory,
+  crossAttentionStory,
   attentionHeadProfile,
   activationStats,
   describeActivation,
@@ -238,4 +239,33 @@ test("ablationStory narrates one head and ranks the sweep", () => {
   assert.match(flat.text, /barely moves/);
   assert.equal(ablationStory(ablation, 9).entry, null);
   assert.equal(ablationStory(null, 0), null);
+});
+
+test("crossAttentionStory ranks tokens and locates the peak region", () => {
+  const event = {
+    grid: [2, 3],
+    source_grid: [4, 6],
+    token_mass: [0.1, 0.4, 0.2],
+    text_mass: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+    maps: [
+      [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+      [0.0, 0.0, 0.9, 0.0, 0.0, 0.0],
+      [0.2, 0.2, 0.2, 0.2, 0.2, 0.2],
+    ],
+  };
+  const story = crossAttentionStory(event, ["a", "cat", "sat"]);
+  assert.deepEqual(
+    story.ranked.map((r) => r.index),
+    [1, 2, 0],
+  );
+  assert.equal(story.index, 1);
+  assert.deepEqual(story.peakCell, [0, 2]);
+  assert.match(story.text, /“cat” is read most at the top right/);
+  assert.match(story.text, /focused area/);
+  assert.match(story.text, /ranks 1 of 3/);
+  const other = crossAttentionStory(event, null, 2);
+  assert.match(other.text, /^token 2 is read most/);
+  assert.match(other.text, /broadly across 100%/);
+  assert.equal(Math.round(other.textShare * 100), 50);
+  assert.equal(crossAttentionStory({}, null), null);
 });
