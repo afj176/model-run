@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest import mock
 
-from model_run.comfy_bridge import encoder_labels, labels_from_encoders, reach_attention, token_labels
+from model_run.comfy_bridge import encoder_labels, labels_from_encoders, reach_attention, token_labels, vision_gap_labels
 
 
 class Container:
@@ -72,10 +72,27 @@ class EncoderLabelTests(unittest.TestCase):
         self.assertIsNone(labels_from_encoders("Flux", sets, 3))
         llama = {"llama": ["system", "x", "user", "h", "n", "a", "red", "eot", "more"]}
         self.assertEqual(labels_from_encoders("HunyuanVideo", llama, 3), ["a", "red", "eot"])
+        hydit = {"hydit_clip": ["[CLS]", "red", "[SEP]"], "mt5xl": ["red", "</s>", "<pad>", "<pad>"]}
+        self.assertEqual(labels_from_encoders("HunYuanDiT", hydit, 7), ["[CLS]", "red", "[SEP]", "red", "</s>", "<pad>", "<pad>"])
+        self.assertIsNone(labels_from_encoders("HunYuanDiT", hydit, 3))
 
     def test_each_encoder_is_read_by_its_own_tokenizer(self):
         clip = Clip(Tokenizer(clip_l=Pieces(), t5xxl=Pieces()), {"l": [[(2, 1.0)]], "t5xxl": [[(2, 1.0), (3, 1.0)]], "flag": True})
         self.assertEqual(encoder_labels(clip, "x"), {"l": ["red"], "t5xxl": ["red", "</s>"]})
+
+
+class VisionGapLabelTests(unittest.TestCase):
+    def test_image_tokens_sit_after_the_user_header(self):
+        labels = ["sys", "sys", "<|im_start|>", "user", "\n", "make", "blue", "<|im_end|>"]
+        self.assertEqual(vision_gap_labels(labels, 9, drop=2),
+                         ["<|im_start|>", "user", "\n", "<image>", "<image>", "<image>", "make", "blue", "<|im_end|>"])
+
+    def test_text_only_prompts_keep_their_labels(self):
+        self.assertEqual(vision_gap_labels(["s", "user", "\n", "red"], 3, drop=1), ["user", "\n", "red"])
+
+    def test_counts_that_do_not_fit_drop_the_labels(self):
+        self.assertIsNone(vision_gap_labels(["user", "\n", "red"], 2))
+        self.assertIsNone(vision_gap_labels(["no", "header"], 5))
 
 
 class ReachAttentionTests(unittest.TestCase):

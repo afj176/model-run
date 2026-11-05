@@ -26,6 +26,7 @@ IMAGE_FIRST_MODELS = {"HiDreamImageTransformer2DModel", "StageC"}
 BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "ErnieImageModel", "HunYuanDiT", "HunYuanDiTPlain", "PixArtMS"}
 # Their latent runs along time, so a map is a strip, not an image.
 AUDIO_MODELS = {"AceStepConditionGenerationModel", "ACEStepTransformer2DModel", "AudioDiffusionTransformer"}
+TAIL_TEXT_MODELS = {"LensTransformer2DModel", "MageFlowTransformer2DModel", "SingleStreamDiT"}  # these drop their template openings
 TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
 # Their cross-attention keys start with this prompt and go on: Hunyuan DiT's second encoder, zero padding in the others.
 ZERO_PADDED_MODELS = {"Anima", "AnimateWanModel", "CameraWanModel", "CausalWanModel", "HumoWanModel", "SCAIL2WanModel", "SCAILWanModel", "VaceWanModel",
@@ -39,7 +40,7 @@ REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm a
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "Chroma", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -309,6 +310,10 @@ class DenoiserObserver:
         if type(self.core).__name__ == "HiDreamImageTransformer2DModel" and isinstance(llama, torch.Tensor) and llama.ndim == 4:
             # Its keys after the image are T5's tokens, then Llama's twice: its last layer and this block's layer.
             text_tokens += 2 * int(llama.shape[-2])
+        t5 = conditioning.get("encoder_hidden_states_t5")
+        if type(self.core).__name__ == "HunYuanDiT" and isinstance(t5, torch.Tensor) and t5.ndim == 3:
+            # Its keys are the BERT tokens, then mT5's.
+            text_tokens += int(t5.shape[1])
         if type(self.core).__name__ in ZERO_PADDED_MODELS:
             # They pad the prompt to a fixed length with zeros, which are not tokens of the prompt.
             filled = context[batch_index].abs().sum(-1).nonzero()
@@ -475,9 +480,14 @@ class DenoiserObserver:
                 aligned = list(self.token_labels[:current["text_tokens"]])
             if aligned is None:
                 aligned = labels_from_encoders(type(self.core).__name__, self.token_label_sets, current["text_tokens"])
-            if aligned is None and type(self.core).__name__ == "SingleStreamDiT" and len(self.token_labels) > current["text_tokens"]:
-                # Krea 2's encoder keeps only what follows the template's opening, ending with the same tokens.
+            if aligned is None and type(self.core).__name__ in TAIL_TEXT_MODELS and len(self.token_labels) > current["text_tokens"]:
+                # These encoders keep only what follows the template's opening, ending with the same tokens.
                 aligned = list(self.token_labels[-current["text_tokens"]:])
+            if aligned is None and type(self.core).__name__ == "JoyImageTransformer3DModel":
+                aligned = vision_gap_labels(self.token_labels, current["text_tokens"], drop=34)
+            if aligned is None and type(self.core).__name__ == "PixDiT_T2I" and len(self.token_labels) > current["text_tokens"] > 1:
+                # PixelDiT keeps the opening token and the last 299 of its padded instruction and prompt.
+                aligned = [self.token_labels[0], *self.token_labels[-(current["text_tokens"] - 1):]]
             self._labels_dropped = aligned is None
             self.token_labels = aligned
         if self.trace is None:
@@ -781,11 +791,31 @@ def labels_from_encoders(model, sets, text_tokens):
         start = sets["llama"].index("user") + 3
         kept = sets["llama"][start:start + text_tokens]
         return kept if len(kept) == text_tokens else None
+    if model == "HunYuanDiT":
+        # Its keys are its BERT encoder's tokens, then mT5's.
+        bert, mt5 = sets.get("hydit_clip", []), sets.get("mt5xl", [])
+        return [*bert, *mt5] if bert and len(bert) + len(mt5) == text_tokens else None
     if model == "HiDreamImageTransformer2DModel":
         t5, llama = sets.get("t5xxl", []), sets.get("llama", [])
         if t5 and llama and len(t5) + 2 * len(llama) == text_tokens:
             return [*t5, *llama, *llama]
     return None
+
+
+def vision_gap_labels(labels, text_tokens, drop=0):
+    """Labels for an edit model whose keys hold the reference image's tokens right after the user header.
+
+    The prompt is tokenised without the image, so the image block is the difference in length, and it sits
+    where the template puts it: after "user" and its line break. JoyImage also drops its system prompt.
+    """
+    kept = list(labels[drop:])
+    gap = text_tokens - len(kept) if type(text_tokens) is int else -1
+    if gap == 0:
+        return kept
+    at = next((i + 2 for i in range(len(kept) - 1) if kept[i].strip() == "user" and kept[i + 1] == "\n"), None)
+    if gap < 0 or at is None:
+        return None
+    return [*kept[:at], *["<image>"] * gap, *kept[at:]]
 
 
 def token_labels(clip, prompt):

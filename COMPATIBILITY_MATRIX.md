@@ -74,7 +74,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | Wan SCAIL | 2 | yes | yes | text only (cross-attention) |
 | Wan SCAIL 2 | 2 | yes | yes | text only (cross-attention) |
 | Wan Dancer | 2 | yes | yes | not reached |
-| Cosmos Video | 6 | yes | yes | text only (cross-attention) |
+| Cosmos Video | 6 | yes | yes | after 112 other tokens |
 | Z-Image pixel space | 3 | yes | yes | first |
 | PiD | 4 | yes | yes | first |
 | Chroma Radiance | 7 | yes | yes | first |
@@ -135,4 +135,16 @@ Not in this table:
 | Wan Animate 2 distilled `int8`: 480x320, 9 frames, reference image and pose | Frame pixel-identical, with maps and labels. Its motion comes from the reference image and pose, and masking words barely changed the result, so labels stay unchecked |
 | ACE-Step 1.5 all-in-one: 8 seconds | Audio files byte-identical, with time-strip maps. Labels come from the prompt with default settings, so words after the caption may be off, and the app says so. Not checked by listening |
 | Illustrious XL v0.1 (SDXL finetune): 832, 20 steps | Pixel-identical with maps and labels. This early anime model did not draw the test prompt, so the word test says nothing; SDXL's labels are already checked |
+| Lens Turbo, GPT-OSS NVFP4 encoder: 768, 4 steps | Pixel-identical. Its encoder keeps only what follows the template's opening, so labels are the last tokens. Masking "red" gave a white cube; masking "wooden" kept the wood |
+| Boogu Turbo `fp8`: 768, 4 steps | Pixel-identical; early blocks report that their image tokens do not fit the latent grid, later blocks map. Masking "red" turned the cube mostly white with red spots; masking "wooden" kept the wood |
+| Ideogram 4 `int8` with its unconditional model, as in ComfyUI's template: 768, 12 steps | Pixel-identical. It needs a structured caption: a short one gives a gray "blocked" placeholder even without these nodes. Masking "red" gave a white cube |
+| OmniGen 2: 768, guidance 5, 16 steps | Pixel-identical; early blocks report that their image tokens do not fit the latent grid. Masking "red" gave a black cube; masking "wooden" kept the wood |
+| Ernie Image Turbo, Ministral 3B: 768, 8 steps | Pixel-identical. Masking "red" gave a blue cube; masking "wooden" kept the wood |
+| PixelDiT 1.3B: 768, guidance 4, 16 steps | Pixel-identical. Its keys are the opening token and the last 299 of its padded instruction and prompt, and labels now follow that. Masking "red" gave a wooden cube, and masking "wooden" gave a red table |
+| Chroma Radiance x0 (pixel space): 768, 16 steps | Pixel-identical. Masking "red" gave a striped wooden block; masking "wooden" kept a wood-colored table |
+| Hunyuan DiT 1.2: 768, guidance 6, 20 steps | Pixel-identical. Its keys are BERT's 77 tokens, then mT5's 256, and maps and labels now cover both. Masking "red" in both changed the cube's shape but kept it red, so labels stay unchecked |
+| Mage Flow Turbo `int8`: 768, 4 steps | Pixel-identical. Labels are the tokens after the template's opening. Masking "red" gave a white cube, and masking "wooden" gave a stone table |
+| JoyImage Edit `int8`: edit a 768 image, guidance 4, 20 steps | Pixel-identical, and it did the edit. The reference image's tokens sit in the text keys after the user header, and labels mark them as image. Masking "blue" kept the cube red, and masking "marble" kept the wooden table |
+| Fibo 2 Edit Turbo `int8`: edit a 768 image, 4 steps | Pixel-identical, and it did the edit. Maps on its single blocks; its text keys hold the image inside a structured caption, so tokens are numbered |
+| PiD (Flux 1 latents to pixels): 512 to 2048, 4 steps | Pixel-identical, with maps. It runs on an empty prompt, so there are no words to label |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |
