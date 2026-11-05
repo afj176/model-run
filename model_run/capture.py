@@ -75,6 +75,12 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
                 selected = (value, list(selectors[path]))
             else:
                 selected = first_tensor(output)
+                if isinstance(output, (tuple, list)) and latent_shape is not None:
+                    # Some blocks return text before image; the image stream is the one worth reading.
+                    for index, item in enumerate(output):
+                        if isinstance(item, torch.Tensor) and slices.shows_image(item, latent_shape):
+                            selected = (item, [index])
+                            break
             if selected is None:
                 events.append({"module": path, "status": "no_tensor_output"})
                 return

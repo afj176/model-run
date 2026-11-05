@@ -9,26 +9,40 @@ import time
 from .capture import capture_forward
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
+TEXT_LAST_MODELS = {"JoyImageTransformer3DModel", "MOSSImage"}
+LABELS_CHECKED = {"QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
 ALL_LAYER_PREFIX_VALUES = 65536
 ALL_LAYER_SLICE_VALUES = 524288
 
 
+def _layer_entry(path, module):
+    """A hook on a sequential block may never fire, because ComfyUI's UNet runs its children one by one."""
+    import torch
+    while isinstance(module, torch.nn.Sequential) and len(module) > 0:
+        path, module = f"{path}.{len(module) - 1}", module[-1]
+    return path
+
+
 def all_layer_paths(core):
     """Every top-level block of a denoiser, then its final output; just the output if it has no blocks."""
     import torch
-    containers = []
+    containers, paths = [], []
     for name, module in core.named_modules():
-        if (isinstance(module, torch.nn.ModuleList) and len(module) > 0 and BLOCK_CONTAINER.search(name)
-                and not any(name.startswith(parent + ".") for parent in containers)):
+        if any(name.startswith(parent + ".") for parent in containers) or not BLOCK_CONTAINER.search(name):
+            continue
+        if isinstance(module, torch.nn.ModuleList) and len(module) > 0:
             containers.append(name)
-    paths = [f"{name}.{i}" for name in containers for i in range(len(core.get_submodule(name)))]
+            paths.extend(_layer_entry(f"{name}.{i}", child) for i, child in enumerate(module))
+        elif isinstance(module, torch.nn.Sequential) and len(module) > 0:
+            containers.append(name)
+            paths.append(_layer_entry(name, module))
     if len(paths) > MAX_LAYER_PATHS - 1:
         paths = [paths[round(i * (len(paths) - 1) / (MAX_LAYER_PATHS - 2))] for i in range(MAX_LAYER_PATHS - 1)]
     return [*paths, ""]
@@ -58,6 +72,11 @@ class DenoiserObserver:
         self._labels_checked = False
         self._mixes_text = False
         self._registers = False
+        core = patcher.model.diffusion_model
+        lead = getattr(core, "register_tokens", None)
+        # Measured with tools/check_comfy_families.py: where text sits in joint attention, when it is not first.
+        self._text_lead = int(lead.shape[1]) if hasattr(lead, "shape") and len(lead.shape) == 3 else 0
+        self._text_start = -1 if type(core).__name__ in TEXT_LAST_MODELS else self._text_lead
         self._labels_dropped = False
         self.ablate_tokens = parse_token_list(ablate_tokens)
         self._ablation_applied = 0
@@ -116,6 +135,7 @@ class DenoiserObserver:
             try:
                 latent_shape = self._latent_shape(arguments)
                 self._slices.text_tokens = self._text_token_count(arguments)
+                self._slices.reference_tokens = self._reference_token_count(arguments)
                 self._slices.sequence = self._token_sequence(latent_shape, self._slices.text_tokens)
                 output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
                     max_tensor_elements=self.elements, max_events=len(self.paths),
@@ -139,6 +159,26 @@ class DenoiserObserver:
             return list(packed[0])
         shape = getattr(arguments.get("input"), "shape", None)
         return list(shape) if shape is not None else None
+
+    def _labels_checked_family(self):
+        name = type(self.core).__name__
+        # Klein is the Flux variant checked; Flux 1 uses other text encoders.
+        return name in LABELS_CHECKED or (name == "Flux" and bool(getattr(getattr(self.core, "params", None), "global_modulation", False)))
+
+    def _reference_token_count(self, arguments):
+        """Tokens an edit model's reference images add, from the references this call actually received."""
+        conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
+        references = conditioning.get("ref_latents")
+        if not isinstance(references, (list, tuple)):
+            return 0
+        patch = getattr(self.core, "patch_size", None) or getattr(getattr(self.core, "params", None), "patch_size", None) or 1
+        patch = int(patch[-1]) if isinstance(patch, (list, tuple)) else int(patch)
+        total = 0
+        for reference in references:
+            shape = getattr(reference, "shape", None)
+            if shape is not None and len(shape) >= 4:
+                total += -(-int(shape[-2]) // patch) * -(-int(shape[-1]) // patch)
+        return total
 
     @staticmethod
     def _text_token_count(arguments):
@@ -187,7 +227,7 @@ class DenoiserObserver:
         packed = getattr(self.base_model, "latent_shapes", None)
         latent_shape = list(packed[0]) if isinstance(packed, (list, tuple)) and len(packed) > 1 else list(latent.shape)
         audio_steps = int(packed[1][2]) if isinstance(packed, (list, tuple)) and len(packed) > 1 and len(packed[1]) > 2 else None
-        return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "text_tokens": int(context.shape[1]),
+        return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": int(context.shape[1]),
                 "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
@@ -206,8 +246,9 @@ class DenoiserObserver:
                 key_count = int(k.shape[-2] if k.ndim == 4 else k.shape[1])
                 # Joint text+image attention is only assumed where the model labels its blocks as DiT blocks;
                 # an unlabelled call with equal query and key counts is self-attention and has no text keys.
-                span = text_key_range(int(q.shape[-2] if q.ndim == 4 else q.shape[1]), key_count,
-                                      current["text_tokens"], allow_joint="block_type" in options)
+                query_count = int(q.shape[-2] if q.ndim == 4 else q.shape[1])
+                joint = "block_type" in options or "block" not in options and joint_by_geometry(query_count, key_count, current["text_tokens"], current["latent_shape"], self._text_lead)
+                span = text_key_range(query_count, key_count, current["text_tokens"], allow_joint=joint, text_start=self._text_start)
                 if span is not None:
                     existing = kwargs["mask"] if "mask" in kwargs else (args[0] if args else None)
                     bias = key_mask(self.ablate_tokens, int(k.shape[-2] if k.ndim == 4 else k.shape[1]), start=span[0], existing=existing, device=q.device, dtype=q.dtype)
@@ -247,10 +288,11 @@ class DenoiserObserver:
                 if self.attention_block in (label, audio_label):
                     mask = kwargs.get("mask", args[0] if args else None)
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None)
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=self._text_start, reference_tokens=current.get("reference_tokens", 0))
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
-                    elif measurement["attention_kind"] == "joint" and not allow_joint:
+                    elif measurement["attention_kind"] == "joint" and not allow_joint and not label.startswith("call:") or measurement["attention_kind"] == "joint" and not allow_joint and not joint_by_geometry(
+                            int(q.shape[-2] if q.ndim == 4 else q.shape[1]), int(k.shape[-2] if k.ndim == 4 else k.shape[1]), current["text_tokens"], current["latent_shape"], self._text_lead):
                         current["reason"] = "Self-attention in this block has no text keys"
                     else:
                         self._mixes_text = self._mixes_text or bool(measurement.get("text_spreads"))
@@ -331,6 +373,8 @@ class DenoiserObserver:
                     hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
                     self._skip(call, f"No attention call matched block {self.attention_block}{hint}")
             current["record"] = None
+        if self.token_labels and "cross_attention" in self.trace and not self._labels_checked_family() and UNCHECKED_LABEL_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(UNCHECKED_LABEL_LIMITATION)
         if self._registers and "cross_attention" in self.trace and REGISTER_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(REGISTER_LIMITATION)
         if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
@@ -369,6 +413,17 @@ class DenoiserObserver:
                 section["events"].pop()
                 self._skip(call, f"Dropped this call's map so the trace fits: {str(exc)[:120]}")
                 section["skipped"] = list(self._skipped)
+                try:
+                    self.publish(self.trace)
+                    return
+                except Exception as retry:  # noqa: BLE001 - reported below
+                    exc = retry
+            dropped = 0
+            for event in self.trace.get("events", []):
+                dropped += event.pop("slices", None) is not None
+            if dropped:
+                # The layer values are worth more than losing the whole run.
+                self.trace["limitations"].append("Frame and channel views were dropped from this trace so that it could be kept.")
                 try:
                     self.publish(self.trace)
                     return

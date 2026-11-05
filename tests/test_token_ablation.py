@@ -14,7 +14,7 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(parse_token_list([3, 1]), [1, 3])
         self.assertEqual(parse_token_list(None), [])
         with self.assertRaises(ValueError): parse_token_list("a")
-        with self.assertRaises(ValueError): parse_token_list([2000])
+        with self.assertRaises(ValueError): parse_token_list([5000])
         self.assertEqual(text_key_range(256, 77, 77), (0, 77))
         self.assertEqual(text_key_range(512 + 256, 512 + 256, 512, allow_joint=True), (0, 512))
         self.assertIsNone(text_key_range(256, 256, 77))

@@ -273,6 +273,11 @@ ComfyUI, lighting up wherever the trace carries the data.
   so these loaders are standalone only; their traces open the same way in ComfyUI.
   Reading images needs Pillow, and audio needs soundfile and scipy. Without
   torchvision, images use Transformers' PIL processor where the model has one.
+- **Which ComfyUI models work?** `COMPATIBILITY_MATRIX.md` lists them. Across 28 families
+  run at tiny size through their real ComfyUI classes, observing never changed the output and
+  layers were found on all of them; 24 got attention maps. A family this was not tested on
+  should still run and record layers, because anything not understood is reported rather than
+  guessed. Re-run `tools/check_comfy_families.py` from a ComfyUI folder after it updates.
 - **Are the word labels right?** Checked on Flux2 Klein, Qwen-Image 2.1, HiDream-O1 and
   LTX 2.5 by swapping one word and finding where the model's real text input changes. On the
   first three, all four swapped words first changed exactly the labelled position. LTX's

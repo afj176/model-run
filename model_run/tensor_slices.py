@@ -15,6 +15,7 @@ SIDE = 16
 SEQUENCE_COLS = 64
 MAX_SEQUENCE_BATCH = 8
 TRACE_VALUES = 262144
+REFERENCE_ASSUMPTION = "Reference image tokens are assumed to follow the generated image and are not shown; the count matches the references this call received."
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 JOINT_ASSUMPTION = "This block carries text and image tokens together. Text is assumed to come first and is not shown; the count matches, and ComfyUI's Flux code uses this order."
 PACKED_ASSUMPTION = "Tokens are assumed to be packed in frame, row, column order, the same assumption the attention maps use."
@@ -42,7 +43,7 @@ def _plan_counts(sizes, names, max_slices=MAX_SLICES, max_frames=MAX_FRAMES):
     return counts
 
 
-def _layout(tensor, latent_shape, token_grid=None, text_tokens=None):
+def _layout(tensor, latent_shape, token_grid=None, text_tokens=None, reference_tokens=0):
     """Return (view, names, layout, assumption), or None when no navigation applies."""
     shape = list(tensor.shape)
     if token_grid is not None and len(shape) == 3:
@@ -50,7 +51,8 @@ def _layout(tensor, latent_shape, token_grid=None, text_tokens=None):
         if shape[1] == prefix + rows * cols:
             view = tensor[:, prefix:].reshape(shape[0], rows, cols, shape[2]).permute(0, 3, 1, 2)
             return view, ["batch", "feature", "row", "column"], "patch_tokens", PATCH_ASSUMPTION
-    if latent_shape is not None and shape == list(latent_shape) and len(shape) in (4, 5):
+    # Guidance doubles the batch, so the batch size is not part of the match.
+    if latent_shape is not None and shape[1:] == list(latent_shape)[1:] and len(shape) in (4, 5):
         names = ["batch", "channel", "frame", "height", "width"] if len(shape) == 5 else ["batch", "channel", "height", "width"]
         return tensor, names, "latent", None
     if latent_shape is not None and len(shape) == 3:
@@ -60,12 +62,19 @@ def _layout(tensor, latent_shape, token_grid=None, text_tokens=None):
             rows, cols, _, frames = grid
             view = tensor.reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
             return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", PACKED_ASSUMPTION
-        if text_tokens and shape[1] > text_tokens:
-            # Single-stream blocks carry text and image together, with text first.
-            grid = image_grid(shape[1] - text_tokens, latent_shape)
+        if reference_tokens and shape[1] > reference_tokens:
+            # An edit model's reference images follow the image being generated.
+            grid = image_grid(shape[1] - reference_tokens, latent_shape)
             if grid is not None and grid[0] * grid[1] > 1:
                 rows, cols, _, frames = grid
-                view = tensor[:, text_tokens:].reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
+                view = tensor[:, :shape[1] - reference_tokens].reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
+                return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", REFERENCE_ASSUMPTION
+        if text_tokens and shape[1] > text_tokens + reference_tokens:
+            # Single-stream blocks carry text and image together, with text first.
+            grid = image_grid(shape[1] - text_tokens - reference_tokens, latent_shape)
+            if grid is not None and grid[0] * grid[1] > 1:
+                rows, cols, _, frames = grid
+                view = tensor[:, text_tokens:shape[1] - reference_tokens].reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
                 return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", JOINT_ASSUMPTION
     if len(shape) >= 4:
         return tensor, [None] * len(shape), "axes", None
@@ -83,6 +92,7 @@ class SliceRecorder:
         self.remaining = max_values
         self.token_grid = token_grid
         self.text_tokens = None
+        self.reference_tokens = 0
         # When many layers are recorded, each event's share, so the last layer gets as much as the first.
         self.per_event = per_event
         # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
@@ -94,6 +104,11 @@ class SliceRecorder:
             return self._record(tensor, latent_shape)
         except Exception as exc:  # Observation must never break the model being observed.
             return {"unavailable": f"Slices could not be recorded: {type(exc).__name__}"}
+
+    def shows_image(self, tensor, latent_shape):
+        """Whether this tensor is the image stream, so a block returning several can be read by its image."""
+        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
+        return placed is not None and placed[2] != "axes"
 
     def _sequence_record(self, tensor, kept, name, note):
         """A feature-by-time map of a [B, T, D] tensor per batch entry, so all of its length can be seen."""
@@ -125,7 +140,7 @@ class SliceRecorder:
             plan = self.sequence(int(tensor.shape[1]))
             if plan is not None:
                 return self._sequence_record(tensor, *plan)
-        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens)
+        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
         if placed is None:
             return None
         view, names, layout, assumption = placed
@@ -144,7 +159,7 @@ class SliceRecorder:
                 rows, cols = min(rows, SIDE // 2), min(cols, SIDE // 2)
             maps = max(2, self.per_event // (rows * cols))
             kept_frames = min(frames, MAX_FRAMES, max(1, maps // 2))
-            limits = {"max_frames": kept_frames, "max_slices": max(kept_frames, kept_frames * (maps // kept_frames - 1))}
+            limits = {"max_frames": kept_frames, "max_slices": min(MAX_SLICES, max(kept_frames, kept_frames * (maps // kept_frames - 1)))}
         counts = _plan_counts([leading[dim] for dim in navigable], axis_names, **limits)
         kept = [_spaced(leading[dim], count) for dim, count in zip(navigable, counts)]
         aggregate = next((i for i, name in enumerate(axis_names) if name in ("channel", "feature")), 0)

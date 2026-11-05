@@ -22,3 +22,52 @@ Hugging Face downloads and Ollama are test sources, not the planned primary disc
 The bounded catalog scanner was manually checked against those 10 directories and inventoried 21 safetensors files without errors or truncation. Automated discovery tests use temporary generated fixtures and do not depend on personal Hugging Face, Ollama or ComfyUI paths. Real-checkpoint smoke scripts take their model directory as an explicit argument and are opt-in.
 
 The catalog CLI was subsequently checked with the shared ComfyUI models root and the Open Cinema extra-path configuration together: it deduplicated their overlap and inventoried 21 safetensors files without scan errors. Standard categories are a static mapping based on the locally inspected ComfyUI version, not live introspection; extensions may add or alter paths.
+
+## ComfyUI model families
+
+Checked by `tools/check_comfy_families.py`, which builds each family's real ComfyUI class at a tiny size with random weights and runs the real Observe code on it. It tests structure and code paths, not results: random weights say nothing about what a real model learned, and tiny configs can differ from released ones.
+
+| Family | Layers found | Output unchanged | Attention map | Text keys sit |
+|---|---|---|---|---|
+| SD1.5 / SD2 UNet | 9 | yes | yes | text only (cross-attention) |
+| SDXL UNet | 9 | yes | yes | text only (cross-attention) |
+| Stable Diffusion 3 | 2 | yes | yes | first |
+| AuraFlow | 3 | yes | yes | after 8 other tokens |
+| Hunyuan DiT | 2 | yes | no: attention bypasses ComfyUI's hook | not reached |
+| Flux 1 | 4 | yes | yes | first |
+| Flux 2 | 4 | yes | yes | first |
+| Hunyuan Video | 6 | yes | yes | first |
+| Wan 2.x | 2 | yes | yes | text only (cross-attention) |
+| LTX Video | 2 | yes | yes | text only (cross-attention) |
+| Cosmos Predict2 | 2 | yes | yes | text only (cross-attention) |
+| Lumina 2 / Z-Image | 2 | yes | yes | first |
+| Qwen-Image | 2 | yes | yes | first |
+| Qwen-Image 2.1 | 2 | yes | yes | first |
+| OmniGen 2 | 2 | yes | yes | first |
+| Boogu | 3 | yes | yes | first |
+| Stable Audio | 2 | yes | no: layout not an image | text only (cross-attention) |
+| ACE-Step | 4 | yes | no: layout not an image | after 1 other tokens |
+| Mage Flow | 2 | yes | yes | first |
+| JoyImage | 2 | yes | yes | after the image |
+| Ideogram 4 | 2 | yes | yes | first |
+| Krea 2 | 6 | yes | yes | first |
+| MOSS Image | 4 | yes | yes | after the image |
+| Kandinsky 5 | 3 | yes | yes | text only (cross-attention) |
+| Ernie Image | 2 | yes | no: attention bypasses ComfyUI's hook | not reached |
+| Hunyuan Image 2.1 | 6 | yes | yes | first |
+| PixelDiT | 3 | yes | yes | first |
+| Anima | 8 | yes | yes | text only (cross-attention) |
+
+Not run: the tiny config for these did not build or run, which is a limit of this check and says nothing about the node: PixArt, Chroma, Mochi, HiDream I1, Flux 3, Lens, Fibo 2, CogVideoX.
+
+## Real weights through ComfyUI
+
+| Model and workflow | Result |
+|---|---|
+| Flux2 Klein: square, wide 512x256 with guidance, batch of 2 | All 25 layers, maps, labels checked |
+| Qwen-Image 2.1: with and without Turbo LoRA, 768x512 | All 32 layers, maps, labels checked |
+| Qwen-Image Edit 2511: reference image, Lightning LoRA | All 60 layers on the image stream, maps with numbered tokens; labels are dropped because image tokens are in the text |
+| HiDream-O1 | Maps, labels checked |
+| LTX 2.5: 9 and 33 frames, with and without guidance, audio stream | All 48 layers, video and audio maps, labels checked |
+| LTX 2.3 dev: Gemma 3, distilled LoRA | All 48 layers, maps, labels place real tokens first |
+| SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

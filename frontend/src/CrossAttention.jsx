@@ -214,9 +214,13 @@ export default function CrossAttention({ trace }) {
             attention kernel received, averaged over heads and area-pooled to
             the grid. Attention shows where text is read, not what caused{" "}
             {audioStream ? "a sound" : "a pixel"}.{" "}
-            {section.limitations?.find((l) =>
-              /carry a word's meaning|learned registers/.test(l),
-            )}{" "}
+            {section.limitations
+              ?.filter((l) =>
+                /carry a word's meaning|learned registers|not been checked/.test(
+                  l,
+                ),
+              )
+              .join(" ")}{" "}
             {!preview &&
             !audioStream &&
             trace?.source === "comfyui_native_denoiser"

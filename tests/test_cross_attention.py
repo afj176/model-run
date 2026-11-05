@@ -98,6 +98,45 @@ class MeasureTests(unittest.TestCase):
         qwen = measure(torch.randn(1, 2, 16, 8), torch.randn(1, 2, 5 + 16, 8), heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
         self.assertTrue(qwen["text_spreads"])
 
+    def test_text_can_sit_after_the_image_or_after_registers(self):
+        torch.manual_seed(9)
+        q = torch.randn(1, 2, 16 + 5, 8)
+        k = torch.randn(1, 2, 16 + 5, 8)
+        last = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], text_start=-1)
+        self.assertEqual((last["attention_kind"], last["image_tokens"]), ("joint", 16))
+        expected = torch.softmax((q[0, :, :16] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, 16:21].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(last["maps"]), expected, atol=1e-4, rtol=0)
+        q = torch.randn(1, 2, 3 + 5 + 16, 8)
+        k = torch.randn(1, 2, 3 + 5 + 16, 8)
+        lead = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], text_start=3)
+        expected = torch.softmax((q[0, :, 8:] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, 3:8].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(lead["maps"]), expected, atol=1e-4, rtol=0)
+
+    def test_masks_follow_the_text_wherever_it_sits(self):
+        from model_run.cross_attention import text_key_range
+        self.assertEqual(text_key_range(21, 21, 5, allow_joint=True, text_start=-1), (16, 21))
+        self.assertEqual(text_key_range(24, 24, 5, allow_joint=True, text_start=3), (3, 8))
+        self.assertEqual(text_key_range(21, 21, 5, allow_joint=True), (0, 5))
+
+    def test_geometry_identifies_joint_attention_but_not_self_attention(self):
+        from model_run.cross_attention import joint_by_geometry
+        self.assertTrue(joint_by_geometry(16 + 5, 16 + 5, 5, [1, 4, 4, 4]))
+        self.assertFalse(joint_by_geometry(16, 16, 5, [1, 4, 4, 4]))  # self-attention on the image alone
+        self.assertFalse(joint_by_geometry(16 + 5, 16, 5, [1, 4, 4, 4]))
+        self.assertTrue(joint_by_geometry(3 + 5 + 16, 3 + 5 + 16, 5, [1, 4, 4, 4], extra=3))
+        # A count that fits an image by itself stays self-attention, even if text would also fit.
+        self.assertFalse(joint_by_geometry(64, 64, 48, [1, 4, 8, 8]))
+
+    def test_reference_image_tokens_are_left_out_of_the_map(self):
+        torch.manual_seed(10)
+        q = torch.randn(1, 2, 5 + 16 + 4, 8)
+        k = torch.randn(1, 2, 5 + 16 + 4, 8)
+        result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], reference_tokens=4)
+        self.assertEqual((result["image_tokens"], result["grid"]), (16, [4, 4]))
+        expected = torch.softmax((q[0, :, 5:21] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, :5].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
+        self.assertIn("unavailable", measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4]))
+
     def test_an_audio_stream_is_a_strip_over_time(self):
         torch.manual_seed(7)
         q = torch.randn(1, 2, 9, 8)
@@ -137,6 +176,7 @@ class LabelAlignmentTests(unittest.TestCase):
         from model_run.cross_attention import place_registers
         labels = ["<pad>"] * 6 + ["<bos>", "a", " cube"]
         self.assertEqual(place_registers(labels, 5), ["<bos>", "a", " cube", "<register>", "<register>"])
+        self.assertEqual(place_registers(["", "", "<bos>", " cube"], 3), ["<bos>", " cube", "<register>"])
         self.assertIsNone(place_registers(labels, 2))
         self.assertIsNone(place_registers(["<pad>"], 3))
         self.assertIsNone(place_registers(None, 3))

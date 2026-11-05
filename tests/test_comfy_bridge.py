@@ -94,6 +94,29 @@ class AllLayerPlanTests(unittest.TestCase):
         self.assertEqual(all_layer_paths(Dit()), ["double_blocks.0", "double_blocks.1", "single_blocks.0", ""])
         self.assertEqual(all_layer_paths(torch.nn.Linear(1, 1)), [""])
 
+    def test_sequential_blocks_hook_a_child_that_actually_runs(self):
+        from model_run.comfy_bridge import all_layer_paths
+        class Unet(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.input_blocks = torch.nn.ModuleList([torch.nn.Sequential(torch.nn.Identity()), torch.nn.Sequential(torch.nn.Identity(), torch.nn.Identity())])
+                self.middle_block = torch.nn.Sequential(torch.nn.Identity(), torch.nn.Identity())
+                self.output_blocks = torch.nn.ModuleList([torch.nn.Sequential(torch.nn.Identity())])
+        self.assertEqual(all_layer_paths(Unet()), ["input_blocks.0.0", "input_blocks.1.1", "middle_block.1", "output_blocks.0.0", ""])
+
+    def test_a_refused_trace_is_kept_without_its_slices(self):
+        patcher = Patcher()
+        seen = []
+        def publish(trace):
+            if any("slices" in e for e in trace["events"]):
+                raise ValueError("Too many slices")
+            seen.append(trace)
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, publish=publish)
+        observer.trace = {"events": [{"slices": {}}], "limitations": []}
+        observer._publish_safely(0)
+        self.assertEqual(len(seen), 1)
+        self.assertIn("dropped", seen[0]["limitations"][0])
+
     def test_large_models_are_sampled_and_stay_inside_the_store_limits(self):
         from model_run.comfy_bridge import all_layer_paths, all_layer_plan, MAX_LAYER_PATHS
         class Big(torch.nn.Module):
@@ -128,6 +151,12 @@ class AllLayerPlanTests(unittest.TestCase):
         self.assertEqual(plan(15)[1], "text token")
         self.assertIsNone(plan(77))
         self.assertIsNone(observer._token_sequence([1, 16, 16, 16], 16)(16))  # a 4 x 4 grid at factor 4
+
+    def test_a_small_model_never_gets_more_slices_than_the_store_accepts(self):
+        from model_run.tensor_slices import SliceRecorder, MAX_SLICES, validate_slices
+        record = SliceRecorder(per_event=524288 // 6).record(torch.ones(1, 192, 32), [1, 16, 3, 16, 16])
+        validate_slices(record)
+        self.assertLessEqual(len(record["values"]) // (record["rows"] * record["cols"]), MAX_SLICES)
 
     def test_mixed_blocks_drop_text_tokens_only_when_the_count_fits(self):
         from model_run.tensor_slices import SliceRecorder
@@ -194,6 +223,28 @@ class CrossAttentionOverrideTests(unittest.TestCase):
 
 @unittest.skipIf(torch is None, "optional torch dependency unavailable")
 class PublishSafetyTests(unittest.TestCase):
+    def test_unlabelled_joint_attention_is_found_by_its_shape(self):
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="call:0")
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            q = torch.randn(1, 2, 3 + 16, 4)
+            observer.attention_override(lambda q, k, v, h, **kw: v, q, q, q, 2, transformer_options={})
+            return patcher.model.diffusion_model(x)
+        observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+        self.assertEqual(observer.trace["cross_attention"]["events"][0]["attention_kind"], "joint")
+
+    def test_models_whose_text_comes_last_are_measured_there(self):
+        class MOSSImage(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer = torch.nn.Linear(4, 4)
+            def forward(self, value):
+                return self.layer(value)
+        patcher = Patcher()
+        patcher.model.diffusion_model = MOSSImage().eval()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3)
+        self.assertEqual(observer._text_start, -1)
+
     def test_publish_failure_never_breaks_sampling(self):
         patcher = Patcher()
         attempts = []
@@ -207,7 +258,7 @@ class PublishSafetyTests(unittest.TestCase):
             return patcher.model.diffusion_model(x)
         output = observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
         self.assertIsNotNone(output)
-        self.assertEqual(attempts, [1, 0])  # retried once without the map, then gave up quietly
+        self.assertEqual(attempts[:2], [1, 0])  # retried without the map, then without slices, then gave up quietly
         self.assertTrue(any("fits" in s["reason"] for s in observer.trace["cross_attention"]["skipped"]))
 
     def test_section_value_budget(self):

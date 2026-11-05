@@ -9,7 +9,7 @@ import math
 import re
 
 MAX_MAP_VALUES = 262144
-MAX_TEXT_TOKENS = 1024
+MAX_TEXT_TOKENS = 4096
 MAX_GRID = 64
 ROUND_DIGITS = 5
 LIMITATIONS = ["Maps are head-averaged attention probabilities from the exact query/key tensors given to the attention kernel; per-head and per-layer differences are not shown.",
@@ -46,11 +46,12 @@ def pooled_grid(rows, cols, text_tokens, max_grid):
         scale += 1
 
 
-def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None):
+def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None, text_start=0, reference_tokens=0):
     """Return a bounded map record, or ``{"unavailable": reason}`` when the geometry is not understood.
 
     ``q`` and ``k`` are either ``[B, heads, L, D]`` or ``[B, L, heads*D]``. Text keys occupy
-    the first ``text_tokens`` key positions. Image queries are the whole query sequence
+    the first ``text_tokens`` key positions unless ``text_start`` says otherwise: a count of tokens
+    before the text, or -1 when the text comes last, because some models place it after the image. Image queries are the whole query sequence
     (classic cross-attention, keys are text only) or the positions after the text block
     (joint attention over the concatenated text+image sequence).
     """
@@ -82,14 +83,18 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     if key_count == text_tokens and query_count != text_tokens:
         kind, first_image_query = "cross", 0
     elif key_count == query_count and key_count > text_tokens:
-        kind, first_image_query = "joint", text_tokens
+        kind, first_image_query = "joint", 0 if text_start == -1 else text_start + text_tokens
     elif key_count > text_tokens and query_count >= key_count - text_tokens:
         # Keys are [text, image]; queries end with the image, after any text tokens that attend this way too.
         # Qwen-Image's queries are image only; HiDream-O1's also start with the last text token.
         kind, first_image_query = "joint", query_count - (key_count - text_tokens)
     else:
         return {"unavailable": f"Sequence lengths (queries {query_count}, keys {key_count}, text {text_tokens}) do not form cross or joint attention"}
-    image_tokens = query_count - first_image_query
+    image_tokens = query_count - first_image_query - (text_tokens if text_start == -1 and kind == "joint" and key_count == query_count else 0)
+    first_text_key = key_count - text_tokens if text_start == -1 else text_start
+    # An edit model's reference images follow the generated image, and only the image gets a map.
+    if reference_tokens and image_tokens > reference_tokens and stream != "audio" and image_grid(image_tokens, latent_shape) is None:
+        image_tokens -= reference_tokens
     # An audio stream runs along one axis, so its map is a strip over time.
     grid = (1, image_tokens, 1, 1) if stream == "audio" else image_grid(image_tokens, latent_shape)
     if grid is None:
@@ -123,7 +128,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
                     scores = scores.masked_fill(~row_mask, float("-inf"))
                 else:
                     scores = scores + row_mask.float()
-            probabilities = torch.softmax(scores, dim=-1)[:, :text_tokens]
+            probabilities = torch.softmax(scores, dim=-1)[:, first_text_key:first_text_key + text_tokens]
             total = probabilities if total is None else total + probabilities
             del scores
         mean = (total / heads).cpu()  # [image_tokens, text_tokens]
@@ -167,6 +172,8 @@ def new_section(selection, source, *, token_labels=None, max_grid=32):
 
 TEXT_MIXING_LIMITATION = ("In this model a prompt's meaning spreads across its text tokens, so other tokens can carry a word's meaning. "
                           "A low value on a word's map does not mean the word had no effect, and masking one word may not remove it.")
+UNCHECKED_LABEL_LIMITATION = ("Word positions on this model family have not been checked against a real run. "
+                              "They assume the prompt's tokens line up with the model's text keys.")
 MASK_BIAS = -10000.0
 ABLATION_LIMITATIONS = ["A small effect may only be sensitivity, because any change can shift the result. Compare it with masking an unrelated token.",
                         "Ablated text tokens are masked out of every attention call that reads text keys for the whole run; remaining attention renormalises over the other keys.",
@@ -175,7 +182,7 @@ ABLATION_LIMITATIONS = ["A small effect may only be sensitivity, because any cha
                         "applied_attention_calls counts attention calls inside the recorded denoiser calls; the mask also applies to later, unrecorded calls."]
 
 
-def parse_token_list(value, *, limit=1024, bound=1024):
+def parse_token_list(value, *, limit=4096, bound=4096):
     """Distinct token indices from an int list or a comma/space separated string."""
     if value is None:
         return []
@@ -190,7 +197,14 @@ def parse_token_list(value, *, limit=1024, bound=1024):
     return sorted(set(value))
 
 
-def text_key_range(query_count, key_count, text_tokens, allow_joint=False):
+def joint_by_geometry(query_count, key_count, text_tokens, latent_shape, extra=0):
+    """Whether an unlabelled call must be joint attention: its count is the text plus the image, and alone fits no image."""
+    if query_count != key_count or query_count <= text_tokens + extra:
+        return False
+    return image_grid(query_count - text_tokens - extra, latent_shape) is not None and image_grid(query_count, latent_shape) is None
+
+
+def text_key_range(query_count, key_count, text_tokens, allow_joint=False, text_start=0):
     """Where text keys sit in an attention call: (start, stop) or None when keys carry no text.
 
     Joint attention (text and image concatenated, keys == queries) is only recognised when the
@@ -200,7 +214,8 @@ def text_key_range(query_count, key_count, text_tokens, allow_joint=False):
     if key_count == text_tokens and query_count != text_tokens:
         return 0, text_tokens
     if allow_joint and key_count > text_tokens and query_count >= key_count - text_tokens:
-        return 0, text_tokens
+        start = key_count - text_tokens if text_start == -1 else text_start
+        return start, start + text_tokens
     return None
 
 
@@ -218,7 +233,8 @@ def place_registers(labels, text_tokens):
     """
     if not labels or type(text_tokens) is not int or text_tokens < 1:
         return None
-    real = [label for label in labels if not PADDING_LABEL.match(str(label).strip())]
+    # Some tokenizers decode padding to nothing rather than to a pad token.
+    real = [label for label in labels if str(label).strip() and not PADDING_LABEL.match(str(label).strip())]
     if not real or len(real) > text_tokens:
         return None
     return real + [REGISTER_LABEL] * (text_tokens - len(real))

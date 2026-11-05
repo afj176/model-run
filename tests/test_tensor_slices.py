@@ -61,6 +61,32 @@ class TensorSliceTests(unittest.TestCase):
         self.assertLessEqual(len(record["axes"][0]["indices"]) * 16, MAX_SLICES)
         self.assertEqual((record["rows"], record["cols"], record["source_rows"], record["pooled"]), (SIDE, SIDE, 64, True))
 
+    def test_guidance_batches_and_reference_tokens_keep_their_reading(self):
+        record = SliceRecorder().record(torch.ones(2, 4, 3, 8, 8), [1, 4, 3, 8, 8])
+        self.assertEqual([a["name"] for a in record["axes"]], ["batch", "channel", "frame"])
+        recorder = SliceRecorder()
+        recorder.reference_tokens = 4
+        tokens = torch.zeros(1, 16 + 4, 3)
+        tokens[0, 16:] = 9  # reference tokens must not reach the map
+        record = recorder.record(tokens, [1, 3, 4, 4])
+        self.assertEqual((record["layout"], max(record["values"])), ("packed_tokens", 0.0))
+        self.assertIn("Reference image", record["assumption"])
+
+    def test_a_block_returning_text_first_is_read_by_its_image(self):
+        class Block(torch.nn.Module):
+            def forward(self, x):
+                return torch.ones(1, 6, 8), torch.ones(1, 16, 8) * 2
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer = Block()
+            def forward(self, x):
+                return self.layer(x)
+        _, trace = capture_forward(Model().eval(), {"x": torch.zeros(1)}, ["layer"], latent_shape=[1, 3, 4, 4], max_tensor_elements=4)
+        self.assertEqual((trace["events"][0]["shape"], trace["events"][0]["output_path"]), ([1, 16, 8], [1]))
+        _, plain = capture_forward(Model().eval(), {"x": torch.zeros(1)}, ["layer"], max_tensor_elements=4)
+        self.assertEqual(plain["events"][0]["shape"], [1, 6, 8])
+
     def test_nothing_to_navigate_records_nothing(self):
         self.assertIsNone(SliceRecorder().record(torch.ones(1, 1, 8, 8)))
         self.assertIsNone(SliceRecorder().record(torch.ones(4, 4)))
