@@ -280,10 +280,16 @@ ComfyUI, lighting up wherever the trace carries the data.
   for any small set (18%), and masking every text token destroyed the image (35%). A low
   value on a word's map therefore does not mean the word had no effect. `audio:N` maps
   LTX 2.5's audio stream to text as a strip over time; on the 0.36 s clip tested it was
-  nearly flat, so this says little about timing yet. On LTX, 99% of attention to text
-  lands on padding, and masking 17 padding tokens changed the output more (7.8%) than
-  masking "red" and "cube" (3.3%); two unmasked runs were pixel-identical, so that is not
-  noise. Why padding matters this much is not established. SeedVR2 has no map because its
+  nearly flat, so this says little about timing yet. On LTX the positions after the prompt are
+  not padding: the encoder keeps only the real tokens, and a connector appends learned
+  registers repeating every 128 positions. Real tokens come first, so labels place them there.
+  Registers receive about 99% of attention to text but do not carry most of the prompt. Across
+  four prompts and two seeds at 2 steps and low resolution, the mean difference between
+  prompts' outputs was 24% unmasked, 18% with all registers masked, and 3% with the real tokens
+  masked, which turned every prompt into nearly the same image. So attention share is not
+  importance on this model. Small mask effects need a yardstick: unmasked repeats are
+  pixel-identical, but masking one register already moves the output about 2.5% (1.4 to 5.4%),
+  against 18% for a different seed and 8% for masking the subject words. SeedVR2 has no map because its
   windowed attention bypasses ComfyUI's override and it conditions on fixed built-in
   embeddings, so a map would not show how a prompt is read.
 - **Head gallery.** An attention probe now returns every head of the selected

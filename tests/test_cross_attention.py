@@ -125,6 +125,14 @@ class VideoMapTests(unittest.TestCase):
 
 
 class LabelAlignmentTests(unittest.TestCase):
+    def test_registers_follow_the_real_tokens(self):
+        from model_run.cross_attention import place_registers
+        labels = ["<pad>"] * 6 + ["<bos>", "a", " cube"]
+        self.assertEqual(place_registers(labels, 5), ["<bos>", "a", " cube", "<register>", "<register>"])
+        self.assertIsNone(place_registers(labels, 2))
+        self.assertIsNone(place_registers(["<pad>"], 3))
+        self.assertIsNone(place_registers(None, 3))
+
     def test_labels_only_name_keys_they_line_up_with(self):
         from model_run.cross_attention import align_labels, text_key_range
         self.assertEqual(align_labels(["a", "b"], 2), ["a", "b"])

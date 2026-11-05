@@ -15,7 +15,7 @@ import {
 
 const isPad = (labels, i) =>
   labels?.[i] !== undefined &&
-  /^<\|?(endoftext|pad)\|?>$/i.test(labels[i]) &&
+  /^<\|?(endoftext|pad|register)\|?>$/i.test(labels[i]) &&
   i > 0 &&
   labels[i - 1] === labels[i];
 
@@ -368,7 +368,9 @@ export default function DiffusionCompare({
               </>
             )}
           <p className="micro">
-            {ablated.record?.limitations?.[0] ||
+            {ablated.record?.limitations
+              ?.filter((l, i) => i === 1 || /unrelated token/.test(l))
+              .join(" ") ||
               "Both runs must share prompt, seed, steps and size for the difference to mean anything."}
           </p>
         </div>

@@ -52,7 +52,7 @@ export default function CrossAttention({ trace }) {
   // Runs of repeated special tokens (padding) collapse into one chip and leave the ranking.
   const isPad = (i) =>
     labels?.[i] !== undefined &&
-    /^<\|?(endoftext|pad)\|?>$/i.test(labels[i]) &&
+    /^<\|?(endoftext|pad|register)\|?>$/i.test(labels[i]) &&
     i > 0 &&
     labels[i - 1] === labels[i];
   const padCount = event
@@ -184,7 +184,8 @@ export default function CrossAttention({ trace }) {
                 )}
                 {padCount > 0 && (
                   <span className="xattn-pad" title="Repeated padding tokens">
-                    +{padCount} padding
+                    +{padCount}{" "}
+                    {labels?.includes("<register>") ? "registers" : "padding"}
                   </span>
                 )}
               </div>
@@ -214,7 +215,7 @@ export default function CrossAttention({ trace }) {
             the grid. Attention shows where text is read, not what caused{" "}
             {audioStream ? "a sound" : "a pixel"}.{" "}
             {section.limitations?.find((l) =>
-              l.includes("attend to each other"),
+              /attend to each other|learned registers/.test(l),
             )}{" "}
             {!preview &&
             !audioStream &&

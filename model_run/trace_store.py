@@ -147,7 +147,7 @@ def _validate(trace):
     if "token_ablation" in trace:
         block = trace["token_ablation"]
         if (trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture") or not isinstance(block, dict)
-                or block.get("method") != "cross_attention_key_mask" or not isinstance(block.get("tokens"), list) or not 1 <= len(block["tokens"]) <= 64
+                or block.get("method") != "cross_attention_key_mask" or not isinstance(block.get("tokens"), list) or not 1 <= len(block["tokens"]) <= 1024
                 or any(type(t) is not int or not 0 <= t < 1024 for t in block["tokens"])
                 or not isinstance(block.get("labels"), list) or len(block["labels"]) != len(block["tokens"]) or any(not isinstance(l, str) or len(l) > 48 for l in block["labels"])
                 or type(block.get("applied_attention_calls")) is not int or block["applied_attention_calls"] < 0

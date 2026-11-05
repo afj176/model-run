@@ -879,3 +879,27 @@ test("an audio map is described over time, not as an image region", () => {
   );
   assert.match(flat.text, /about evenly across the audio/);
 });
+
+test("registers are described as registers, and their share is not called padding", () => {
+  const labels = ["<bos>", " cube", "<register>", "<register>"];
+  const story = crossAttentionStory(
+    {
+      grid: [1, 2],
+      token_mass: [0.01, 0.05, 0.4, 0.5],
+      maps: [
+        [0.01, 0.01],
+        [0.05, 0.05],
+        [0.4, 0.4],
+        [0.5, 0.5],
+      ],
+    },
+    labels,
+  );
+  assert.equal(story.index, 1);
+  assert.deepEqual(
+    story.ranked.map((r) => r.index),
+    [1, 0],
+  );
+  assert.match(story.text, /learned registers/);
+  assert.doesNotMatch(story.text, /padding/);
+});

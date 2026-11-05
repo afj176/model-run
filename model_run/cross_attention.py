@@ -6,6 +6,7 @@ they are the attention the model applied, averaged over heads and area-pooled to
 grid. Nothing is inferred from architecture names; unsupported geometries are reported.
 """
 import math
+import re
 
 MAX_MAP_VALUES = 262144
 MAX_TEXT_TOKENS = 1024
@@ -167,13 +168,14 @@ def new_section(selection, source, *, token_labels=None, max_grid=32):
 TEXT_MIXING_LIMITATION = ("In this model text tokens attend to each other before the image reads them, so later tokens can carry a word's meaning. "
                           "A low value on a word's map does not mean the word had no effect, and masking one word may not remove it.")
 MASK_BIAS = -10000.0
-ABLATION_LIMITATIONS = ["Ablated text tokens are masked out of every attention call that reads text keys for the whole run; remaining attention renormalises over the other keys.",
+ABLATION_LIMITATIONS = ["A small effect may only be sensitivity, because any change can shift the result. Compare it with masking an unrelated token.",
+                        "Ablated text tokens are masked out of every attention call that reads text keys for the whole run; remaining attention renormalises over the other keys.",
                         "Masking a token's keys is an intervention on attention only; the token still passed through the text encoder and may influence other tokens' embeddings.",
                         "Compare against a run with the same prompt, seed, steps and size and no ablation.",
                         "applied_attention_calls counts attention calls inside the recorded denoiser calls; the mask also applies to later, unrecorded calls."]
 
 
-def parse_token_list(value, *, limit=64, bound=1024):
+def parse_token_list(value, *, limit=1024, bound=1024):
     """Distinct token indices from an int list or a comma/space separated string."""
     if value is None:
         return []
@@ -200,6 +202,26 @@ def text_key_range(query_count, key_count, text_tokens, allow_joint=False):
     if allow_joint and key_count > text_tokens and query_count >= key_count - text_tokens:
         return 0, text_tokens
     return None
+
+
+REGISTER_LABEL = "<register>"
+REGISTER_LIMITATION = ("This model appends learned registers after the prompt's tokens. They receive most of the attention to text, but attention share "
+                       "is not importance: in testing, masking the real tokens removed nearly all of the prompt's influence while masking the registers kept most of it.")
+PADDING_LABEL = re.compile(r"^<\|?(?:pad|endoftext)\|?>$", re.IGNORECASE)
+
+
+def place_registers(labels, text_tokens):
+    """Labels for a model that keeps only real tokens and fills the rest with learned registers.
+
+    The tokenizer pads to a fixed length, but the encoder drops the padding and a connector appends
+    registers after the real tokens, so a word's position is its place among the real tokens.
+    """
+    if not labels or type(text_tokens) is not int or text_tokens < 1:
+        return None
+    real = [label for label in labels if not PADDING_LABEL.match(str(label).strip())]
+    if not real or len(real) > text_tokens:
+        return None
+    return real + [REGISTER_LABEL] * (text_tokens - len(real))
 
 
 def align_labels(labels, text_tokens):

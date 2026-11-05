@@ -9,7 +9,7 @@ import time
 from .capture import capture_forward
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import TEXT_MIXING_LIMITATION, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -57,6 +57,7 @@ class DenoiserObserver:
         self.token_labels = token_labels
         self._labels_checked = False
         self._mixes_text = False
+        self._registers = False
         self._labels_dropped = False
         self.ablate_tokens = parse_token_list(ablate_tokens)
         self._ablation_applied = 0
@@ -273,7 +274,9 @@ class DenoiserObserver:
         current = self._current
         if current is not None and self.token_labels is not None and not self._labels_checked:
             self._labels_checked = True
-            aligned = align_labels(self.token_labels, current["text_tokens"])
+            connector = getattr(self.core, "video_embeddings_connector", None)
+            self._registers = bool(getattr(connector, "num_learnable_registers", None))
+            aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
             self._labels_dropped = aligned is None
             self.token_labels = aligned
         if self.trace is None:
@@ -328,6 +331,8 @@ class DenoiserObserver:
                     hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
                     self._skip(call, f"No attention call matched block {self.attention_block}{hint}")
             current["record"] = None
+        if self._registers and "cross_attention" in self.trace and REGISTER_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(REGISTER_LIMITATION)
         if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(TEXT_MIXING_LIMITATION)
         if "cross_attention" in self.trace and self._skipped:

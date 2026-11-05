@@ -395,7 +395,8 @@ export function ablationStory(ablation, head) {
 
 /** Special tokens that only fill the text sequence to a fixed length. */
 export const isPaddingLabel = (label) =>
-  typeof label === "string" && /^<\|?(endoftext|pad)\|?>$/i.test(label.trim());
+  typeof label === "string" &&
+  /^<\|?(endoftext|pad|register)\|?>$/i.test(label.trim());
 
 /** Ranking and narrative for one cross-attention event; ``token`` focuses one map. */
 export function crossAttentionStory(event, labels, token = null, frame = 0) {
@@ -403,6 +404,7 @@ export function crossAttentionStory(event, labels, token = null, frame = 0) {
   if (!Array.isArray(mass) || !mass.length || !Array.isArray(event.maps))
     return null;
   const padding = (i) => isPaddingLabel(labels?.[i]);
+  const registers = labels?.some?.((l) => l === "<register>");
   const all = mass
     .map((m, index) => ({ index, mass: m }))
     .sort((a, b) => b.mass - a.mass);
@@ -462,7 +464,7 @@ export function crossAttentionStory(event, labels, token = null, frame = 0) {
         ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
         : ".") +
       (paddingShare >= 0.05
-        ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
+        ? ` ${pct(paddingShare)} of this block's attention to text lands on ${registers ? "learned registers rather than words of the prompt, but that share is not importance" : "padding positions, not on words of the prompt"}.`
         : "")
     : `${name} is read most at the ${where} (${pctFine(peak)} of that region's attention) and ` +
       (spread >= 0.5
@@ -472,7 +474,7 @@ export function crossAttentionStory(event, labels, token = null, frame = 0) {
         ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
         : ".") +
       (paddingShare >= 0.05
-        ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
+        ? ` ${pct(paddingShare)} of this block's attention to text lands on ${registers ? "learned registers rather than words of the prompt, but that share is not importance" : "padding positions, not on words of the prompt"}.`
         : "");
   const textShare =
     Array.isArray(event.text_mass) && event.text_mass.length
