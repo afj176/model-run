@@ -32,10 +32,12 @@ ZERO_PADDED_MODELS = {"Anima", "AnimateWanModel", "CameraWanModel", "CausalWanMo
                       "WanAnimate2Model", "WanDancerModel", "WanModel", "WanModel_S2V"}
 EXTRA_KEY_MODELS = {"HunYuanDiT"} | ZERO_PADDED_MODELS
 # These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
+SECOND_TEXT_LIMITATION = ("This model also reads its prompt through a Llama encoder whose tokens are not on this map. "
+                          "On a real run, masking a word in these T5 tokens barely changed the result, so a low value here does not mean the model ignored the word.")
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "Flux", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "Chroma", "Flux", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -114,6 +116,7 @@ class DenoiserObserver:
         if token_labels is not None and (not isinstance(token_labels, list) or len(token_labels) > 1024):
             raise ValueError("token_labels must be a bounded list")
         self.token_labels = token_labels
+        self.token_label_sets = {}
         self._labels_checked = False
         self._mixes_text = False
         self._registers = False
@@ -464,6 +467,8 @@ class DenoiserObserver:
                 aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ in ZERO_PADDED_MODELS and len(self.token_labels) > current["text_tokens"]:
                 aligned = list(self.token_labels[:current["text_tokens"]])
+            if aligned is None:
+                aligned = labels_from_encoders(type(self.core).__name__, self.token_label_sets, current["text_tokens"])
             if aligned is None and type(self.core).__name__ == "SingleStreamDiT" and len(self.token_labels) > current["text_tokens"]:
                 # Krea 2's encoder keeps only what follows the template's opening, ending with the same tokens.
                 aligned = list(self.token_labels[-current["text_tokens"]:])
@@ -525,6 +530,8 @@ class DenoiserObserver:
             self.trace["cross_attention"]["limitations"].append(UNCHECKED_LABEL_LIMITATION)
         if self._registers and "cross_attention" in self.trace and REGISTER_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(REGISTER_LIMITATION)
+        if type(self.core).__name__ == "HiDreamImageTransformer2DModel" and "cross_attention" in self.trace and SECOND_TEXT_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(SECOND_TEXT_LIMITATION)
         if type(self.core).__name__ in SHAPE_MODELS and "cross_attention" in self.trace and SHAPE_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(SHAPE_LIMITATION)
         if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
@@ -726,6 +733,7 @@ class ModelRunObserve:
         observer = DenoiserObserver(model, chosen, publish=publish, **plan,
                                      output_selectors=selectors,
                                     attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)
+        observer.token_label_sets = encoder_labels(clip, prompt) if labels else {}
         clone.set_model_unet_function_wrapper(observer)
         if denoising_views:
             recorder = DenoisingRecorder(getattr(model.model, "latent_format", None), on_update=observer.attach_denoising)
@@ -735,6 +743,39 @@ class ModelRunObserve:
             observer.previous_attention = options.get("optimized_attention_override")
             options["optimized_attention_override"] = observer.attention_override
         return (clone,)
+
+
+def encoder_labels(clip, prompt):
+    """Each text encoder's own token strings, for models whose keys come from particular encoders."""
+    try:
+        from .comfy_components import readable_piece
+        tokenized = clip.tokenize(prompt[:8192])
+        tokenizer = getattr(clip, "tokenizer", None)
+        found = {}
+        for key, value in (tokenized.items() if isinstance(tokenized, dict) else []):
+            own = getattr(tokenizer, key, None) or getattr(tokenizer, f"clip_{key}", None)
+            if isinstance(value, list) and hasattr(own, "untokenize"):
+                flat = [(pair[0], pair[1]) for chunk in value if isinstance(chunk, (list, tuple)) for pair in chunk]
+                found[key] = collapse_padding([readable_piece(word) for _, word in own.untokenize(flat)][:1024])
+        return found
+    except Exception:  # numbered tokens are still honest
+        return {}
+
+
+def labels_from_encoders(model, sets, text_tokens):
+    """Labels for a model's text keys from the encoder that fills them, or None when the counts say otherwise."""
+    if model == "OpenAISignatureMMDITWrapper":
+        # SD3 keys run the CLIP tokens, then T5's.
+        first, t5 = sets.get("l") or sets.get("g"), sets.get("t5xxl")
+        return [*first, *t5] if first and t5 and len(first) + len(t5) == text_tokens else None
+    if model == "HunyuanVideo" and "user" in sets.get("llama", []):
+        # Its encoder cuts the template's opening: the keys start after the user header and its line break.
+        start = sets["llama"].index("user") + 3
+        kept = sets["llama"][start:start + text_tokens]
+        return kept if len(kept) == text_tokens else None
+    if model == "HiDreamImageTransformer2DModel" and len(sets.get("t5xxl", [])) == text_tokens:
+        return list(sets["t5xxl"])
+    return None
 
 
 def token_labels(clip, prompt):
