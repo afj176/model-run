@@ -2618,3 +2618,122 @@ main {
   color: #b4215a;
   font-family: "Segoe UI", system-ui, sans-serif;
 }
+
+/* Frame and channel navigator, shared by both stages. */
+.slice-nav {
+  position: absolute;
+  z-index: 4;
+  top: 84px;
+  left: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #17123fb3;
+  color: #f5f1ff;
+  font-size: 11px;
+}
+.stage .slice-nav {
+  top: 70px;
+  left: 96px;
+}
+.slice-of {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted, #746f83);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+.slice-nav button {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.slice-axis {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.slice-axis-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 62px;
+  line-height: 1.15;
+  text-transform: capitalize;
+}
+.slice-axis-name small {
+  color: #c9c1e6;
+  text-transform: none;
+  font-size: 10px;
+}
+.slice-nav .slice-all {
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: #ffffff1a;
+}
+.slice-nav .slice-all.selected {
+  background: var(--pink, #ff3d8f);
+}
+.slice-nav .slice-step,
+.slice-nav .slice-play {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+}
+.slice-nav .slice-play {
+  background: #ffffff1a;
+}
+.slice-nav .slice-step:hover,
+.slice-nav .slice-play:hover,
+.slice-nav .slice-all:hover {
+  background: #ffffff33;
+}
+.slice-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 26px;
+  max-width: 340px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.slice-nav .slice-bars button {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  width: 9px;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.slice-bars i {
+  display: block;
+  width: 100%;
+  background: #b9b0dd;
+  border-radius: 1px;
+}
+.slice-nav .slice-bars button:hover {
+  background: #ffffff26;
+}
+.slice-nav .slice-bars button.selected {
+  background: #ffffff33;
+}
+.slice-bars button.selected i {
+  background: var(--pink, #ff3d8f);
+}
+.slice-note {
+  margin: 0;
+  max-width: 260px;
+  color: #c9c1e6;
+  font-size: 10px;
+}
+.matrix-stage:has(.slice-nav) .matrix-table-wrap {
+  margin-top: 76px;
+}

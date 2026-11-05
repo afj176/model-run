@@ -79,6 +79,7 @@ export default function MatrixWorkspace({
   onAblate,
   onPickLayer,
   stageOptions = null,
+  sliceNav = null,
   layer,
   setLayer,
   head,
@@ -122,7 +123,7 @@ export default function MatrixWorkspace({
       // fall through to the origin
     }
     setSelected({ row: 0, col: 0 });
-  }, [trace, event?.module, event?.step]);
+  }, [trace, event?.module, event?.step, event?.slice_label]);
   const extracted = useMemo(() => {
     try {
       return {
@@ -332,8 +333,9 @@ export default function MatrixWorkspace({
                   {attention
                     ? `Attention${trace.head_mean ? " · head mean" : trace.head !== undefined ? ` · head ${trace.head}` : ""}`
                     : data.source}
+                  {event?.slice_label ? ` · ${event.slice_label}` : ""}
                 </span>
-                <span>{data.shape.join(" × ")}</span>
+                <span>{(event?.source_shape ?? data.shape).join(" × ")}</span>
                 <span>
                   {cap(rowName)} {rowIndex}
                   {rowToken ? ` “${rowToken}”` : ""} · {cap(colName)} {colIndex}
@@ -431,6 +433,7 @@ export default function MatrixWorkspace({
             </button>
           </div>
         </header>
+        {sliceNav}
         {data && data.rows && data.cols ? (
           <>
             {stageMode === "overview" ? (
@@ -957,6 +960,7 @@ export default function MatrixWorkspace({
               {describeActivation(
                 stats,
                 event?.module?.replace(/^model\./, "") || null,
+                event?.magnitude,
               )}
             </p>
             <div className="matrix-chips">
@@ -969,9 +973,11 @@ export default function MatrixWorkspace({
               <span title="Share of values within 1% of RMS of zero">
                 {pct(stats.sparsity)} near zero
               </span>
-              <span title="Share of negative values">
-                {pct(stats.negativeShare)} negative
-              </span>
+              {!event?.magnitude && (
+                <span title="Share of negative values">
+                  {pct(stats.negativeShare)} negative
+                </span>
+              )}
             </div>
             {stats.outliers.length > 0 && (
               <>
@@ -1029,6 +1035,22 @@ export default function MatrixWorkspace({
           <dd>{attention ? "layer output (Q × K)" : data?.source || "—"}</dd>
           <dt>Axes</dt>
           <dd>{data ? `${rowName} × ${colName}` : "—"}</dd>
+          {event?.slice_label && (
+            <>
+              <dt>Slice</dt>
+              <dd>
+                <div>
+                  {event.slice_label}
+                  <small className="slice-of">
+                    of {event.source_shape.join(" × ")}
+                  </small>
+                  {event.slice_note && (
+                    <small className="slice-of">{event.slice_note}</small>
+                  )}
+                </div>
+              </dd>
+            </>
+          )}
           <dt>Shape</dt>
           <dd>{data?.shape.join(" × ") || "—"}</dd>
           <dt className="selection">Selection</dt>
@@ -1245,6 +1267,7 @@ export default function MatrixWorkspace({
               {data.totalElements.toLocaleString()} values retained.{" "}
               {data.fixedIndices.length > 0 &&
                 `Leading indices: ${data.fixedIndices.join(", ")}. `}
+              {event?.slice_note ? `${event.slice_note} ` : ""}
               Uncaptured and non-finite values are not plotted. No attention
               mask is inferred.
             </p>

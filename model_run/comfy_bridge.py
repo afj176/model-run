@@ -7,6 +7,7 @@ import time
 
 from .capture import capture_forward
 from .structure import inspect_module_tree
+from .tensor_slices import SliceRecorder
 from .cross_attention import measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
@@ -49,6 +50,7 @@ class DenoiserObserver:
             raise ValueError("This MODEL already has a Model Run observer")
         self.publish = publish
         self._lock = Lock()
+        self._slices = SliceRecorder()
         self.calls = 0
         self.trace = None
         self.tree = inspect_module_tree(self.core)
@@ -82,9 +84,11 @@ class DenoiserObserver:
             self.calls += 1
             self._current = self._attention_context(call, arguments)
             try:
+                latent_shape = self._latent_shape(arguments)
                 output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
                     max_tensor_elements=self.elements, max_events=len(self.paths),
-                    output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()})
+                    output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()},
+                    slices=self._slices, latent_shape=latent_shape)
             except Exception as exc:
                 trace = getattr(exc, "trace", None)
                 if trace:
@@ -95,6 +99,14 @@ class DenoiserObserver:
         finally:
             self._current = None
             self._lock.release()
+
+    def _latent_shape(self, arguments):
+        """Real shape of the latent this call denoises; audio+video models pack their streams."""
+        packed = getattr(self.base_model, "latent_shapes", None)
+        if isinstance(packed, (list, tuple)) and len(packed) > 1:
+            return list(packed[0])
+        shape = getattr(arguments.get("input"), "shape", None)
+        return list(shape) if shape is not None else None
 
     def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""

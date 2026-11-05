@@ -558,7 +558,9 @@ export default function Scene({
 
     // Value field: the event's retained prefix folded into a grid of bars.
     const n = raw.length;
-    const cols = volume ? Math.ceil(Math.cbrt(n)) : Math.ceil(Math.sqrt(n));
+    const cols = volume
+      ? Math.ceil(Math.cbrt(n))
+      : (event?.grid_cols ?? Math.ceil(Math.sqrt(n)));
     const rows = volume ? cols : Math.ceil(n / cols);
     const cell = FIELD_W / Math.max(cols, 1);
     const depth = rows * cell;

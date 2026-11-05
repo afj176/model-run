@@ -151,7 +151,7 @@ export function activationStats(values, { outliers = 5 } = {}) {
   };
 }
 
-export function describeActivation(stats, module) {
+export function describeActivation(stats, module, magnitude = false) {
   if (!stats) return "No finite values were captured.";
   const name = module ? `${module}` : "This tensor";
   const parts = [];
@@ -173,7 +173,8 @@ export function describeActivation(stats, module) {
     );
   else if (stats.sparsity >= 0.2)
     parts.push(`${pct(stats.sparsity)} of values are near zero.`);
-  if (stats.negativeShare >= 0.45 && stats.negativeShare <= 0.55)
+  if (magnitude) parts.push("These are magnitudes, so they have no sign.");
+  else if (stats.negativeShare >= 0.45 && stats.negativeShare <= 0.55)
     parts.push("Signs are balanced.");
   else if (stats.negativeShare < 0.2)
     parts.push(`Mostly positive (${pct(1 - stats.negativeShare)}).`);

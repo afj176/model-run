@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Cube,
   Stack,
@@ -33,6 +33,8 @@ import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import { layerNodePath, layerOf, railLabel } from "./insights";
+import SliceNavigator from "./SliceNavigator";
+import { sliceEvent } from "./matrixData";
 import Compare from "./Compare";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
@@ -86,6 +88,11 @@ export function App() {
   const native = state?.host === "comfyui";
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
+  const [sliceWanted, setSliceWanted] = useState({});
+  const pickSlice = useCallback(
+    (key, value) => setSliceWanted((w) => ({ ...w, [key]: value })),
+    [],
+  );
   const [pairB, setPairB] = useState("");
   const [nativeQueued, setNativeQueued] = useState(false);
   const [layerView, setLayerView] = useState(null);
@@ -180,8 +187,15 @@ export function App() {
   }, [trace, headView, layerView]);
   const replayEvent =
     events[Math.min(eventIndex, Math.max(0, events.length - 1))];
-  const event =
+  const rawEvent =
     !selected || eventPath(replayEvent) === selected ? replayEvent : null;
+  const event = useMemo(
+    () => sliceEvent(rawEvent, sliceWanted),
+    [rawEvent, sliceWanted],
+  );
+  const sliceNav = (
+    <SliceNavigator event={event} wanted={sliceWanted} onChange={pickSlice} />
+  );
   const activeNode = allNodes.find((n) => n.path === selected),
     vals = samples(event);
   useEffect(() => {
@@ -198,7 +212,12 @@ export function App() {
     setValueIndex(pick);
     // Keyed on the event's identity so a trace revision with the same values keeps the pick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traceId, event ? eventPath(event) : "", event?.values?.length ?? 0]);
+  }, [
+    traceId,
+    event ? eventPath(event) : "",
+    event?.values?.length ?? 0,
+    event?.slice_label ?? "",
+  ]);
   const selectedValue =
     valueIndex !== null ? (event?.values || []).flat()[valueIndex] : undefined;
   const expandedComponents = useMemo(() => {
@@ -872,6 +891,7 @@ export function App() {
         <MatrixWorkspace
           trace={viewTrace}
           event={event}
+          sliceNav={sliceNav}
           events={events}
           eventIndex={eventIndex}
           onPickEvent={(i) => {
@@ -1186,6 +1206,7 @@ export function App() {
                     ) : null
                   }
                 />
+                {sliceNav}
                 {nodes.length > 0 && (
                   <div className="layer-rail" aria-label="Model components">
                     {nodes.map((n, i) => (
@@ -1309,6 +1330,24 @@ export function App() {
                 <dl>
                   <dt>Path</dt>
                   <dd>{selected || "Root"}</dd>
+                  {event?.slice_label && (
+                    <>
+                      <dt>Slice</dt>
+                      <dd>
+                        <div>
+                          {event.slice_label}
+                          <small className="slice-of">
+                            of {event.source_shape.join(" × ")}
+                          </small>
+                          {event.slice_note && (
+                            <small className="slice-of">
+                              {event.slice_note}
+                            </small>
+                          )}
+                        </div>
+                      </dd>
+                    </>
+                  )}
                   <dt>Shape</dt>
                   <dd>{event?.shape?.join(" × ") || "Not captured"}</dd>
                   <dt>Data type</dt>
@@ -1365,7 +1404,11 @@ export function App() {
                     setPlaying(false);
                   }}
                 />
-                <h3>Captured prefix statistics</h3>
+                <h3>
+                  {event?.slice_label
+                    ? "Slice statistics"
+                    : "Captured prefix statistics"}
+                </h3>
                 <dl>
                   <dt>Minimum</dt>
                   <dd>{vals.length ? num(Math.min(...vals)) : "—"}</dd>

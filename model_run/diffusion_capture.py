@@ -1,5 +1,6 @@
 """Bounded callback observation of supported Diffusers denoising latents."""
 import math
+from .tensor_slices import SliceRecorder
 
 
 class DiffusionCapture:
@@ -18,6 +19,7 @@ class DiffusionCapture:
         self.every_n_steps = every_n_steps
         self.max_events = max_events
         self.max_tensor_elements = max_tensor_elements
+        self._slices = SliceRecorder()
         self.events = []
         self.dropped_events = 0
         self._pipeline_identity = None
@@ -59,6 +61,9 @@ class DiffusionCapture:
                             "selection": "flattened_prefix", "values": sample,
                             "total_elements": flat.numel(), "truncated": len(sample) < flat.numel(),
                             "nonfinite_values_replaced_with_null": nonfinite})
+        record = self._slices.record(latent, list(latent.shape))
+        if record is not None:
+            self.events[-1]["slices"] = record
         return callback_kwargs
 
     def trace(self, pipeline, *, status="completed"):

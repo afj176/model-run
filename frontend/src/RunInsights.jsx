@@ -47,7 +47,9 @@ export function ActivationInsight({ event, events = [], onPickEvent }) {
       <h3>
         <Lightbulb size={18} weight="duotone" /> Activation insight
       </h3>
-      <p className="matrix-insight-text">{describeActivation(stats, name)}</p>
+      <p className="matrix-insight-text">
+        {describeActivation(stats, name, event.magnitude)}
+      </p>
       <div className="matrix-chips">
         <span title="Root mean square of retained finite values">
           RMS {short(stats.rms)}
@@ -58,9 +60,11 @@ export function ActivationInsight({ event, events = [], onPickEvent }) {
         <span title="Share of values within 1% of RMS of zero">
           {pct(stats.sparsity)} near zero
         </span>
-        <span title="Share of negative values">
-          {pct(stats.negativeShare)} negative
-        </span>
+        {!event.magnitude && (
+          <span title="Share of negative values">
+            {pct(stats.negativeShare)} negative
+          </span>
+        )}
         {stats.nonFinite > 0 && <span>{stats.nonFinite} non-finite</span>}
       </div>
       {stats.outliers.length > 0 && (

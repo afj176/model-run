@@ -229,9 +229,19 @@ ComfyUI, lighting up wherever the trace carries the data.
   frame, up to 16 evenly chosen frames, and the panel has a frame picker.
   Verified on LTX 2.5 through the ComfyUI node: 2 frames at 8x8 tokens, with
   `call:N` selecting the attention call because LTX does not label its blocks
-  (`call:1` is the first block's video-to-text cross-attention). The table and
-  Run View show one slice of a 5-D latent with generic `dim` axes; they cannot
-  yet move along the frame or channel axes.
+  (`call:1` is the first block's video-to-text cross-attention).
+- **Frame and channel navigation.** Each captured tensor with more than one
+  frame or channel also records up to 64 slices of real values, so the Tensor
+  Exploration Table and Run View can move through them, and frames can play.
+  A slice larger than 16 x 16 is area-averaged, and the inspector says so. "All"
+  shows mean magnitude across channels or features, not signed values. When
+  there are too many, frames are kept first (up to 16) and other indices are
+  evenly spaced. A trace spends at most 262,144 slice values, and later events
+  then report that the budget ran out. Axis names come only from the denoiser's
+  known latent shape; other tensors show axis positions. Packed tokens are
+  restored to frames only when their count fits the latent grid, assuming frame,
+  row, column order. Tensor Volume still folds a slice into a cube, so its layout
+  is not spatial. Traces recorded before this feature have no slices.
 - **Audio.** LTX 2.5's audio stream is captured with an output selector such as
   `{"transformer_blocks.0": [1]}`, and token ablation reaches its text
   cross-attention. There is no audio-specific view or attention map yet, and

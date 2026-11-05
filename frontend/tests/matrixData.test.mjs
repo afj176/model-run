@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractMatrix } from "../src/matrixData.js";
+import { extractMatrix, resolveSlice, sliceEvent } from "../src/matrixData.js";
 
 test("attention cells preserve selected head values and axes without inventing masks", () => {
   const trace = {
@@ -110,4 +110,82 @@ test("reject inconsistent values and unsafe shapes", () => {
       ),
     /window/,
   );
+});
+
+const sliced = () => ({
+  module: "denoiser",
+  selection: "flattened_prefix",
+  shape: [1, 2, 2, 1, 2],
+  total_elements: 8,
+  values: [1, 2],
+  truncated: true,
+  slices: {
+    layout: "latent",
+    axes: [
+      {
+        dim: 1,
+        name: "channel",
+        size: 4,
+        indices: [0, 2],
+        mean_abs: [1, 2],
+        max_abs: [1, 2],
+      },
+      {
+        dim: 2,
+        name: "frame",
+        size: 2,
+        indices: [0, 1],
+        mean_abs: [1, 2],
+        max_abs: [1, 2],
+      },
+    ],
+    row_axis: "height",
+    col_axis: "width",
+    rows: 1,
+    cols: 2,
+    source_rows: 2,
+    source_cols: 4,
+    pooled: true,
+    assumption: null,
+    // channel 0 frame 0, channel 0 frame 1, channel 2 frame 0, channel 2 frame 1
+    values: [1, 2, 3, 4, 5, 6, 7, 8],
+    aggregate_axis: 0,
+    aggregate: [10, 20, 30, 40],
+  },
+});
+
+test("resolveSlice defaults to the all-values map and snaps to recorded indices", () => {
+  const { slices } = sliced();
+  assert.deepEqual(resolveSlice(slices), [null, 0]);
+  assert.deepEqual(resolveSlice(slices, { channel: 3, frame: 1 }), [1, 1]);
+  assert.deepEqual(resolveSlice(slices, { channel: "all", frame: 9 }), [
+    null,
+    1,
+  ]);
+});
+
+test("sliceEvent exposes one slice as a plain 2-D tensor with named axes", () => {
+  const one = sliceEvent(sliced(), { channel: 2, frame: 1 });
+  assert.deepEqual(one.values, [7, 8]);
+  assert.deepEqual(one.shape, [1, 2]);
+  assert.equal(one.slice_label, "channel 2 · frame 1");
+  assert.match(one.slice_note, /Averaged from 2 × 4 to 1 × 2/);
+  assert.match(one.slice_note, /2 of 4 channels recorded/);
+  const matrix = extractMatrix({}, one);
+  assert.deepEqual(matrix.matrix, [[7, 8]]);
+  assert.deepEqual(matrix.axes, ["height", "width"]);
+  assert.deepEqual(matrix.states, [["captured", "captured"]]);
+  assert.equal(matrix.capturedCount, 2);
+  const all = sliceEvent(sliced(), { frame: 1 });
+  assert.deepEqual(all.values, [30, 40]);
+  assert.equal(all.slice_label, "all channels · frame 1");
+  assert.match(all.slice_note, /Mean magnitude across every channel/);
+});
+
+test("sliceEvent leaves events without usable slices alone", () => {
+  const plain = { module: "m", values: [1] };
+  assert.equal(sliceEvent(plain), plain);
+  assert.equal(sliceEvent(null), null);
+  const skipped = { module: "m", slices: { unavailable: "budget" } };
+  assert.equal(sliceEvent(skipped), skipped);
 });

@@ -4,6 +4,7 @@ import os
 import tempfile
 import math
 from pathlib import Path
+from .tensor_slices import validate_slices
 
 MAX_TRACE_BYTES = 16 * 1024 * 1024
 SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching", "generation_capture"}
@@ -310,6 +311,8 @@ def _validate(trace):
                 total = event.get("total_elements")
                 if type(total) is not int or total != math.prod(shape) or len(values) > total or type(event.get("truncated")) is not bool or event["truncated"] != (len(values) < total):
                     raise ValueError("Captured tensor count or truncation is inconsistent")
+                if "slices" in event:
+                    validate_slices(event["slices"])
     else:
         events = trace.get("events")
         if not isinstance(events, list) or len(events) > 256 or not isinstance(trace.get("capture"), dict):
@@ -323,6 +326,8 @@ def _validate(trace):
             total = event.get("total_elements")
             if type(total) is not int or total != math.prod(shape) or len(values) > total or type(event.get("truncated")) is not bool or event["truncated"] != (len(values) < total):
                 raise ValueError("Diffusion tensor count or truncation is inconsistent")
+            if "slices" in event:
+                validate_slices(event["slices"])
 
 
 def encode_trace(trace):

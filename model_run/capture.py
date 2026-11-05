@@ -4,9 +4,10 @@ from __future__ import annotations
 import time
 import math
 from .control import ObservationCancelled
+from .tensor_slices import SliceRecorder
 
 
-def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None):
+def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None, slices=None, latent_shape=None):
     """Run once and copy selected module output tensors to CPU, without mutating the model.
 
     Model construction, device placement, tokenization and trust remain the caller's responsibility.
@@ -40,6 +41,7 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
         raise ValueError(f"Unknown module paths: {missing}")
     events, handles = [], []
     dropped = 0
+    slices = SliceRecorder() if slices is None else slices
 
     def first_tensor(value, path=()):
         if isinstance(value, torch.Tensor):
@@ -91,6 +93,9 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
                            "selection": "flattened_prefix", "values": sample, "output_path": tensor_path,
                            "total_elements": flattened.numel(), "truncated": count < flattened.numel(),
                            "nonfinite_values_replaced_with_null": nonfinite})
+            record = slices.record(tensor, latent_shape)
+            if record is not None:
+                events[-1]["slices"] = record
             if control is not None:
                 control.checkpoint(f"module:{path}", completed=len(events), total=None)
         return hook
