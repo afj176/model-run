@@ -2945,3 +2945,27 @@ main {
 .audio-readout .text-button {
   margin-top: 4px;
 }
+
+/* A view that could not render. */
+.view-error {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin: 12px;
+  padding: 16px;
+  border: 1px solid var(--line, #cfc5cb);
+  border-radius: 8px;
+  background: var(--surface, #fffaf4);
+  color: var(--ink, #141537);
+}
+.view-error small {
+  color: var(--muted, #746f83);
+  overflow-wrap: anywhere;
+}
+.audio-doubt {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--coral, #f57d78);
+  background: var(--lilac, #eee7f3);
+  font-size: 13px;
+}

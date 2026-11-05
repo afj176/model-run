@@ -1336,3 +1336,11 @@ button.matrix-dot:hover i {
   background: #ff3d8f;
   color: #fff !important;
 }
+.matrix-timeline-hint {
+  position: absolute;
+  right: 26px;
+  top: 8px;
+  margin: 0;
+  color: var(--stage-muted, #c9c1e6);
+  font-size: 11px;
+}

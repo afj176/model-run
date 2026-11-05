@@ -135,8 +135,8 @@ export function extractMatrix(trace, event, options = {}) {
     selection: attention ? "full_attention_head" : source.selection,
     source: attention
       ? `Layer ${source.layer} · head ${source.head}`
-      : (source.module ??
-        (source.step === undefined ? "Model output" : `Step ${source.step}`)),
+      : source.module ||
+        (source.step === undefined ? "Model output" : `Step ${source.step}`),
     capturedCount: attention ? total : values.length,
     totalElements: total,
   };

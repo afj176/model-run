@@ -1032,3 +1032,21 @@ export function runParts(traces, id) {
     if (t.run === record.run && t.step) ids[t.step] = t.id;
   return { run: record.run, ids };
 }
+
+/**
+ * Mean share of attention past the end of the audio in the final decoder layer. Measured at 0.12 to
+ * 0.18 on synthetic speech and 0.63 to 0.85 on silence, a tone and noise, so a high share is a warning.
+ * A low share proves nothing: a wrong transcript of very noisy speech still measured 0.18.
+ */
+export function attentionPastAudio(layers) {
+  const outside = layers?.at?.(-1)?.outside;
+  if (!Array.isArray(outside) || !outside.length) return null;
+  const share =
+    outside.reduce((a, v) => a + (Number.isFinite(v) ? v : 0), 0) /
+    outside.length;
+  return { share, doubtful: share >= 0.5 };
+}
+
+/** Whether this run recorded a layer at all, so views never offer one with nothing to show. */
+export const layerCaptured = (path, events) =>
+  (events || []).some((e) => moduleInStop(e.module, { path }));

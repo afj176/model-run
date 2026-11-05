@@ -248,7 +248,13 @@ ComfyUI, lighting up wherever the trace carries the data.
   outputs appear as a feature-by-time map in the Table and Run View, covering only
   the frames with audio. Checked on one synthetic spoken clip: splicing 3 s of
   silence after "dog" left no token peaking inside the gap and moved "Model" from
-  3.70 s to 6.69 s. These maps show where a layer read, not word timings. The trace
+  3.70 s to 6.69 s. On synthetic speech (two voices, three speeds, added noise) word error was 2 to 7%
+  down to 10 dB of noise and 15% at 0 dB, and the transcript was wrong at -5 dB. Whisper
+  invents text on silence, a tone and noise, and peak order stays perfect even when the
+  words are wrong, so order is not evidence of accuracy. The panel warns when over half of
+  the final layer's attention lands past the audio's end (0.63 to 0.85 on those inputs,
+  0.12 to 0.18 on speech), but a low share proves nothing. No real recording has been
+  tested. These maps show where a layer read, not word timings. The trace
   holds the audio, so exports contain the speech. LTX 2.5's audio stream is captured
   with an output selector such as `{"transformer_blocks.0": [1]}` and gets the same
   feature-by-time view in ComfyUI, and token ablation reaches its text cross-attention.
@@ -300,7 +306,10 @@ the first 256 values and first 64 local parameters. Null represents a non-finite
 sample, not zero. Missing captures are never colored as observed zero values.
 
 The timeline replays recorded events; it does not claim real-time kernel timings
-or reverse model execution. Capture history keeps at most 16 runs, 64 traces or 256 MiB in memory.
+or reverse model execution. The timeline and layer select offer only layers the run recorded; in ComfyUI an empty
+modules field records the whole denoiser, and the hint says how to record more. Each view
+also has its own error boundary, so a malformed capture blanks one panel, not the app.
+Capture history keeps at most 16 runs, 64 traces or 256 MiB in memory.
 The parts of one Run (layer outputs, response, attention) count as one run, leave
 memory together, and come back together when reopened from history. You can pin up
 to 8 runs or 128 MiB to keep them when older captures are removed. Nothing is written

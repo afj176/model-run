@@ -309,7 +309,8 @@ class SpeechAdapter(TorchModuleAdapter):
             "prompt_token_ids": ids[:prefix], "model_class": trace["model_class"], "torch_version": trace["torch_version"],
             "limitations": ["Probabilities are softmax of the decoder's scores after Whisper's own token rules, which is what greedy decoding chose from.",
                             "Whisper picked the language itself; the tokens before the transcript show what it chose." if multilingual else "This model only transcribes English.",
-                            "Only the first 30 seconds of audio are used."]}
+                            "Only the first 30 seconds of audio are used.",
+                            "Whisper can invent text on silence, tones or noise, sometimes with high probability; these probabilities are not a measure of accuracy."]}
         trace["adapter_id"] = self.adapter_id
         return output, trace
 

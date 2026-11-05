@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Pause } from "@phosphor-icons/react";
 import {
+  attentionPastAudio,
   pct,
   pctFine,
   speechTokenStory,
@@ -102,6 +103,7 @@ export default function AudioView({ trace }) {
     );
   }, [view, layer, tokens.length, peak]);
   if (!view) return null;
+  const past = attentionPastAudio(layers);
   const story = layer
     ? speechTokenStory(layer.maps[index], layer.outside[index], view.seconds)
     : null;
@@ -181,6 +183,13 @@ export default function AudioView({ trace }) {
           />
         )}
       </div>
+      {past?.doubtful && (
+        <p className="audio-doubt" role="note">
+          This transcript may not come from the audio. {pct(past.share)} of the
+          final layer's attention landed past the end of the audio, which in our
+          tests was typical of silence, tones and noise rather than speech.
+        </p>
+      )}
       <div className="audio-grid">
         <span className="audio-row-label">Spectrogram</span>
         <div className="audio-plot" onClick={clickTime}>

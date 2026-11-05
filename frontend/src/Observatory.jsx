@@ -33,8 +33,15 @@ import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
-import { layerLabels, layerNodePath, layerOf, runParts } from "./insights";
+import {
+  layerCaptured,
+  layerLabels,
+  layerNodePath,
+  layerOf,
+  runParts,
+} from "./insights";
 import SliceNavigator from "./SliceNavigator";
+import ErrorBoundary from "./ErrorBoundary";
 import ImageClassification from "./ImageClassification";
 import AudioView from "./AudioView";
 import { sliceEvent } from "./matrixData";
@@ -357,11 +364,20 @@ export function App() {
         label: `L${n}`,
       }));
     const labels = layerLabels(nodes.map((n) => n.path));
-    return nodes.map((n, i) => ({
-      value: n.path,
-      label: `${labels[i]} · ${n.path.split(".").slice(-2).join(".")}`,
-    }));
-  }, [blockMode, layerOptions, nodes]);
+    const measured = events.length > 0;
+    const choices = nodes.map((n, i) => {
+      const missing = measured && !layerCaptured(n.path, events);
+      return {
+        value: n.path,
+        label: `${labels[i]} · ${n.path.split(".").slice(-2).join(".")}${missing ? " · not captured" : ""}`,
+        disabled: missing,
+      };
+    });
+    // A capture of the whole model belongs to no single layer.
+    return events.some((e) => e.module === "")
+      ? [{ value: "", label: "Whole model" }, ...choices]
+      : choices;
+  }, [blockMode, layerOptions, nodes, events]);
   const status = busy
     ? `${state.job.action} · working`
     : state?.job.status === "failed"
@@ -583,9 +599,9 @@ export function App() {
     const key = `${state?.loaded?.name}|${inputMode}|${prompt}`;
     const active = {
       key,
-      // Re-probing a layer of the prompt in the box stays part of the same run.
+      // Re-probing a layer of the prompt in the box stays part of the same run; a new Run is its own.
       run:
-        session?.key === key && session.run
+        steps.length === 1 && session?.key === key && session.run
           ? session.run
           : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
       prompt,
@@ -911,7 +927,7 @@ export function App() {
             >
               {blockMode && !layerChoices.length && <option value="">—</option>}
               {layerChoices.map((c) => (
-                <option key={c.value} value={c.value}>
+                <option key={c.value} value={c.value} disabled={c.disabled}>
                   {c.label}
                 </option>
               ))}
@@ -1027,67 +1043,76 @@ export function App() {
         onChange={importTrace}
       />
       {view === "compare" ? (
-        <Compare
-          traceA={trace}
-          traces={state?.traces}
-          traceId={traceId}
-          pairedId={pairB}
-          busy={busy || nativeQueued}
-          native={native}
-          canRun={
-            state?.loaded?.task === "text" &&
-            (trace?.model_name ? trace.model_name === state.loaded.name : true)
-          }
-          canRunDiffusionModel={
-            Boolean(state?.loaded) &&
-            state.loaded.task !== "text" &&
-            (trace?.model_name ? trace.model_name === state.loaded.name : true)
-          }
-          onRunVariant={native ? null : runVariant}
-          onRunPatch={native ? null : runPatch}
-          onRunAblation={native ? runNativeAblation : runAblation}
-          fallbackPrompt={prompt}
-        />
+        <ErrorBoundary label="the comparison" resetKey={traceId}>
+          <Compare
+            traceA={trace}
+            traces={state?.traces}
+            traceId={traceId}
+            pairedId={pairB}
+            busy={busy || nativeQueued}
+            native={native}
+            canRun={
+              state?.loaded?.task === "text" &&
+              (trace?.model_name
+                ? trace.model_name === state.loaded.name
+                : true)
+            }
+            canRunDiffusionModel={
+              Boolean(state?.loaded) &&
+              state.loaded.task !== "text" &&
+              (trace?.model_name
+                ? trace.model_name === state.loaded.name
+                : true)
+            }
+            onRunVariant={native ? null : runVariant}
+            onRunPatch={native ? null : runPatch}
+            onRunAblation={native ? runNativeAblation : runAblation}
+            fallbackPrompt={prompt}
+          />
+        </ErrorBoundary>
       ) : view === "matrix" ? (
-        <MatrixWorkspace
-          trace={viewTrace}
-          event={event}
-          sliceNav={sliceNav}
-          events={events}
-          eventIndex={eventIndex}
-          onPickEvent={(i) => {
-            setEventIndex(i);
-            setSelected(eventPath(events[i]));
-            setPlaying(false);
-          }}
-          onPickHead={(i) => {
-            setHeadView(i);
-            setHead(i);
-          }}
-          layers={nodes}
-          busy={busy}
-          canAttention={state?.loaded?.task === "text"}
-          onCapture={() => run(true)}
-          onAblate={(mode) => run(true, mode)}
-          onPickLayer={textModel ? pickLayer : undefined}
-          stageOptions={
-            session && Object.values(session.ids).includes(traceId)
-              ? {
-                  current:
-                    trace?.kind === "attention_capture"
-                      ? "attention"
-                      : "outputs",
-                  attention: session.ids.attention,
-                  outputs: session.ids.module,
-                  open: (id) => id && id !== traceId && openTrace(id, layer),
-                }
-              : null
-          }
-          layer={layer}
-          setLayer={setLayer}
-          head={head}
-          setHead={setHead}
-        />
+        <ErrorBoundary label="the tensor table" resetKey={traceId}>
+          <MatrixWorkspace
+            trace={viewTrace}
+            event={event}
+            sliceNav={sliceNav}
+            native={native}
+            events={events}
+            eventIndex={eventIndex}
+            onPickEvent={(i) => {
+              setEventIndex(i);
+              setSelected(eventPath(events[i]));
+              setPlaying(false);
+            }}
+            onPickHead={(i) => {
+              setHeadView(i);
+              setHead(i);
+            }}
+            layers={nodes}
+            busy={busy}
+            canAttention={state?.loaded?.task === "text"}
+            onCapture={() => run(true)}
+            onAblate={(mode) => run(true, mode)}
+            onPickLayer={textModel ? pickLayer : undefined}
+            stageOptions={
+              session && Object.values(session.ids).includes(traceId)
+                ? {
+                    current:
+                      trace?.kind === "attention_capture"
+                        ? "attention"
+                        : "outputs",
+                    attention: session.ids.attention,
+                    outputs: session.ids.module,
+                    open: (id) => id && id !== traceId && openTrace(id, layer),
+                  }
+                : null
+            }
+            layer={layer}
+            setLayer={setLayer}
+            head={head}
+            setHead={setHead}
+          />
+        </ErrorBoundary>
       ) : (
         <div className="workspace">
           <aside className="sidebar panel">
@@ -1333,40 +1358,42 @@ export function App() {
               </div>
             ) : (
               <>
-                <Scene
-                  components={expandedComponents}
-                  cameraMode={cameraMode}
-                  events={events}
-                  nodes={nodes}
-                  selected={selected}
-                  event={event}
-                  view={view}
-                  spread={spread}
-                  rotate={rotate}
-                  onSelect={choose}
-                  resetKey={resetKey}
-                  logScale={logScale}
-                  valueIndex={valueIndex}
-                  onPickValue={setValueIndex}
-                  callout={
-                    event && valueIndex !== null ? (
-                      <>
-                        <span>
-                          {short(event.label ?? eventPath(event))} · #
-                          {valueIndex}
-                        </span>
-                        <strong>
-                          Value{" "}
-                          <em>
-                            {selectedValue === null
-                              ? "non-finite"
-                              : num(selectedValue)}
-                          </em>
-                        </strong>
-                      </>
-                    ) : null
-                  }
-                />
+                <ErrorBoundary label="the 3D view" resetKey={traceId}>
+                  <Scene
+                    components={expandedComponents}
+                    cameraMode={cameraMode}
+                    events={events}
+                    nodes={nodes}
+                    selected={selected}
+                    event={event}
+                    view={view}
+                    spread={spread}
+                    rotate={rotate}
+                    onSelect={choose}
+                    resetKey={resetKey}
+                    logScale={logScale}
+                    valueIndex={valueIndex}
+                    onPickValue={setValueIndex}
+                    callout={
+                      event && valueIndex !== null ? (
+                        <>
+                          <span>
+                            {short(event.label ?? eventPath(event))} · #
+                            {valueIndex}
+                          </span>
+                          <strong>
+                            Value{" "}
+                            <em>
+                              {selectedValue === null
+                                ? "non-finite"
+                                : num(selectedValue)}
+                            </em>
+                          </strong>
+                        </>
+                      ) : null
+                    }
+                  />
+                </ErrorBoundary>
                 {sliceNav}
                 {nodes.length > 0 && (
                   <div className="layer-rail" aria-label="Model components">
@@ -1759,7 +1786,19 @@ export function App() {
                   </p>
                 </>
               );
-            return <div className="output-stack">{panels}</div>;
+            return (
+              <div className="output-stack">
+                {panels.map((panel) => (
+                  <ErrorBoundary
+                    key={panel.key}
+                    label="this result panel"
+                    resetKey={traceId}
+                  >
+                    {panel}
+                  </ErrorBoundary>
+                ))}
+              </div>
+            );
           })()}
         </div>
         <div className="history">

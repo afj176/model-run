@@ -20,6 +20,7 @@ import {
   attentionHeadProfile,
   callDeltas,
   describeActivation,
+  layerCaptured,
   layerOf,
   layerStops,
   moduleInStop,
@@ -82,6 +83,7 @@ export default function MatrixWorkspace({
   onPickLayer,
   stageOptions = null,
   sliceNav = null,
+  native = false,
   layer,
   setLayer,
   head,
@@ -202,7 +204,20 @@ export default function MatrixWorkspace({
     trace?.kind === "attention_capture"
       ? trace.layer
       : layerOf(event?.module ?? events[eventIndex]?.module);
-  const stops = useMemo(() => layerStops(layers.map((n) => n.path)), [layers]);
+  const allStops = useMemo(
+    () => layerStops(layers.map((n) => n.path)),
+    [layers],
+  );
+  // A text model can probe any layer on demand; elsewhere only what this run recorded can be shown.
+  const onDemand = trace?.kind === "attention_capture" || !!onPickLayer;
+  const stops = useMemo(
+    () =>
+      onDemand
+        ? allStops
+        : allStops.filter((s) => layerCaptured(s.path, events)),
+    [allStops, onDemand, events],
+  );
+  const partial = stops.length < allStops.length;
   const stopPositions = stops.map((_, i) => i);
   const stepTotal = stops.length;
   const eventModule = event?.module ?? events[eventIndex]?.module;
@@ -643,9 +658,16 @@ export default function MatrixWorkspace({
         ) : (
           <div className="matrix-empty">
             <GridFour size={44} />
-            <h3>No matrix captured yet</h3>
+            <h3>
+              {events.length && !extracted.error
+                ? "This layer was not captured in this run"
+                : "No matrix captured yet"}
+            </h3>
             <p>
               {extracted.error ||
+                (events.length
+                  ? "Pick a captured layer, or add this one to the capture and run again."
+                  : null) ||
                 "Run a text attention probe, or select a recorded tensor event. Only retained values are displayed."}
             </p>
           </div>
@@ -698,7 +720,7 @@ export default function MatrixWorkspace({
             }
           >
             {stepIndex >= 0
-              ? `${currentStop.name[0].toUpperCase()}${currentStop.name.slice(1)} · ${stepIndex + 1} of ${stepTotal}`
+              ? `${currentStop.name[0].toUpperCase()}${currentStop.name.slice(1)} · ${stepIndex + 1} of ${stepTotal}${partial ? " captured" : ""}`
               : event?.denoiser_call !== undefined
                 ? `Call ${event.denoiser_call} · ${eventIndex + 1} of ${events.length}`
                 : event?.step !== undefined
@@ -707,6 +729,12 @@ export default function MatrixWorkspace({
                     ? `Event ${eventIndex + 1} of ${events.length}`
                     : "No events"}
           </span>
+          {native && partial && allStops.length > 0 && (
+            <p className="matrix-timeline-hint">
+              {stops.length} of {allStops.length} layers captured. To record
+              more, list them in the modules field of Model Run · Observe.
+            </p>
+          )}
         </footer>
       </section>
       <aside className="matrix-inspector">

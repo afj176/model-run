@@ -1,3 +1,5 @@
+import { layerCaptured } from "../src/insights.js";
+import { attentionPastAudio } from "../src/insights.js";
 import { runParts, validIndex } from "../src/insights.js";
 import { speechTokenStory } from "../src/insights.js";
 import test from "node:test";
@@ -730,4 +732,24 @@ test("runParts finds a trace's run, with later parts replacing earlier ones", ()
   });
   assert.equal(runParts(traces, "d"), null);
   assert.equal(runParts(traces, "gone"), null);
+});
+
+test("attentionPastAudio warns from the final layer only", () => {
+  const speech = [{ outside: [0.9, 0.9] }, { outside: [0.1, 0.2] }];
+  assert.equal(attentionPastAudio(speech).doubtful, false);
+  assert.ok(Math.abs(attentionPastAudio(speech).share - 0.15) < 1e-9);
+  assert.equal(attentionPastAudio([{ outside: [0.7, 0.8] }]).doubtful, true);
+  assert.equal(attentionPastAudio([]), null);
+});
+
+test("layerCaptured only accepts layers this run recorded", () => {
+  const events = [
+    { module: "double_blocks.0" },
+    { module: "model.encoder.layers.1.fc" },
+  ];
+  assert.equal(layerCaptured("double_blocks.0", events), true);
+  assert.equal(layerCaptured("double_blocks.1", events), false);
+  assert.equal(layerCaptured("model.encoder.layers.1", events), true);
+  assert.equal(layerCaptured("x", [{ step: 1 }]), false);
+  assert.equal(layerCaptured("x", null), false);
 });
