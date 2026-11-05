@@ -196,17 +196,30 @@ def _validate(trace):
             for token in entry["top_tokens"]:
                 if not isinstance(token, dict) or type(token.get("token_id")) is not int or type(token.get("probability")) not in (int, float) or not 0 <= token["probability"] <= 1 or ("text" in token and not isinstance(token["text"], str)):
                     raise ValueError("Invalid logit lens token")
-    if "preview" in trace:
+    def _check_png(encoded):
         import base64
-        preview = trace["preview"]
-        if not isinstance(preview, dict) or preview.get("mime") != "image/png" or not isinstance(preview.get("base64"), str):
+        if not isinstance(encoded, str):
             raise ValueError("Invalid preview")
         try:
-            raw = base64.b64decode(preview["base64"], validate=True)
+            raw = base64.b64decode(encoded, validate=True)
         except ValueError as exc:
             raise ValueError("Invalid preview encoding") from exc
         if len(raw) > 4 * 1024 * 1024 or not raw.startswith(b"\x89PNG\r\n\x1a\n"):
             raise ValueError("Invalid or oversized PNG preview")
+    if "preview" in trace:
+        preview = trace["preview"]
+        if not isinstance(preview, dict) or preview.get("mime") != "image/png":
+            raise ValueError("Invalid preview")
+        _check_png(preview.get("base64"))
+    if "preview_frames" in trace:
+        block = trace["preview_frames"]
+        frames = block.get("frames") if isinstance(block, dict) else None
+        indices = block.get("frame_indices") if isinstance(block, dict) else None
+        if (not isinstance(frames, list) or not 2 <= len(frames) <= 64 or not isinstance(indices, list) or len(indices) != len(frames)
+                or any(type(i) is not int or i < 0 for i in indices) or type(block.get("source_frames")) is not int):
+            raise ValueError("Invalid preview frames")
+        for frame in frames:
+            _check_png(frame)
     if trace["kind"] == "attention_capture":
         shape, values = trace.get("shape"), trace.get("values")
         if (not isinstance(shape, list) or len(shape) != 2 or any(type(n) is not int or not 1 <= n <= 128 for n in shape)

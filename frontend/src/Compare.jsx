@@ -39,6 +39,7 @@ export default function Compare({
   busy = false,
   canRun = false,
   canRunDiffusionModel = false,
+  native = false,
   onRunVariant,
   onRunPatch,
   onRunAblation,
@@ -89,10 +90,14 @@ export default function Compare({
     Array.isArray(patching.source_run.tokens) &&
     patching.source_run.tokens.length === traceA.tokens.length &&
     patching.source_run.tokens.every((t, i) => t.id === traceA.tokens[i].id);
-  const canRunDiffusion =
-    traceA?.kind === "diffusion_step_capture" &&
-    canRunDiffusionModel &&
-    traceA?.sampling?.prompt;
+  const denoiserRun = (t) =>
+    t?.kind === "diffusion_step_capture" ||
+    t?.source === "comfyui_native_denoiser";
+  const canRunDiffusion = native
+    ? Boolean(traceA?.native_rerun)
+    : traceA?.kind === "diffusion_step_capture" &&
+      canRunDiffusionModel &&
+      traceA?.sampling?.prompt;
   const canPatch =
     Boolean(onRunPatch) &&
     canRun &&
@@ -233,10 +238,11 @@ export default function Compare({
           </p>
         </form>
       )}
-      {traceA?.kind === "diffusion_step_capture" && (
+      {denoiserRun(traceA) && (
         <DiffusionCompare
           traceA={traceA}
-          traceB={traceB?.kind === "diffusion_step_capture" ? traceB : null}
+          traceB={denoiserRun(traceB) ? traceB : null}
+          native={native}
           busy={busy}
           canRun={Boolean(canRunDiffusion)}
           onRunAblation={onRunAblation}

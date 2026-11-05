@@ -725,12 +725,23 @@ export function patchStory(block) {
 
 /** Per-step divergence between two diffusion runs over their retained latent prefixes. */
 export function stepDeltas(eventsA = [], eventsB = []) {
+  // Diffusers runs line up by step, ComfyUI runs by module and denoiser call.
+  const keyOf = (e) =>
+    e.step !== undefined
+      ? `step:${e.step}`
+      : e.denoiser_call !== undefined
+        ? `${e.module}|${e.denoiser_call}`
+        : null;
+  const firstModule = (eventsA || []).find(
+    (e) => e.denoiser_call !== undefined,
+  )?.module;
   const byStep = new Map();
-  for (const e of eventsB || [])
-    if (e.step !== undefined) byStep.set(e.step, e);
+  for (const e of eventsB || []) if (keyOf(e)) byStep.set(keyOf(e), e);
   const out = [];
   for (const a of eventsA || []) {
-    const b = byStep.get(a.step);
+    if (!keyOf(a) || (a.step === undefined && a.module !== firstModule))
+      continue;
+    const b = byStep.get(keyOf(a));
     if (!b || !Array.isArray(a.values) || !Array.isArray(b.values)) continue;
     const n = Math.min(a.values.length, b.values.length);
     let sum = 0,
@@ -747,7 +758,13 @@ export function stepDeltas(eventsA = [], eventsB = []) {
     if (!count) continue;
     const rms = Math.sqrt(sum / count),
       rmsA = Math.sqrt(sumA / count);
-    out.push({ step: a.step, rms, rmsA, relative: rmsA > 0 ? rms / rmsA : 0 });
+    out.push({
+      step: a.step ?? a.denoiser_call,
+      module: a.step === undefined ? a.module : null,
+      rms,
+      rmsA,
+      relative: rmsA > 0 ? rms / rmsA : 0,
+    });
   }
   return out;
 }
@@ -782,7 +799,7 @@ export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
   const parts = [];
   if (ablation?.labels?.length)
     parts.push(
-      `B ran with ${ablation.labels.map((l) => `\u201c${tokenText(l)}\u201d`).join(", ")} masked out of every cross-attention call (${ablation.applied_attention_calls} calls in the recorded steps).`,
+      `B ran with ${ablation.labels.map((l) => `\u201c${tokenText(l)}\u201d`).join(", ")} masked out of every cross-attention call (${ablation.applied_attention_calls} attention calls recorded).`,
     );
   if (pixels) {
     const grid = pixels.grid || [];
@@ -800,10 +817,12 @@ export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
   if (deltas?.length) {
     const first = deltas.find((d) => d.relative >= 0.05);
     const last = deltas.at(-1);
+    const subject = last.module === null ? "Latents" : "The observed output";
+    const unit = last.module === null ? "step" : "call";
     parts.push(
       first
-        ? `Latents diverge from step ${first.step} and end ${pctFine(last.relative)} apart relative to A.`
-        : `Latents stay within ${pctFine(Math.max(...deltas.map((d) => d.relative)))} of A throughout.`,
+        ? `${subject} ${last.module === null ? "diverge" : "diverges"} from ${unit} ${first.step} and ${last.module === null ? "end" : "ends"} ${pctFine(last.relative)} apart relative to A.`
+        : `${subject} ${last.module === null ? "stay" : "stays"} within ${pctFine(Math.max(...deltas.map((d) => d.relative)))} of A throughout.`,
     );
   }
   if (shift?.ranked?.length) {

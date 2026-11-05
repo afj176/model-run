@@ -37,6 +37,7 @@ class Application:
         self._loaded = None
         self._tree = None
         self._traces = []
+        self._native_workflows = {}  # in memory only; workflows never enter a trace or an export
         self._trace_bytes = 0
 
     def _start(self, action, function):
@@ -386,6 +387,24 @@ class Application:
             if state["status"] == "failed":
                 raise RuntimeError(state["error"])
         return self._start("observe", observe)
+
+    def remember_workflow(self, trace_id, graph, node):
+        with self._lock:
+            live = {t["id"] for t in self._traces}
+            self._native_workflows = {k: v for k, v in self._native_workflows.items() if k in live}
+            # Only what ComfyUI needs to queue the graph; the executor adds bookkeeping such as is_changed: NaN.
+            clean = {key: {"class_type": value["class_type"], "inputs": deepcopy(value["inputs"])}
+                     for key, value in graph.items() if isinstance(value, dict) and "class_type" in value and "inputs" in value}
+            self._native_workflows[trace_id] = {"prompt": clean, "node": str(node)}
+
+    def native_workflow(self, identifier):
+        """The ComfyUI graph that produced a retained trace, so it can be queued again."""
+        with self._lock:
+            workflow = self._native_workflows.get(identifier)
+            retained = any(t["id"] == identifier for t in self._traces)
+        if workflow is None or not retained:
+            raise ValueError("This run's ComfyUI workflow is no longer available; queue it from ComfyUI")
+        return deepcopy(workflow)
 
     def _attach_patching(self, attach_to, result):
         """Store an activation-patching result on the target trace it was measured against."""

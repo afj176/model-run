@@ -43,6 +43,7 @@ def dispatch(app, method, route, body=None):
         if route.startswith("artifact-structure/"): return app.artifact_structure(route[19:])
         if route.startswith("inspect/"): return app.inspect(route[8:])
         if route.startswith("traces/"): return app.trace(route[7:])
+        if route.startswith("native-workflow/"): return app.native_workflow(route[16:])
     if method == "POST":
         if route == "scan": return app.scan()
         if route == "load": return app.load(body.get("id"), body.get("device", "cpu"))

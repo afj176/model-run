@@ -165,3 +165,47 @@ class PublishSafetyTests(unittest.TestCase):
             encode_trace(observer.trace)
         finally:
             comfy_bridge.MAX_SECTION_VALUES = original
+
+
+
+@unittest.skipIf(torch is None, "optional torch dependency unavailable")
+class AttachOutputTests(unittest.TestCase):
+    def observed(self, published):
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, publish=lambda t: published.append(encode_trace(t)))
+        observer(lambda x, t: patcher.model.diffusion_model(x), {"input": torch.ones(1, 4), "timestep": None, "c": {}})
+        return patcher, observer
+
+    def test_single_image_and_video_frames(self):
+        from model_run.comfy_bridge import ModelRunAttachOutput
+        published = []
+        patcher, observer = self.observed(published)
+        patcher.model_options["model_function_wrapper"] = observer
+        image = torch.rand(1, 32, 32, 3)
+        out = ModelRunAttachOutput().attach(patcher, image)
+        self.assertIs(out[0], image)
+        self.assertEqual(observer.trace["preview"]["mime"], "image/png")
+        self.assertNotIn("preview_frames", observer.trace)
+        ModelRunAttachOutput().attach(patcher, torch.rand(40, 32, 32, 3))
+        frames = observer.trace["preview_frames"]
+        self.assertEqual((len(frames["frames"]), frames["frame_indices"][0], frames["frame_indices"][-1], frames["source_frames"]), (16, 0, 39, 40))
+        encode_trace(observer.trace)
+
+    def test_oversized_output_degrades_without_failing(self):
+        patcher = Patcher()
+        attempts = []
+        def publish(trace):
+            attempts.append(("preview_frames" in trace, "preview" in trace))
+            if "preview_frames" in trace or len(attempts) == 1:
+                raise ValueError("too big")
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, publish=publish)
+        observer.publish = None
+        observer(lambda x, t: patcher.model.diffusion_model(x), {"input": torch.ones(1, 4), "timestep": None, "c": {}})
+        observer.publish = publish
+        self.assertFalse(observer.attach_images(torch.rand(3, 8, 8, 3)))
+        self.assertEqual(attempts, [(True, True), (False, True)])
+
+    def test_unobserved_model_passes_images_through(self):
+        from model_run.comfy_bridge import ModelRunAttachOutput
+        image = torch.rand(1, 8, 8, 3)
+        self.assertIs(ModelRunAttachOutput().attach(Patcher(), image)[0], image)

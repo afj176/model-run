@@ -620,3 +620,32 @@ test("crossAttentionStory ranks words above padding and reads the chosen frame",
   assert.deepEqual(crossAttentionStory(event, labels, 1, 1).peakCell, [0, 1]);
   assert.equal(crossAttentionStory(event, labels, 0).index, 0);
 });
+
+test("stepDeltas lines up ComfyUI runs by module and denoiser call", () => {
+  const event = (module, call, values) => ({
+    module,
+    denoiser_call: call,
+    values,
+  });
+  const a = [
+    event("x", 0, [1, 1]),
+    event("y", 0, [5, 5]),
+    event("x", 1, [2, 2]),
+  ];
+  const b = [
+    event("x", 0, [1, 1]),
+    event("y", 0, [9, 9]),
+    event("x", 1, [2, 0]),
+  ];
+  const deltas = stepDeltas(a, b);
+  assert.deepEqual(
+    deltas.map((d) => [d.step, d.module]),
+    [
+      [0, "x"],
+      [1, "x"],
+    ],
+  );
+  assert.equal(deltas[0].relative, 0);
+  const story = diffusionCompareStory({ deltas });
+  assert.match(story.text, /The observed output diverges from call 1/);
+});

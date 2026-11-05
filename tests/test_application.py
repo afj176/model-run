@@ -133,3 +133,23 @@ class AblationAttachTests(unittest.TestCase):
             with self.assertRaises(ValueError): app.run({"prompt": "hi", "ablate": "nope", "attach_to": identifier})
         finally:
             app.close()
+
+
+
+class NativeWorkflowTests(unittest.TestCase):
+    def test_workflow_stays_out_of_the_trace_and_follows_retention(self):
+        app = Application()
+        try:
+            identifier = app.publish(trace(), "fixture")["id"]
+            app.remember_workflow(identifier, {"6": {"class_type": "ModelRunObserve", "inputs": {"ablate_tokens": ""}, "is_changed": [float("nan")]}}, 6)
+            self.assertEqual(app.native_workflow(identifier)["node"], "6")
+            json.dumps(app.native_workflow(identifier), allow_nan=False)
+            self.assertNotIn("prompt", app.trace(identifier))
+            copy = app.native_workflow(identifier)
+            copy["prompt"]["6"]["inputs"]["ablate_tokens"] = "1"
+            self.assertEqual(app.native_workflow(identifier)["prompt"]["6"]["inputs"]["ablate_tokens"], "")
+            app.delete_trace(identifier)
+            with self.assertRaises(ValueError): app.native_workflow(identifier)
+            with self.assertRaises(ValueError): app.native_workflow("missing")
+        finally:
+            app.close()

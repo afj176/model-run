@@ -23,8 +23,16 @@ export default function CrossAttention({ trace }) {
   }, [trace?.cross_attention]);
   if (!section) return null;
   const picked = token ?? story?.index ?? 0;
-  const preview =
-    trace?.preview?.mime === "image/png"
+  // Latent frames map to decoded frames by position; the two have different frame counts.
+  const decoded = trace?.preview_frames?.frames;
+  const frameCount = event?.frames ?? 1;
+  const frameImage =
+    decoded?.length && frameCount > 1
+      ? decoded[Math.round((frame / (frameCount - 1)) * (decoded.length - 1))]
+      : decoded?.[0];
+  const preview = frameImage
+    ? `data:image/png;base64,${frameImage}`
+    : trace?.preview?.mime === "image/png"
       ? `data:image/png;base64,${trace.preview.base64}`
       : null;
   const label = (i) => (labels?.[i] ? `“${tokenText(labels[i])}”` : `#${i}`);
@@ -199,6 +207,9 @@ export default function CrossAttention({ trace }) {
             attention kernel received, averaged over heads and area-pooled to
             the grid. Attention shows where text is read, not what caused a
             pixel.{" "}
+            {!preview && trace?.source === "comfyui_native_denoiser"
+              ? "Add Model Run · Attach Output after your VAE Decode to draw these maps over the result. "
+              : ""}
             {section.skipped?.length
               ? `${section.skipped.length} call(s) skipped: ${section.skipped[0].reason}.`
               : ""}

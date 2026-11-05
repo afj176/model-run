@@ -1,4 +1,7 @@
 """Opt-in native MODEL observation. Never loads, clones weights, or changes sampling."""
+import base64
+import io
+import logging
 from threading import Lock
 import time
 
@@ -254,6 +257,24 @@ class DenoiserObserver:
         if self.publish is not None:
             self._publish_safely(call)
 
+    def attach_images(self, images):
+        """Pin decoded output to this run's trace; frames only when there is more than one image."""
+        if self.trace is None or self.publish is None:
+            return False
+        preview, frames = encode_images(images)
+        self.trace["preview"] = preview
+        if frames:
+            self.trace["preview_frames"] = frames
+        for drop in ("", "preview_frames", "preview"):
+            if drop:
+                self.trace.pop(drop, None)
+            try:
+                self.publish(self.trace)
+                return drop == ""
+            except ValueError as exc:
+                logging.getLogger(__name__).warning("Model Run dropped %s to fit the trace bound: %s", drop or "nothing", exc)
+        return False
+
     def _publish_safely(self, call):
         """Publishing must never abort the user's sampling run; shrink and retry, then give up quietly."""
         try:
@@ -292,6 +313,55 @@ def application():
     return _application
 
 
+def encode_images(images, *, side=512, frame_side=256, max_frames=16):
+    """PNG preview of the first image, plus evenly chosen smaller frames for a video batch."""
+    import torch
+    from PIL import Image
+    if not isinstance(images, torch.Tensor) or images.ndim != 4 or images.shape[0] < 1 or images.shape[-1] not in (1, 3, 4):
+        raise ValueError("Expected an IMAGE batch shaped [frames, height, width, channels]")
+    def png(tensor, limit):
+        pixels = (tensor[..., :3].clamp(0, 1) * 255).round().to(torch.uint8).cpu().numpy()
+        image = Image.fromarray(pixels.squeeze(-1) if pixels.shape[-1] == 1 else pixels)
+        image.thumbnail((limit, limit))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return base64.b64encode(buffer.getvalue()).decode()
+    preview = {"mime": "image/png", "base64": png(images[0], side)}
+    count = int(images.shape[0])
+    if count == 1:
+        return preview, None
+    kept = count if count <= max_frames else max_frames
+    indices = sorted({round(i * (count - 1) / (kept - 1)) for i in range(kept)}) if kept > 1 else [0]
+    return preview, {"mime": "image/png", "frames": [png(images[i], frame_side) for i in indices],
+                     "frame_indices": indices, "source_frames": count}
+
+
+class ModelRunAttachOutput:
+    CATEGORY = "Model Run"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "attach"
+    OUTPUT_NODE = True
+    DESCRIPTION = "Pin decoded images or video frames to the Model Run trace of an observed MODEL. Connect after your VAE Decode."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"observed_model": ("MODEL", {"tooltip": "The MODEL output of Model Run · Observe."}),
+                             "images": ("IMAGE",)}}
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def attach(self, observed_model, images):
+        wrapper = observed_model.model_options.get("model_function_wrapper")
+        if isinstance(wrapper, DenoiserObserver):
+            wrapper.attach_images(images)
+        else:
+            logging.getLogger(__name__).warning("Model Run · Attach Output needs the MODEL from Model Run · Observe; nothing was attached.")
+        return (images,)
+
+
 class ModelRunObserve:
     CATEGORY = "Model Run"
     RETURN_TYPES = ("MODEL",)
@@ -310,13 +380,14 @@ class ModelRunObserve:
                     "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
                     "clip": ("CLIP", {"tooltip": "Optional: with prompt, labels text tokens in the attention maps."}),
                     "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."}),
-                    "ablate_tokens": ("STRING", {"default": "", "tooltip": "Intervention: comma-separated text token indices whose keys are masked out of every attention call for this run. Compare the result with a run that leaves this empty."})}}
+                    "ablate_tokens": ("STRING", {"default": "", "tooltip": "Intervention: comma-separated text token indices whose keys are masked out of every attention call for this run. Compare the result with a run that leaves this empty."})},
+                "hidden": {"workflow_graph": "PROMPT", "unique_id": "UNIQUE_ID"}}
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
         return float("nan")  # Fresh observation budget for every queued execution.
 
-    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens=""):
+    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens="", workflow_graph=None, unique_id=None):
         import json
         if not isinstance(output_selectors, str) or len(output_selectors) > 8192:
             raise ValueError("Output selector JSON exceeds 8 KiB")
@@ -329,8 +400,13 @@ class ModelRunObserve:
         last_id = [None]
         def publish(trace):
             # Replace this run's snapshot; other runs remain in bounded history.
-            result = app.publish(trace, type(model.model.diffusion_model).__name__, replace_id=last_id[0])
+            trace["model_name"] = type(model.model.diffusion_model).__name__
+            if isinstance(workflow_graph, dict) and unique_id is not None:
+                trace["native_rerun"] = True
+            result = app.publish(trace, trace["model_name"], replace_id=last_id[0])
             last_id[0] = result["id"]
+            if trace.get("native_rerun"):
+                app.remember_workflow(result["id"], workflow_graph, unique_id)
         observer = DenoiserObserver(model, [s.strip() for s in modules.splitlines()] or [""],
                                     max_calls=max_calls, elements=elements, publish=publish, output_selectors=selectors,
                                     attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)

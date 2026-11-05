@@ -21,6 +21,7 @@ export default function DiffusionCompare({
   traceB,
   busy,
   canRun,
+  native = false,
   onRunAblation,
 }) {
   const labels = traceA?.cross_attention?.text_labels || null;
@@ -41,8 +42,7 @@ export default function DiffusionCompare({
       .filter((n) => Number.isInteger(n) && n >= 0 && n < 1024);
     return [...new Set([...picked, ...typed])].sort((a, b) => a - b);
   }, [picked, manual]);
-  const canAblate =
-    Boolean(onRunAblation) && canRun && Boolean(traceA?.sampling?.prompt);
+  const canAblate = Boolean(onRunAblation) && canRun;
   const [pixels, setPixels] = useState(null);
   const diffRef = useRef(null);
   const imageA = traceA?.preview?.base64,
@@ -144,7 +144,10 @@ export default function DiffusionCompare({
           <h3>
             Run without a token{" "}
             <small className="muted">
-              token ablation · same prompt, seed, steps and size
+              token ablation ·{" "}
+              {native
+                ? "this workflow, queued again in ComfyUI"
+                : "same prompt, seed, steps and size"}
             </small>
           </h3>
           <p className="micro">
@@ -194,7 +197,9 @@ export default function DiffusionCompare({
             >
               <Play size={14} weight="fill" />{" "}
               {busy
-                ? "Running…"
+                ? native
+                  ? "Queued in ComfyUI…"
+                  : "Running…"
                 : chosen.length
                   ? `Run without ${chosen.length === 1 ? `token ${chosen[0]}` : `${chosen.length} tokens`}`
                   : "Pick tokens to ablate"}
@@ -233,7 +238,7 @@ export default function DiffusionCompare({
                   {t?.sampling
                     ? `seed ${t.sampling.seed} · ${t.sampling.steps} steps · ${t.sampling.size}px`
                     : t?.captured_calls
-                      ? `${t.captured_calls} denoiser calls`
+                      ? `${t.captured_calls} recorded denoiser calls`
                       : ""}
                 </figcaption>
               </figure>
@@ -258,7 +263,9 @@ export default function DiffusionCompare({
           {deltas.length > 0 && (
             <>
               <p className="matrix-insight-sub">
-                Latent divergence per step{" "}
+                {deltas[0].module !== null && deltas[0].module !== undefined
+                  ? `Output of ${deltas[0].module || "the denoiser"} per denoiser call`
+                  : "Latent divergence per step"}{" "}
                 <small>
                   (RMS of A − B relative to A's RMS, retained prefix)
                 </small>

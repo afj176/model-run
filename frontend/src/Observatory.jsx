@@ -87,6 +87,7 @@ export function App() {
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [pairB, setPairB] = useState("");
+  const [nativeQueued, setNativeQueued] = useState(false);
   const [layerView, setLayerView] = useState(null);
   // A capture session: the companion traces produced by one Run (outputs, response, attention).
   const sessionRef = useRef(null);
@@ -548,6 +549,53 @@ export function App() {
       }),
     );
   }
+  /** ComfyUI: queue this run's own workflow again with the chosen tokens masked. */
+  function runNativeAblation(tokens) {
+    if (!traceId || !tokens?.length) return;
+    action(async () => {
+      const workflow = await api(`native-workflow/${traceId}`);
+      const node = workflow.prompt[workflow.node];
+      if (!node)
+        throw new Error("The observer node is missing from this workflow");
+      node.inputs.ablate_tokens = tokens.join(", ");
+      variantOf.current = traceId;
+      setNativeQueued(true);
+      const finish = () => {
+        variantOf.current = "";
+        setNativeQueued(false);
+      };
+      try {
+        const queued = await fetch(new URL("../prompt", window.location.href), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: workflow.prompt,
+            client_id: "model-run",
+          }),
+        });
+        const value = await queued.json();
+        if (!queued.ok || !value.prompt_id)
+          throw new Error(
+            value.error?.message || "ComfyUI refused the workflow",
+          );
+        for (let i = 0; i < 1200; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const history = await (
+            await fetch(
+              new URL(`../history/${value.prompt_id}`, window.location.href),
+            )
+          ).json();
+          const record = history[value.prompt_id];
+          if (!record) continue;
+          if (record.status?.status_str !== "success")
+            throw new Error("ComfyUI could not finish the masked run");
+          break;
+        }
+      } finally {
+        finish();
+      }
+    });
+  }
   function runAblation(tokens) {
     if (!trace?.sampling?.prompt || !tokens?.length) return;
     variantOf.current = traceId;
@@ -804,7 +852,8 @@ export function App() {
           traces={state?.traces}
           traceId={traceId}
           pairedId={pairB}
-          busy={busy}
+          busy={busy || nativeQueued}
+          native={native}
           canRun={
             state?.loaded?.task === "text" &&
             (trace?.model_name ? trace.model_name === state.loaded.name : true)
@@ -816,7 +865,7 @@ export function App() {
           }
           onRunVariant={native ? null : runVariant}
           onRunPatch={native ? null : runPatch}
-          onRunAblation={native ? null : runAblation}
+          onRunAblation={native ? runNativeAblation : runAblation}
           fallbackPrompt={prompt}
         />
       ) : view === "matrix" ? (

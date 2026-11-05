@@ -236,6 +236,15 @@ ComfyUI, lighting up wherever the trace carries the data.
   `{"transformer_blocks.0": [1]}`, and token ablation reaches its text
   cross-attention. There is no audio-specific view or attention map yet, and
   no audio-only model has been run.
+- **ComfyUI output and reruns.** Add Model Run · Attach Output after VAE Decode,
+  wired to the MODEL from Model Run · Observe, to pin the decoded image to that
+  run's trace; a video batch also keeps up to 16 frames at 256px. Attention maps
+  then draw over the result. In Compare, pick tokens and "Run without" queues the
+  same workflow in ComfyUI with those tokens masked and pairs it as B, with both
+  images, a pixel difference and per-call divergence. Both only compare the first
+  frame of a video. The workflow stays in memory for retained traces and is never
+  written to a trace or an export; a seed set to randomize still reruns with the
+  seed it actually used.
 - **Attention maps that are not available.** SeedVR2's attention never passes
   `transformer_options`, so ComfyUI's override hook cannot see it. HiDream-O1's
   layout (257 queries, 273 keys, 17 text tokens) is not understood. Both report
