@@ -196,6 +196,14 @@ def validate_slices(record):
         if not isinstance(record["unavailable"], str) or len(record) != 1:
             raise ValueError("Invalid slice record")
         return
+    for field in ("row_axis", "col_axis", "assumption"):
+        if record.get(field) is not None and not isinstance(record[field], str):
+            raise ValueError("Invalid slice description")
+    for field in ("source_rows", "source_cols"):
+        if type(record.get(field)) is not int or record[field] < 1:
+            raise ValueError("Invalid slice source size")
+    if type(record.get("pooled")) is not bool:
+        raise ValueError("Invalid slice description")
     axes, rows, cols = record.get("axes"), record.get("rows"), record.get("cols")
     if record.get("layout") == "sequence":
         values = record.get("values")
@@ -226,6 +234,10 @@ def validate_slices(record):
             raise ValueError("Invalid slice axis")
         for field in ("mean_abs", "max_abs"):
             if not isinstance(axis.get(field), list) or len(axis[field]) != len(indices):
+                raise ValueError("Invalid slice axis statistics")
+    for axis in axes:
+        for field in ("mean_abs", "max_abs"):
+            if any(v is not None and (type(v) not in (int, float) or not math.isfinite(v)) for v in axis[field]):
                 raise ValueError("Invalid slice axis statistics")
     aggregate = record.get("aggregate_axis")
     if type(aggregate) is not int or not 0 <= aggregate < len(axes):

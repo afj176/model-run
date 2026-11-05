@@ -9,7 +9,7 @@ import {
 } from "./insights";
 
 /** The model's greedy response and, for each token it wrote, where that token came from. */
-export default function Response({ trace }) {
+export default function Response({ trace, doubtful = false }) {
   const steps = trace?.steps || [];
   const [picked, setPicked] = useState(null);
   const [showThinking, setShowThinking] = useState(true);
@@ -66,13 +66,15 @@ export default function Response({ trace }) {
           </small>
         </h2>
         <span
-          className={`prediction-confidence ${story.meanProbability >= 0.6 ? "confident" : story.meanProbability >= 0.3 ? "leaning" : "undecided"}`}
+          className={`prediction-confidence ${doubtful ? "undecided" : story.meanProbability >= 0.6 ? "confident" : story.meanProbability >= 0.3 ? "leaning" : "undecided"}`}
         >
-          {story.meanProbability >= 0.6
-            ? "confident"
-            : story.meanProbability >= 0.3
-              ? "leaning"
-              : "undecided"}
+          {doubtful
+            ? "check the audio"
+            : story.meanProbability >= 0.6
+              ? "confident"
+              : story.meanProbability >= 0.3
+                ? "leaning"
+                : "undecided"}
           <small>mean token probability {pct(story.meanProbability)}</small>
         </span>
       </div>

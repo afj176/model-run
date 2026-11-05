@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractMatrix, resolveSlice, sliceEvent } from "../src/matrixData.js";
+import {
+  extractMatrix,
+  resolveSlice,
+  sliceEvent,
+  volumeCell,
+  volumeEvent,
+} from "../src/matrixData.js";
 
 test("attention cells preserve selected head values and axes without inventing masks", () => {
   const trace = {
@@ -255,4 +261,34 @@ test("a batched sequence is read one batch entry at a time", () => {
   const second = sliceEvent(event, { batch: 1 });
   assert.deepEqual(second.values, [3, 4]);
   assert.equal(second.slice_label, "feature by time · batch 1");
+});
+
+test("a volume stacks recorded frames and says where each value sits", () => {
+  const volume = volumeEvent(sliced(), { channel: 2 });
+  // channel 2: frame 0 is [5, 6], frame 1 is [7, 8]
+  assert.deepEqual(volume.values, [5, 6, 7, 8]);
+  assert.deepEqual(volume.shape, [1, 2, 2]);
+  assert.equal(volume.slice_label, "channel 2 · stacked by frame");
+  assert.deepEqual(volume.volume_layout.indices, [0, 1]);
+  assert.equal(
+    volumeCell(volume.volume_layout, 3).text,
+    "frame 1, height 0, width 1",
+  );
+  const all = volumeEvent(sliced());
+  assert.deepEqual(all.values, [10, 20, 30, 40]);
+  assert.equal(all.slice_label, "all channels · stacked by frame");
+});
+
+test("a volume needs recorded maps along an axis", () => {
+  const plain = { module: "m", values: [1, 2] };
+  assert.equal(volumeEvent(plain).volume_layout, undefined);
+  const noFrames = sliced();
+  noFrames.slices.axes = [noFrames.slices.axes[0]];
+  noFrames.slices.values = [1, 2, 3, 4];
+  noFrames.slices.aggregate = [9, 9];
+  // With channels only, the stack is by channel, so it must not read as the all-channels map.
+  const stacked = volumeEvent(noFrames);
+  assert.deepEqual(stacked.values, [1, 2, 3, 4]);
+  assert.equal(stacked.volume_layout.axis, "channel");
+  assert.equal(stacked.slice_label, "stacked by channel");
 });

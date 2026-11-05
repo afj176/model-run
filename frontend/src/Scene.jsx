@@ -369,7 +369,8 @@ export default function Scene({
     );
 
     // Values of the selected event
-    const raw = (event?.values || []).flat().slice(0, 2048);
+    const layout = volume ? event?.volume_layout : null;
+    const raw = (event?.values || []).flat().slice(0, layout ? 4096 : 2048);
     const finite = raw.filter((v) => v !== null && Number.isFinite(v));
     const scale = Math.max(...finite.map(Math.abs), 0.00001);
     const normalize = (v) =>
@@ -558,10 +559,12 @@ export default function Scene({
 
     // Value field: the event's retained prefix folded into a grid of bars.
     const n = raw.length;
-    const cols = volume
-      ? Math.ceil(Math.cbrt(n))
-      : (event?.grid_cols ?? Math.ceil(Math.sqrt(n)));
-    const rows = volume ? cols : Math.ceil(n / cols);
+    const cols = layout
+      ? layout.cols
+      : volume
+        ? Math.ceil(Math.cbrt(n))
+        : (event?.grid_cols ?? Math.ceil(Math.sqrt(n)));
+    const rows = layout ? layout.rows : volume ? cols : Math.ceil(n / cols);
     const cell = FIELD_W / Math.max(cols, 1);
     const depth = rows * cell;
     const fieldY = volume ? 0.6 : FIELD_Y;

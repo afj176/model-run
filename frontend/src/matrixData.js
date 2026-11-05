@@ -227,3 +227,77 @@ export function sliceEvent(event, wanted = {}) {
     slice_note: notes.join(" "),
   };
 }
+
+const MAX_VOLUME_LAYERS = 16;
+
+/**
+ * The event as a true volume: recorded maps stacked along one axis, frames first. Tensors with no
+ * recorded maps along an axis come back flat, because stacking them would invent a layout.
+ */
+export function volumeEvent(event, wanted = {}) {
+  const base = sliceEvent(event, wanted);
+  const slices = event?.slices;
+  if (
+    !Array.isArray(slices?.axes) ||
+    !slices.axes.length ||
+    slices.layout === "sequence"
+  )
+    return base;
+  const named = slices.axes.findIndex((a) => a.name === "frame");
+  const other = slices.axes.findIndex(
+    (a, i) => i !== slices.aggregate_axis && a.indices.length > 1,
+  );
+  const at = named >= 0 ? named : other >= 0 ? other : slices.aggregate_axis;
+  const axis = slices.axes[at];
+  if (!axis || axis.indices.length < 2) return base;
+  const count = Math.min(MAX_VOLUME_LAYERS, axis.indices.length);
+  const chosen = [
+    ...new Set(
+      Array.from(
+        { length: count },
+        (_, i) => axis.indices[Math.floor((i * axis.indices.length) / count)],
+      ),
+    ),
+  ];
+  const values = [];
+  let last = base;
+  for (const index of chosen) {
+    last = sliceEvent(event, { ...wanted, [axisKey(axis)]: index });
+    values.push(...last.values);
+  }
+  const others = last.slice_label
+    .split(" · ")
+    .filter((_, i) => i !== at)
+    .join(" · ");
+  const name = axisLabel(axis);
+  return {
+    ...last,
+    values,
+    shape: [slices.rows, slices.cols, chosen.length],
+    total_elements: values.length,
+    grid_cols: slices.cols,
+    slice_label: `${others ? `${others} · ` : ""}stacked by ${name}`,
+    volume_layout: {
+      rows: slices.rows,
+      cols: slices.cols,
+      depth: chosen.length,
+      axis: name,
+      axisKey: axisKey(axis),
+      indices: chosen,
+      rowAxis: slices.row_axis ?? "row",
+      colAxis: slices.col_axis ?? "column",
+    },
+  };
+}
+
+/** Where one value of a volume sits, in words. */
+export function volumeCell(layout, index) {
+  const plane = layout.rows * layout.cols;
+  const within = index % plane;
+  return {
+    layer: layout.indices[Math.floor(index / plane)],
+    row: Math.floor(within / layout.cols),
+    col: within % layout.cols,
+    text: `${layout.axis} ${layout.indices[Math.floor(index / plane)]}, ${layout.rowAxis} ${Math.floor(within / layout.cols)}, ${layout.colAxis} ${within % layout.cols}`,
+  };
+}

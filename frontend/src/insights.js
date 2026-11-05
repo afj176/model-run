@@ -795,12 +795,33 @@ export function tokenMassShift(sectionA, sectionB) {
   };
 }
 
+/** Masked tokens in words, with repeats counted: many are often the same padding token. */
+function maskedTokens(labels) {
+  const counts = new Map();
+  for (const label of labels) counts.set(label, (counts.get(label) || 0) + 1);
+  return [...counts]
+    .map(
+      ([label, n]) =>
+        `\u201c${tokenText(label)}\u201d${n > 1 ? ` \u00d7 ${n}` : ""}`,
+    )
+    .join(", ");
+}
+
+/** Below this a token's mean attention change would only print as 0.00%. */
+export const MIN_VISIBLE_SHIFT = 5e-5;
+
 /** Narrative for two diffusion runs, usually a token-ablation pair. */
-export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
+export function diffusionCompareStory({
+  ablation,
+  ablatedSide = "B",
+  pixels,
+  deltas,
+  shift,
+}) {
   const parts = [];
   if (ablation?.labels?.length)
     parts.push(
-      `B ran with ${ablation.labels.map((l) => `\u201c${tokenText(l)}\u201d`).join(", ")} masked out of every cross-attention call (${ablation.applied_attention_calls} attention calls recorded).`,
+      `${ablatedSide} ran with ${maskedTokens(ablation.labels)} masked out of every cross-attention call (${ablation.applied_attention_calls} attention calls recorded).`,
     );
   if (pixels) {
     const grid = pixels.grid || [];
@@ -811,9 +832,10 @@ export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
     const where = `${row < 1 ? "top" : row > 2 ? "bottom" : "middle"} ${col < 1 ? "left" : col > 2 ? "right" : "centre"}`;
     parts.push(
       pixels.mean < 0.001
-        ? "The images are practically identical (under 0.1% mean pixel difference)."
-        : `The images differ by ${pctFine(pixels.mean)} of full scale on average, most at the ${where} (${pctFine(grid[peak])}).`,
+        ? "The outputs are practically identical (under 0.1% mean pixel difference)."
+        : `The outputs differ by ${pctFine(pixels.mean)} of full scale on average, most at the ${where} (${pctFine(grid[peak])}).`,
     );
+    if (pixels.framesText) parts.push(pixels.framesText);
   }
   if (deltas?.length) {
     const first = deltas.find((d) => d.relative >= 0.05);
@@ -826,7 +848,9 @@ export function diffusionCompareStory({ ablation, pixels, deltas, shift }) {
         : `${subject} ${last.module === null ? "stay" : "stays"} within ${pctFine(Math.max(...deltas.map((d) => d.relative)))} of A throughout.`,
     );
   }
-  if (shift?.ranked?.length) {
+  if (shift?.ranked?.length && shift.peak < MIN_VISIBLE_SHIFT)
+    parts.push("Attention per token barely moved (under 0.01%).");
+  else if (shift?.ranked?.length) {
     const s = shift.ranked[0];
     parts.push(
       `Attention moved most for ${s.label ? `\u201c${tokenText(s.label)}\u201d` : `token ${s.index}`} (${s.delta >= 0 ? "+" : ""}${pctFine(s.delta)} mean per region).`,
@@ -1074,4 +1098,84 @@ export function eventForLayer(events, matches, current) {
       e.step === current?.step,
   );
   return same >= 0 ? same : list.findIndex(matches);
+}
+
+/** Absolute difference of two RGBA buffers: the mean, a 4 x 4 grid of means, and a picture of it. */
+export function pixelDifference(a, b, width, height) {
+  const size = width * height;
+  const grid = new Array(16).fill(0),
+    counts = new Array(16).fill(0);
+  const image = new Uint8ClampedArray(size * 4);
+  let total = 0;
+  for (let i = 0; i < size; i++) {
+    const at = i * 4;
+    const d =
+      (Math.abs(a[at] - b[at]) +
+        Math.abs(a[at + 1] - b[at + 1]) +
+        Math.abs(a[at + 2] - b[at + 2])) /
+      3;
+    total += d;
+    const x = i % width,
+      y = Math.floor(i / width);
+    const cell =
+      Math.min(3, Math.floor((y / height) * 4)) * 4 +
+      Math.min(3, Math.floor((x / width) * 4));
+    grid[cell] += d;
+    counts[cell]++;
+    const t = Math.min(1, d / 96);
+    image[at] = Math.round(242 + (255 - 242) * t);
+    image[at + 1] = Math.round(239 - (239 - 61) * t);
+    image[at + 2] = Math.round(228 - (228 - 143) * t);
+    image[at + 3] = 255;
+  }
+  return {
+    mean: size ? total / size / 255 : 0,
+    grid: grid.map((v, i) => (counts[i] ? v / counts[i] / 255 : 0)),
+    image,
+  };
+}
+
+/** The frames of each run that can be compared position by position, and why not if they cannot. */
+export function comparableFrames(traceA, traceB) {
+  const frames = (t) =>
+    t?.preview_frames?.frames?.length ? t.preview_frames : null;
+  const a = frames(traceA),
+    b = frames(traceB);
+  const single = traceA?.preview?.base64 && traceB?.preview?.base64;
+  if (a && b) {
+    const same =
+      JSON.stringify(a.frame_indices) === JSON.stringify(b.frame_indices);
+    if (same && a.frames.length === b.frames.length)
+      return {
+        a: a.frames,
+        b: b.frames,
+        indices: a.frame_indices,
+        note: null,
+      };
+  }
+  if (!single) return { a: [], b: [], indices: [], note: null };
+  return {
+    a: [traceA.preview.base64],
+    b: [traceB.preview.base64],
+    indices: [0],
+    note:
+      a || b
+        ? "These runs did not keep the same frames, so only their first frames are compared."
+        : null,
+  };
+}
+
+/** Where two videos differ most, from a mean difference per frame. */
+export function frameDifferenceStory(means, indices) {
+  if (!Array.isArray(means) || means.length < 2) return null;
+  const peak = means.indexOf(Math.max(...means)),
+    low = means.indexOf(Math.min(...means));
+  return {
+    peak,
+    mean: means.reduce((x, y) => x + y, 0) / means.length,
+    text:
+      means[peak] - means[low] < 0.1 * means[peak]
+        ? `The difference is about the same across all ${means.length} frames.`
+        : `Across ${means.length} frames the difference is largest at frame ${indices[peak]} (${pctFine(means[peak])}) and smallest at frame ${indices[low]} (${pctFine(means[low])}).`,
+  };
 }

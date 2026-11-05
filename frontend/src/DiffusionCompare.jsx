@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Lightbulb, Play } from "@phosphor-icons/react";
 import {
+  comparableFrames,
   diffusionCompareStory,
+  frameDifferenceStory,
+  MIN_VISIBLE_SHIFT,
+  pixelDifference,
   pct,
   pctFine,
   stepDeltas,
@@ -43,13 +47,18 @@ export default function DiffusionCompare({
     return [...new Set([...picked, ...typed])].sort((a, b) => a - b);
   }, [picked, manual]);
   const canAblate = Boolean(onRunAblation) && canRun;
-  const [pixels, setPixels] = useState(null);
+  const [frameResults, setFrameResults] = useState(null);
+  const [frameAt, setFrameAt] = useState(0);
   const diffRef = useRef(null);
-  const imageA = traceA?.preview?.base64,
-    imageB = traceB?.preview?.base64;
+  const comparable = useMemo(
+    () => comparableFrames(traceA, traceB),
+    [traceA, traceB],
+  );
+  const hasPair = comparable.a.length > 0;
   useEffect(() => {
-    setPixels(null);
-    if (!imageA || !imageB || !diffRef.current) return;
+    setFrameResults(null);
+    setFrameAt(0);
+    if (!hasPair) return;
     let alive = true;
     const load = (b64) =>
       new Promise((resolve, reject) => {
@@ -58,9 +67,9 @@ export default function DiffusionCompare({
         img.onerror = reject;
         img.src = `data:image/png;base64,${b64}`;
       });
-    Promise.all([load(imageA), load(imageB)])
-      .then(([a, b]) => {
-        if (!alive) return;
+    Promise.all(
+      comparable.a.map(async (imageA, i) => {
+        const [a, b] = await Promise.all([load(imageA), load(comparable.b[i])]);
         const w = Math.min(a.width, b.width, 256),
           h = Math.min(a.height, b.height, 256);
         const read = (img) => {
@@ -71,48 +80,51 @@ export default function DiffusionCompare({
           ctx.drawImage(img, 0, 0, w, h);
           return ctx.getImageData(0, 0, w, h).data;
         };
-        const da = read(a),
-          db = read(b);
-        const canvas = diffRef.current;
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        const out = ctx.createImageData(w, h);
-        const grid = new Array(16).fill(0),
-          counts = new Array(16).fill(0);
-        let total = 0;
-        for (let i = 0; i < w * h; i++) {
-          const at = i * 4;
-          const d =
-            (Math.abs(da[at] - db[at]) +
-              Math.abs(da[at + 1] - db[at + 1]) +
-              Math.abs(da[at + 2] - db[at + 2])) /
-            3;
-          total += d;
-          const x = i % w,
-            y = Math.floor(i / w);
-          const cell =
-            Math.min(3, Math.floor((y / h) * 4)) * 4 +
-            Math.min(3, Math.floor((x / w) * 4));
-          grid[cell] += d;
-          counts[cell]++;
-          const t = Math.min(1, d / 96);
-          out.data[at] = Math.round(242 + (255 - 242) * t);
-          out.data[at + 1] = Math.round(239 - (239 - 61) * t);
-          out.data[at + 2] = Math.round(228 - (228 - 143) * t);
-          out.data[at + 3] = 255;
-        }
-        ctx.putImageData(out, 0, 0);
-        setPixels({
-          mean: total / (w * h) / 255,
-          grid: grid.map((v, i) => (counts[i] ? v / counts[i] / 255 : 0)),
-        });
-      })
-      .catch(() => alive && setPixels(null));
+        return { w, h, ...pixelDifference(read(a), read(b), w, h) };
+      }),
+    )
+      .then((results) => alive && setFrameResults(results))
+      .catch(() => alive && setFrameResults(null));
     return () => {
       alive = false;
     };
-  }, [imageA, imageB]);
+  }, [comparable, hasPair]);
+  const shown = frameResults?.[frameAt] ?? null;
+  useEffect(() => {
+    const canvas = diffRef.current;
+    if (!canvas || !shown) return;
+    canvas.width = shown.w;
+    canvas.height = shown.h;
+    canvas
+      .getContext("2d")
+      .putImageData(new ImageData(shown.image, shown.w, shown.h), 0, 0);
+  }, [shown]);
+  const framesStory = useMemo(
+    () =>
+      frameResults
+        ? frameDifferenceStory(
+            frameResults.map((r) => r.mean),
+            comparable.indices,
+          )
+        : null,
+    [frameResults, comparable],
+  );
+  const pixels = useMemo(() => {
+    if (!frameResults?.length) return null;
+    // A video is summarised by its most different frame; the story names it and the range.
+    const at = framesStory?.peak ?? 0;
+    return {
+      mean: framesStory?.mean ?? frameResults[at].mean,
+      grid: frameResults[at].grid,
+      framesText: framesStory?.text ?? null,
+    };
+  }, [frameResults, framesStory]);
+  // Either run may be the masked one, depending on which trace is open.
+  const ablated = traceB?.token_ablation
+    ? { record: traceB.token_ablation, side: "B" }
+    : traceA?.token_ablation
+      ? { record: traceA.token_ablation, side: "A" }
+      : { record: null, side: "B" };
   const deltas = useMemo(
     () => (traceB ? stepDeltas(traceA?.events, traceB?.events) : []),
     [traceA, traceB],
@@ -128,7 +140,8 @@ export default function DiffusionCompare({
     () =>
       traceB
         ? diffusionCompareStory({
-            ablation: traceB.token_ablation || null,
+            ablation: ablated.record,
+            ablatedSide: ablated.side,
             pixels,
             deltas,
             shift,
@@ -217,18 +230,18 @@ export default function DiffusionCompare({
           <h3>
             Images{" "}
             <small className="muted">
-              {traceB.token_ablation
-                ? `B ran without ${traceB.token_ablation.labels.map((l) => `“${tokenText(l)}”`).join(", ")}`
+              {ablated.record
+                ? `${ablated.side} ran without ${ablated.record.labels.map((l) => `“${tokenText(l)}”`).join(", ")}`
                 : "two retained runs"}
             </small>
           </h3>
           <div className="diffusion-images">
             {[traceA, traceB].map((t, i) => (
               <figure key={i}>
-                {t?.preview?.base64 ? (
+                {hasPair || t?.preview?.base64 ? (
                   <img
-                    alt={`${i ? "B" : "A"} output`}
-                    src={`data:image/png;base64,${t.preview.base64}`}
+                    alt={`${i ? "B" : "A"} output${comparable.a.length > 1 ? `, frame ${comparable.indices[frameAt]}` : ""}`}
+                    src={`data:image/png;base64,${hasPair ? (i ? comparable.b : comparable.a)[frameAt] : t.preview.base64}`}
                   />
                 ) : (
                   <div className="diffusion-missing">no preview</div>
@@ -246,20 +259,52 @@ export default function DiffusionCompare({
             <figure>
               <canvas
                 ref={diffRef}
-                className={imageA && imageB ? "" : "hidden"}
+                className={hasPair ? "" : "hidden"}
                 aria-label="Pixel difference"
               />
-              {!(imageA && imageB) && (
+              {!hasPair && (
                 <div className="diffusion-missing">needs both previews</div>
               )}
               <figcaption>
                 <b>|A − B|</b>{" "}
-                {pixels
-                  ? `mean ${pctFine(pixels.mean)} of full scale`
+                {shown
+                  ? `mean ${pctFine(shown.mean)} of full scale${comparable.a.length > 1 ? `, frame ${comparable.indices[frameAt]}` : ""}`
                   : "pixel difference"}
               </figcaption>
             </figure>
           </div>
+          {comparable.note && <p className="micro">{comparable.note}</p>}
+          {frameResults && frameResults.length > 1 && (
+            <>
+              <p className="matrix-insight-sub">
+                Difference per frame{" "}
+                <small>(mean of |A − B|; pick a frame)</small>
+              </p>
+              <div
+                className="matrix-deltas compare-deltas"
+                role="group"
+                aria-label="Frames"
+              >
+                {frameResults.map((r, i) => (
+                  <button
+                    key={i}
+                    className={i === frameAt ? "picked" : ""}
+                    aria-pressed={i === frameAt}
+                    aria-label={`Frame ${comparable.indices[i]}`}
+                    title={`frame ${comparable.indices[i]}: ${pctFine(r.mean)} of full scale`}
+                    onClick={() => setFrameAt(i)}
+                  >
+                    <i
+                      style={{
+                        height: `${Math.max(2, (r.mean / Math.max(1e-9, ...frameResults.map((x) => x.mean))) * 48)}px`,
+                      }}
+                    />
+                    <small>{comparable.indices[i]}</small>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {deltas.length > 0 && (
             <>
               <p className="matrix-insight-sub">
@@ -288,40 +333,42 @@ export default function DiffusionCompare({
               </div>
             </>
           )}
-          {shift && shift.ranked.length > 0 && (
-            <>
-              <p className="matrix-insight-sub">
-                Tokens whose attention changed most{" "}
-                <small>(mean attention per region, B − A)</small>
-              </p>
-              <ul className="matrix-attends">
-                {shift.ranked.slice(0, 6).map((s) => (
-                  <li key={s.index}>
-                    <button
-                      disabled
-                      title={`A ${pct(s.before)} → B ${pct(s.after)}`}
-                    >
-                      <span className="matrix-attends-token">
-                        {s.label ? `“${tokenText(s.label)}”` : `#${s.index}`}
-                      </span>
-                      <span
-                        className={`matrix-attends-bar ${s.delta < 0 ? "down" : ""}`}
-                        style={{
-                          width: `${Math.max(2, (Math.abs(s.delta) / shift.peak) * 100)}%`,
-                        }}
-                      />
-                      <b>
-                        {s.delta >= 0 ? "+" : ""}
-                        {pctFine(s.delta)}
-                      </b>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          {shift &&
+            shift.ranked.length > 0 &&
+            shift.peak >= MIN_VISIBLE_SHIFT && (
+              <>
+                <p className="matrix-insight-sub">
+                  Tokens whose attention changed most{" "}
+                  <small>(mean attention per region, B − A)</small>
+                </p>
+                <ul className="matrix-attends">
+                  {shift.ranked.slice(0, 6).map((s) => (
+                    <li key={s.index}>
+                      <button
+                        disabled
+                        title={`A ${pct(s.before)} → B ${pct(s.after)}`}
+                      >
+                        <span className="matrix-attends-token">
+                          {s.label ? `“${tokenText(s.label)}”` : `#${s.index}`}
+                        </span>
+                        <span
+                          className={`matrix-attends-bar ${s.delta < 0 ? "down" : ""}`}
+                          style={{
+                            width: `${Math.max(2, (Math.abs(s.delta) / shift.peak) * 100)}%`,
+                          }}
+                        />
+                        <b>
+                          {s.delta >= 0 ? "+" : ""}
+                          {pctFine(s.delta)}
+                        </b>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           <p className="micro">
-            {traceB.token_ablation?.limitations?.[0] ||
+            {ablated.record?.limitations?.[0] ||
               "Both runs must share prompt, seed, steps and size for the difference to mean anything."}
           </p>
         </div>

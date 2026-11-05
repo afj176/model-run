@@ -97,7 +97,7 @@ export default function SliceNavigator({ event, wanted, onChange }) {
   if (!usable || !axes.length) return null;
   return (
     <div className="slice-nav" aria-label="Tensor slices">
-      {frame && frame.indices.length > 1 && (
+      {frame && frame.indices.length > 1 && !event.volume_layout && (
         <button
           className="slice-play"
           aria-label={playing ? "Pause frames" : "Play frames"}
@@ -111,15 +111,17 @@ export default function SliceNavigator({ event, wanted, onChange }) {
           )}
         </button>
       )}
-      {axes.map((axis, i) => (
-        <AxisStrip
-          key={axisKey(axis)}
-          axis={axis}
-          position={positions[i]}
-          allowAll={i === slices.aggregate_axis}
-          onPick={(value) => onChange(axisKey(axis), value)}
-        />
-      ))}
+      {axes.map((axis, i) =>
+        axisKey(axis) === event.volume_layout?.axisKey ? null : (
+          <AxisStrip
+            key={axisKey(axis)}
+            axis={axis}
+            position={positions[i]}
+            allowAll={i === slices.aggregate_axis}
+            onPick={(value) => onChange(axisKey(axis), value)}
+          />
+        ),
+      )}
     </div>
   );
 }

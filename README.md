@@ -96,8 +96,9 @@ The Orbit/Pan/Zoom toolbar selects the primary drag behavior; Reset restores the
 
 **Layer Stack**
 provides a keyboard-accessible list and text-model capture selection. **Tensor
-Volume** changes the retained prefix's display layout; it is not a physical map of
-neurons. Reset/fullscreen and optional auto-orbit are available. Reduced motion
+Volume** stacks a tensor's recorded maps along one axis, frames first and otherwise
+channels or features, so height is that axis and not physical space. A tensor with no
+recorded maps is folded into a cube, and the caption says its position has no meaning. Reset/fullscreen and optional auto-orbit are available. Reduced motion
 disables auto-orbit. If WebGL fails, the list and inspector remain usable.
 
 The inspector reports actual paths, shapes, dtypes, selected output paths through
@@ -240,8 +241,7 @@ ComfyUI, lighting up wherever the trace carries the data.
   then report that the budget ran out. Axis names come only from the denoiser's
   known latent shape; other tensors show axis positions. Packed tokens are
   restored to frames only when their count fits the latent grid, assuming frame,
-  row, column order. Tensor Volume still folds a slice into a cube, so its layout
-  is not spatial. Traces recorded before this feature have no slices.
+  row, column order. Traces recorded before this feature have no slices.
 - **Audio.** A Whisper run shows what it heard: the log-mel spectrogram it received,
   playback of those samples, and a map of each written token against audio time for
   each decoder layer, from measured cross-attention averaged over heads. Layer

@@ -315,8 +315,25 @@ class SpeechAdapter(TorchModuleAdapter):
         return output, trace
 
 
+def _text_list(values, name):
+    if not isinstance(values, list) or len(values) > 32 or any(not isinstance(v, str) or len(v) > 4096 for v in values):
+        raise ValueError(f"Invalid {name}")
+
+
+def validate_input_media(media):
+    """What an imported trace says about its input is shown in the header, so it must be well formed."""
+    if not isinstance(media, dict) or media.get("kind") not in ("image", "audio") or not isinstance(media.get("name"), str) or len(media["name"]) > 256:
+        raise ValueError("Invalid input description")
+    fields = ("source_width", "source_height") if media["kind"] == "image" else ("source_rate", "source_seconds", "used_seconds", "rate")
+    if any(type(media.get(f)) not in (int, float) or not math.isfinite(media[f]) or media[f] < 0 for f in fields):
+        raise ValueError("Invalid input description")
+
+
 def validate_audio_view(view):
     """Raise ValueError unless ``view`` is a consistent audio section."""
+    _text_list(view.get("limitations", []) if isinstance(view, dict) else None, "audio limitations")
+    if isinstance(view, dict) and view.get("attention_unavailable") is not None and not isinstance(view["attention_unavailable"], str):
+        raise ValueError("Invalid audio view")
     def numbers(values, low=None, high=None):
         return isinstance(values, list) and all(v is None or (type(v) in (int, float) and math.isfinite(v) and (low is None or low <= v) and (high is None or v <= high)) for v in values)
     if not isinstance(view, dict) or view.get("method") != AUDIO_METHOD or type(view.get("seconds")) not in (int, float) or not 0 < view["seconds"] <= MAX_SPEECH_SECONDS + 1:
@@ -328,7 +345,8 @@ def validate_audio_view(view):
     if type(bins) is not int or not 1 <= bins <= TIME_BINS or not isinstance(tokens, list) or len(tokens) > 512 or not isinstance(layers, list) or len(layers) > 64:
         raise ValueError("Invalid audio view")
     for token in tokens:
-        if not isinstance(token, dict) or type(token.get("token_id")) is not int or type(token.get("probability")) not in (int, float) or not 0 <= token["probability"] <= 1:
+        if (not isinstance(token, dict) or type(token.get("token_id")) is not int or type(token.get("probability")) not in (int, float) or not 0 <= token["probability"] <= 1
+                or type(token.get("step")) is not int or not isinstance(token.get("text", ""), str)):
             raise ValueError("Invalid audio token")
     for layer in layers:
         maps, outside = (layer.get("maps"), layer.get("outside")) if isinstance(layer, dict) else (None, None)
@@ -352,6 +370,11 @@ def validate_image_classification(record):
     """Raise ValueError unless ``record`` is a consistent image-classification section."""
     if not isinstance(record, dict) or record.get("method") != CLS_METHOD:
         raise ValueError("Invalid image classification")
+    _text_list(record.get("limitations", []), "image limitations")
+    if record.get("attention_unavailable") is not None and not isinstance(record["attention_unavailable"], str):
+        raise ValueError("Invalid image classification")
+    if record.get("class_count") is not None and type(record["class_count"]) is not int:
+        raise ValueError("Invalid image classification")
     labels = record.get("top_labels")
     if (not isinstance(labels, list) or not 1 <= len(labels) <= 20 or type(record.get("entropy_bits")) not in (int, float)
             or not math.isfinite(record["entropy_bits"])):
@@ -368,7 +391,8 @@ def validate_image_classification(record):
     for layer in layers:
         patches = layer.get("patches") if isinstance(layer, dict) else None
         if (type(layer.get("layer") if isinstance(layer, dict) else None) is not int or not isinstance(patches, list) or len(patches) != grid[0] * grid[1]
-                or any(v is not None and (type(v) not in (int, float) or not 0 <= v <= 1.0001) for v in patches)):
+                or any(v is not None and (type(v) not in (int, float) or not 0 <= v <= 1.0001) for v in patches)
+                or (layer.get("self") is not None and type(layer["self"]) not in (int, float))):
             raise ValueError("Invalid image attention layer")
     image = record.get("input_image")
     if image is not None and (not isinstance(image, dict) or image.get("mime") != "image/png" or not isinstance(image.get("base64"), str) or len(image["base64"]) > 6 * 1024 * 1024):

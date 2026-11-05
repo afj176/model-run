@@ -34,6 +34,7 @@ import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import {
+  attentionPastAudio,
   eventForLayer,
   layerCaptured,
   layerLabels,
@@ -45,7 +46,7 @@ import SliceNavigator from "./SliceNavigator";
 import ErrorBoundary from "./ErrorBoundary";
 import ImageClassification from "./ImageClassification";
 import AudioView from "./AudioView";
-import { sliceEvent } from "./matrixData";
+import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
@@ -254,8 +255,11 @@ export function App() {
   const rawEvent =
     !selected || eventPath(replayEvent) === selected ? replayEvent : null;
   const event = useMemo(
-    () => sliceEvent(rawEvent, sliceWanted),
-    [rawEvent, sliceWanted],
+    () =>
+      view === "volume"
+        ? volumeEvent(rawEvent, sliceWanted)
+        : sliceEvent(rawEvent, sliceWanted),
+    [rawEvent, sliceWanted, view],
   );
   const sliceNav = (
     <SliceNavigator event={event} wanted={sliceWanted} onChange={pickSlice} />
@@ -263,7 +267,7 @@ export function App() {
   const activeNode = allNodes.find((n) => n.path === selected),
     vals = samples(event);
   useEffect(() => {
-    const values = (event?.values || []).flat().slice(0, 2048);
+    const values = (event?.values || []).flat().slice(0, 4096);
     let pick = null;
     values.forEach((v, i) => {
       if (
@@ -281,6 +285,7 @@ export function App() {
     event ? eventPath(event) : "",
     event?.values?.length ?? 0,
     event?.slice_label ?? "",
+    view === "volume",
   ]);
   const retention = state?.retention;
   const currentRecord = state?.traces?.find((t) => t.id === traceId);
@@ -367,7 +372,11 @@ export function App() {
     const labels = layerLabels(nodes.map((n) => n.path));
     const measured = events.length > 0;
     const choices = nodes.map((n, i) => {
-      const missing = measured && !layerCaptured(n.path, events);
+      // Steps have no module path: their timeline node is the event itself.
+      const missing =
+        measured &&
+        !layerCaptured(n.path, events) &&
+        !events.some((e) => eventPath(e) === n.path);
       return {
         value: n.path,
         label: `${labels[i]} · ${n.path.split(".").slice(-2).join(".")}${missing ? " · not captured" : ""}`,
@@ -1383,8 +1392,9 @@ export function App() {
                       event && valueIndex !== null ? (
                         <>
                           <span>
-                            {short(event.label ?? eventPath(event))} · #
-                            {valueIndex}
+                            {event.volume_layout
+                              ? volumeCell(event.volume_layout, valueIndex).text
+                              : `${short(event.label ?? eventPath(event))} · #${valueIndex}`}
                           </span>
                           <strong>
                             Value{" "}
@@ -1448,7 +1458,11 @@ export function App() {
                     {event && view === "model" && expandedComponents.length
                       ? "Layer dots: first captured samples · explore values in Tensor Volume"
                       : event
-                        ? `${event.selection || "flattened_prefix"} · ${Math.min(event.values?.flat().length || 0, 2048).toLocaleString()} displayed values`
+                        ? event.volume_layout
+                          ? `${event.volume_layout.rows} × ${event.volume_layout.cols} maps stacked by ${event.volume_layout.axis} · height is ${event.volume_layout.axis}, not space`
+                          : view === "volume"
+                            ? "No recorded maps to stack: retained values folded into a cube, so position here has no meaning"
+                            : `${event.selection || "flattened_prefix"} · ${Math.min(event.values?.flat().length || 0, 2048).toLocaleString()} displayed values`
                         : tree?.kind === "artifact_tensor_namespace"
                           ? "Tensor-name grouping · no weights or activations read"
                           : "Runtime containment · no activation captured"}
@@ -1762,7 +1776,15 @@ export function App() {
                 <Prediction key="prediction" trace={predictionTrace} />,
               );
             if (responseTrace)
-              panels.push(<Response key="response" trace={responseTrace} />);
+              panels.push(
+                <Response
+                  key="response"
+                  trace={responseTrace}
+                  doubtful={
+                    attentionPastAudio(audioTrace?.audio_view?.layers)?.doubtful
+                  }
+                />,
+              );
             if (trace?.cross_attention)
               panels.push(<CrossAttention key="xattn" trace={trace} />);
             if (!panels.length && trace?.preview?.mime === "image/png")

@@ -72,6 +72,47 @@ class DecodeTests(unittest.TestCase):
             decode_audio(media(b"not audio"))
 
 
+class ImportValidationTests(unittest.TestCase):
+    def audio(self):
+        return {"method": "whisper_cross_attention", "seconds": 1.0, "time_bins": 2, "mel": {"bins": 1, "cols": 1, "values": [0.0]},
+                "tokens": [{"step": 0, "token_id": 1, "probability": 0.5, "text": "a"}], "limitations": ["ok"],
+                "layers": [{"layer": 0, "maps": [[0.1, 0.2]], "outside": [0.1]}]}
+
+    def test_a_good_section_passes_and_wrong_types_are_refused(self):
+        from model_run.media_models import validate_audio_view, validate_input_media
+        validate_audio_view(self.audio())
+        for change in (lambda v: v.update(limitations="not a list"), lambda v: v.update(attention_unavailable=3),
+                       lambda v: v["tokens"][0].update(text=4), lambda v: v["tokens"][0].pop("step")):
+            view = self.audio()
+            change(view)
+            with self.assertRaises(ValueError):
+                validate_audio_view(view)
+        validate_input_media({"kind": "image", "name": "x.png", "source_width": 1, "source_height": 2})
+        for bad in ({"kind": "image", "name": "x", "source_width": "1", "source_height": 2}, {"kind": "other", "name": "x"}, "text",
+                    {"kind": "audio", "name": 4, "source_rate": 1, "source_seconds": 1, "used_seconds": 1, "rate": 1}):
+            with self.assertRaises(ValueError):
+                validate_input_media(bad)
+
+    def test_image_sections_refuse_wrong_descriptions(self):
+        good = {"method": "class_token_attention_row", "entropy_bits": 1, "attention_layers": [], "top_labels": [{"index": 0, "label": "x", "probability": 1}]}
+        validate_image_classification(good)
+        for change in ({"limitations": "x"}, {"class_count": "9"}, {"attention_unavailable": 1}):
+            with self.assertRaises(ValueError):
+                validate_image_classification({**good, **change})
+
+    def test_slices_refuse_wrong_statistics_and_descriptions(self):
+        from model_run.tensor_slices import validate_slices
+        record = SliceRecorder().record(torch.ones(1, 4, 8, 8))
+        validate_slices(record)
+        record["axes"][0]["mean_abs"][0] = "high"
+        with self.assertRaises(ValueError):
+            validate_slices(record)
+        record = SliceRecorder().record(torch.ones(1, 4, 8, 8))
+        record["pooled"] = "no"
+        with self.assertRaises(ValueError):
+            validate_slices(record)
+
+
 class SequenceTests(unittest.TestCase):
     def test_a_long_sequence_keeps_only_the_kept_steps_and_stays_bounded(self):
         recorder = SliceRecorder(sequence=lambda length: (100, "time", "note") if length == 1500 else None)

@@ -1,3 +1,8 @@
+import {
+  comparableFrames,
+  frameDifferenceStory,
+  pixelDifference,
+} from "../src/insights.js";
 import { eventForLayer, stopSeries } from "../src/insights.js";
 import { layerCaptured } from "../src/insights.js";
 import { attentionPastAudio } from "../src/insights.js";
@@ -788,4 +793,62 @@ test("stopSeries plots by timeline position, not repeated layer numbers", () => 
   );
   assert.ok(Math.abs(series.points[1].value - 1) < 1e-9);
   assert.equal(stopSeries(stops, []), null);
+});
+
+test("pixelDifference measures only colour, on the right cell", () => {
+  const a = new Uint8ClampedArray([0, 0, 0, 255, 0, 0, 0, 255]);
+  const b = new Uint8ClampedArray([255, 255, 255, 0, 0, 0, 0, 0]);
+  const result = pixelDifference(a, b, 2, 1);
+  assert.equal(result.mean, 0.5);
+  assert.equal(result.image.length, 8);
+  assert.equal(result.image[7], 255);
+  assert.equal(result.grid[0], 1);
+});
+
+test("frames are only compared when both runs kept the same ones", () => {
+  const run = (indices) => ({
+    preview: { base64: "first" },
+    preview_frames: {
+      frames: indices.map((i) => `f${i}`),
+      frame_indices: indices,
+    },
+  });
+  const same = comparableFrames(run([0, 4]), run([0, 4]));
+  assert.deepEqual(same.b, ["f0", "f4"]);
+  assert.equal(same.note, null);
+  const different = comparableFrames(run([0, 4]), run([0, 8]));
+  assert.deepEqual(different.a, ["first"]);
+  assert.match(different.note, /first frames/);
+  const mixed = comparableFrames(run([0, 4]), { preview: { base64: "x" } });
+  assert.deepEqual(mixed.b, ["x"]);
+  assert.match(mixed.note, /first frames/);
+  assert.equal(comparableFrames({}, {}).a.length, 0);
+});
+
+test("frameDifferenceStory names the frames that differ most and least", () => {
+  const story = frameDifferenceStory([0.1, 0.4, 0.2], [0, 4, 8]);
+  assert.equal(story.peak, 1);
+  assert.match(story.text, /largest at frame 4/);
+  assert.match(story.text, /smallest at frame 0/);
+  assert.equal(frameDifferenceStory([0.1], [0]), null);
+});
+
+test("compare wording says nothing it cannot support", () => {
+  assert.match(
+    frameDifferenceStory([0.08, 0.081, 0.079], [0, 4, 8]).text,
+    /about the same across all 3 frames/,
+  );
+  const story = diffusionCompareStory({
+    ablation: { labels: [" red"] },
+    ablatedSide: "A",
+    shift: { ranked: [{ index: 0, label: "a", delta: -1e-6 }], peak: 1e-6 },
+  });
+  assert.match(story.text, /A ran with/);
+  assert.match(story.text, /barely moved/);
+  assert.doesNotMatch(story.text, /-0\.00/);
+  assert.match(
+    diffusionCompareStory({ ablation: { labels: ["<pad>", "<pad>", " red"] } })
+      .text,
+    /\u201c<pad>\u201d \u00d7 2, \u201c.?red\u201d/,
+  );
 });
