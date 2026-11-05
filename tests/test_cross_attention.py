@@ -70,16 +70,14 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(flat["maps"], expected["maps"])
         self.assertIn("unavailable", measure(q, torch.randn(1, 3, 5, 8), heads=4, text_tokens=5, latent_shape=[1, 4, 4, 4]))
 
-    def test_text_last_joint_attention(self):
-        torch.manual_seed(4)
-        q = torch.randn(1, 2, 16 + 5, 8)
-        k = torch.randn(1, 2, 16 + 5, 8)
-        last = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], text_first=False)
-        self.assertEqual(last["attention_kind"], "joint")
-        self.assertFalse(last["text_first"])
-        scores = (q[0, :, :16] @ k[0].transpose(1, 2)) / 8 ** 0.5
-        expected = torch.softmax(scores, dim=-1).mean(0)[:, 16:].transpose(0, 1)
-        torch.testing.assert_close(torch.tensor(last["maps"]), expected, atol=1e-4, rtol=0)
+    def test_image_queries_over_text_and_image_keys(self):
+        torch.manual_seed(5)
+        q = torch.randn(1, 2, 16, 8)
+        k = torch.randn(1, 2, 5 + 16, 8)
+        result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertEqual((result["attention_kind"], result["image_tokens"]), ("joint", 16))
+        expected = torch.softmax((q[0] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, :5].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
 
     def test_unsupported_geometry_is_reported(self):
         q = torch.randn(1, 2, 17, 8)
@@ -103,3 +101,16 @@ class VideoMapTests(unittest.TestCase):
         from model_run.trace_store import _validate_cross_attention
         _validate_cross_attention({"method": "measured_attention_probabilities", "source": "fixture", "selection": "x", "grid_limit": 4, "limitations": [],
                                    "events": [{"denoiser_call": 0, "block": "x", "batch": "b", **result}]})
+
+
+class LabelAlignmentTests(unittest.TestCase):
+    def test_labels_only_name_keys_they_line_up_with(self):
+        from model_run.cross_attention import align_labels, text_key_range
+        self.assertEqual(align_labels(["a", "b"], 2), ["a", "b"])
+        template = ["<|im_start|>", "system", "x", "<|im_end|>", "<|im_start|>", "user", "cat"]
+        self.assertEqual(align_labels(template, 3), ["<|im_start|>", "user", "cat"])
+        self.assertIsNone(align_labels(["a", "b", "c"], 2))
+        self.assertIsNone(align_labels(["a"], 2))
+        self.assertIsNone(align_labels(None, 2))
+        self.assertEqual(text_key_range(1024, 1039, 15, allow_joint=True), (0, 15))
+        self.assertIsNone(text_key_range(1024, 1039, 15))

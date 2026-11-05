@@ -4,7 +4,7 @@ import time
 
 from .capture import capture_forward
 from .structure import inspect_module_tree
-from .cross_attention import measure, block_record, new_section, key_mask, text_key_range, parse_token_list, ABLATION_LIMITATIONS
+from .cross_attention import measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -23,14 +23,15 @@ class DenoiserObserver:
         if token_labels is not None and (not isinstance(token_labels, list) or len(token_labels) > 1024):
             raise ValueError("token_labels must be a bounded list")
         self.token_labels = token_labels
+        self._labels_checked = False
+        self._labels_dropped = False
         self.ablate_tokens = parse_token_list(ablate_tokens)
         self._ablation_applied = 0
         self.previous_attention = None
         self._current = None
         self._skipped = []
-        # Families that pack the text tokens after the video tokens in joint attention.
-        self.text_last = type(patcher.model.diffusion_model).__name__ in ("NaDiT",)
         self.core = patcher.model.diffusion_model
+        self.base_model = patcher.model
         names = dict(self.core.named_modules())
         if not module_paths or len(module_paths) > 16 or any(p not in names for p in module_paths):
             raise ValueError("Select 1 to 16 valid diffusion module paths; an empty line selects the whole denoiser")
@@ -101,8 +102,11 @@ class DenoiserObserver:
         conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
         context = conditioning.get("c_crossattn", conditioning.get("context"))
         latent = arguments.get("input")
-        if not isinstance(context, torch.Tensor) or context.ndim != 3 or not isinstance(latent, torch.Tensor):
+        if not isinstance(context, torch.Tensor) or context.ndim != 3:
             self._skip(call, "Denoiser call has no text context tensor")
+            return None
+        if not isinstance(latent, torch.Tensor):
+            self._skip(call, f"Denoiser input of type {type(latent).__name__} has no latent tensor this measurement understands")
             return None
         order = arguments.get("cond_or_uncond")
         if not isinstance(order, list):
@@ -110,7 +114,11 @@ class DenoiserObserver:
         batch_index, batch_label = 0, "batch 0"
         if isinstance(order, list) and len(order) == int(latent.shape[0]) and 0 in order:
             batch_index, batch_label = order.index(0), "conditional (cond_or_uncond)"
-        return {"call": call, "latent_shape": list(latent.shape), "text_tokens": int(context.shape[1]),
+        # Audio+video models reach the wrapper with their streams packed into one tensor; the sampler
+        # records the real shapes on the model, and maps cover the first (video) stream.
+        packed = getattr(self.base_model, "latent_shapes", None)
+        latent_shape = list(packed[0]) if isinstance(packed, (list, tuple)) and len(packed) > 1 else list(latent.shape)
+        return {"call": call, "latent_shape": latent_shape, "text_tokens": int(context.shape[1]),
                 "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
@@ -127,10 +135,10 @@ class DenoiserObserver:
             try:
                 options = kwargs.get("transformer_options") or {}
                 key_count = int(k.shape[-2] if k.ndim == 4 else k.shape[1])
+                # Joint text+image attention is only assumed where the model labels its blocks as DiT blocks;
+                # an unlabelled call with equal query and key counts is self-attention and has no text keys.
                 span = text_key_range(int(q.shape[-2] if q.ndim == 4 else q.shape[1]), key_count,
-                                      current["text_tokens"], allow_joint="block_type" in options or "block" not in options)
-                if span is not None and self.text_last and span[1] - span[0] < key_count:
-                    span = (key_count - current["text_tokens"], key_count)
+                                      current["text_tokens"], allow_joint="block_type" in options)
                 if span is not None:
                     existing = kwargs["mask"] if "mask" in kwargs else (args[0] if args else None)
                     bias = key_mask(self.ablate_tokens, int(k.shape[-2] if k.ndim == 4 else k.shape[1]), start=span[0], existing=existing, device=q.device, dtype=q.dtype)
@@ -152,7 +160,7 @@ class DenoiserObserver:
                     # Unlabelled attention: number the calls within this denoiser call so they can still be selected.
                     ordinal = current.get("ordinal", 0)
                     current["ordinal"] = ordinal + 1
-                    label, allow_joint = f"call:{ordinal}", True
+                    label, allow_joint = f"call:{ordinal}", False
                 if label is not None:
                     seen = current.setdefault("seen", [])
                     if label not in seen and len(seen) < 64:
@@ -160,8 +168,7 @@ class DenoiserObserver:
                 if label == self.attention_block:
                     mask = kwargs.get("mask", args[0] if args else None)
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid,
-                                          text_first=not self.text_last)
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
                     elif measurement["attention_kind"] == "joint" and not allow_joint:
@@ -184,6 +191,12 @@ class DenoiserObserver:
         for event in trace["events"]:
             event["module"] = event["module"][len("denoiser"):].lstrip(".")
             event["denoiser_call"] = call
+        current = self._current
+        if current is not None and self.token_labels is not None and not self._labels_checked:
+            self._labels_checked = True
+            aligned = align_labels(self.token_labels, current["text_tokens"])
+            self._labels_dropped = aligned is None
+            self.token_labels = aligned
         if self.trace is None:
             self.trace = trace
             self.trace["model_class"] = f"{type(self.core).__module__}.{type(self.core).__qualname__}"
@@ -199,6 +212,8 @@ class DenoiserObserver:
                                                             token_labels=self.token_labels, max_grid=self.attention_grid)
                 self.trace["cross_attention"]["max_calls"] = MAX_ATTENTION_CALLS
                 self.trace["cross_attention"]["limitations"].append("Text token labels come from the node's optional clip and prompt inputs; without them tokens are numbered.")
+                if self._labels_dropped:
+                    self.trace["cross_attention"]["limitations"].append("Token labels were dropped because the tokenised prompt does not line up with this model's text keys; tokens are numbered instead.")
             if self.ablate_tokens:
                 labels = self.token_labels or []
                 self.trace["token_ablation"] = {"method": "cross_attention_key_mask", "tokens": list(self.ablate_tokens),

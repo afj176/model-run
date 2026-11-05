@@ -310,12 +310,7 @@ function crossAttentionSection(trace) {
     );
   const labels = ca.text_labels || null;
   const story = crossAttentionStory(event, labels);
-  const isPad = (i) =>
-    labels?.[i] !== undefined &&
-    /^<\|?(endoftext|pad)\|?>$/i.test(labels[i]) &&
-    i > 0 &&
-    labels[i - 1] === labels[i];
-  const ranked = story.ranked.filter((r) => !isPad(r.index)).slice(0, 6);
+  const ranked = story.ranked.slice(0, 6);
   const [rows, cols] = event.grid;
   const grid = (values) =>
     Array.from({ length: rows }, (_, r) =>

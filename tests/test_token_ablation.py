@@ -90,3 +90,39 @@ class KeyMaskTests(unittest.TestCase):
             torch.testing.assert_close(attn(hidden, encoder_hidden_states=context), baseline)
         section = ablation.section()
         self.assertEqual((section["tokens"], section["labels"], section["applied_attention_calls"]), ([1], ["y"], 1))
+
+    def test_unlabelled_self_attention_is_never_masked(self):
+        from model_run.comfy_bridge import DenoiserObserver
+        from tests.test_comfy_bridge import Patcher
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, ablate_tokens="1", attention_block="call:1")
+        seen = []
+        def kernel(q, k, v, heads, mask=None, **kwargs):
+            seen.append(mask)
+            return v
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            image = torch.randn(1, 2, 16, 4)
+            text = torch.randn(1, 2, 3, 4)
+            observer.attention_override(kernel, image, image, image, 2, transformer_options={})  # video self-attention
+            observer.attention_override(kernel, image, text, text, 2, transformer_options={})  # text cross-attention
+            return patcher.model.diffusion_model(x)
+        observer(denoiser, {"input": torch.ones(1, 4, 4, 4), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+        self.assertIsNone(seen[0], "self-attention keys must not be masked")
+        self.assertLess(seen[1][0, 0, 0, 1].item(), -1000)
+        section = observer.trace["cross_attention"]
+        self.assertEqual([e["attention_kind"] for e in section["events"]], ["cross"])
+
+    def test_packed_video_audio_input_uses_the_video_stream(self):
+        from model_run.comfy_bridge import DenoiserObserver
+        from tests.test_comfy_bridge import Patcher
+        patcher = Patcher()
+        patcher.model.latent_shapes = [torch.Size([1, 4, 2, 4, 4]), torch.Size([1, 2, 3, 3])]
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="call:0", token_labels=["a", "b", "c", "d"])
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            observer.attention_override(lambda q, k, v, h, **kw: v, torch.randn(1, 2, 2 * 16, 4), torch.randn(1, 2, 3, 4), torch.randn(1, 2, 3, 4), 2, transformer_options={})
+            return patcher.model.diffusion_model(torch.ones(1, 4, 4, 4))
+        observer(denoiser, {"input": torch.ones(1, 1, 146), "timestep": None, "c": {"c_crossattn": torch.zeros(1, 3, 8)}})
+        section = observer.trace["cross_attention"]
+        self.assertEqual((section["events"][0]["frames"], section["events"][0]["grid"]), (2, [4, 4]))
+        self.assertNotIn("text_labels", section)  # four labels cannot name three keys
+        self.assertTrue(any("dropped" in line for line in section["limitations"]))

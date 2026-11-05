@@ -487,7 +487,7 @@ test("stepDeltas, tokenMassShift and diffusionCompareStory read the two runs", (
     { events: [{ token_mass: [0.2, 0.05, 0.01, 0.01] }] },
   );
   assert.equal(shift.ranked[0].index, 1);
-  assert.equal(shift.ranked.length, 3);
+  assert.equal(shift.ranked.length, 2); // padding is left out of the ranking
   const story = diffusionCompareStory({
     ablation: { labels: [" cat"], applied_attention_calls: 12 },
     pixels: {
@@ -590,4 +590,33 @@ test("responseSegments finds the thinking span and the story reports it", () => 
   });
   assert.match(story.text, /thought for 2 tokens before answering with 1/);
   assert.equal(story.closeCalls.length, 4);
+});
+
+test("crossAttentionStory ranks words above padding and reads the chosen frame", () => {
+  const event = {
+    grid: [1, 2],
+    frames: 2,
+    token_mass: [0.5, 0.1, 0.05],
+    // frame 0 then frame 1, two regions each
+    maps: [
+      [0.5, 0.5, 0.5, 0.5],
+      [0.2, 0, 0, 0.2],
+      [0.1, 0, 0, 0.1],
+    ],
+  };
+  const labels = ["<pad>", " cat", " sat"];
+  const first = crossAttentionStory(event, labels);
+  assert.equal(first.index, 1);
+  assert.deepEqual(
+    first.ranked.map((r) => r.index),
+    [1, 2],
+  );
+  assert.deepEqual(first.peakCell, [0, 0]);
+  assert.match(first.text, /ranks 1 of 2 tokens/);
+  assert.match(
+    first.text,
+    /77% of this block's attention to text lands on padding/,
+  );
+  assert.deepEqual(crossAttentionStory(event, labels, 1, 1).peakCell, [0, 1]);
+  assert.equal(crossAttentionStory(event, labels, 0).index, 0);
 });

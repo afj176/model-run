@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
-import { crossAttentionStory, pct, tokenText } from "./insights";
+import { crossAttentionStory, pct, pctFine, tokenText } from "./insights";
 
 /** Where the prompt is read: measured image-to-text attention maps per token. */
 export default function CrossAttention({ trace }) {
@@ -22,7 +22,7 @@ export default function CrossAttention({ trace }) {
     setFrame(0);
   }, [trace?.cross_attention]);
   if (!section) return null;
-  const picked = token ?? story?.ranked[0]?.index ?? 0;
+  const picked = token ?? story?.index ?? 0;
   const preview =
     trace?.preview?.mime === "image/png"
       ? `data:image/png;base64,${trace.preview.base64}`
@@ -34,7 +34,9 @@ export default function CrossAttention({ trace }) {
     frames > 1 && Array.isArray(values)
       ? values.slice(frame * cells, (frame + 1) * cells)
       : values;
-  const focus = story ? crossAttentionStory(event, labels, picked) : null;
+  const focus = story
+    ? crossAttentionStory(event, labels, picked, frame)
+    : null;
   // Runs of repeated special tokens (padding) collapse into one chip and leave the ranking.
   const isPad = (i) =>
     labels?.[i] !== undefined &&
@@ -44,9 +46,7 @@ export default function CrossAttention({ trace }) {
   const padCount = event
     ? event.token_mass.filter((_, i) => isPad(i)).length
     : 0;
-  const rankedVisible = story
-    ? story.ranked.filter((entry) => !isPad(entry.index)).slice(0, 6)
-    : [];
+  const rankedVisible = story ? story.ranked.slice(0, 6) : [];
   return (
     <div className="xattn">
       <div className="xattn-head">
@@ -115,7 +115,7 @@ export default function CrossAttention({ trace }) {
               <div className="xattn-map-caption">
                 <b>{label(picked)}</b>
                 <span>
-                  peak {pct(focus.peak)} at row {focus.peakCell[0] + 1}, col{" "}
+                  peak {pctFine(focus.peak)} at row {focus.peakCell[0] + 1}, col{" "}
                   {focus.peakCell[1] + 1} · {event.grid[0]}×{event.grid[1]} grid
                   from {event.source_grid[0]}×{event.source_grid[1]} tokens
                 </span>
@@ -187,7 +187,7 @@ export default function CrossAttention({ trace }) {
                           width: `${Math.max(2, (entry.mass / story.peakMass) * 100)}%`,
                         }}
                       />
-                      <b>{pct(entry.mass)}</b>
+                      <b>{pctFine(entry.mass)}</b>
                     </button>
                   </li>
                 ))}

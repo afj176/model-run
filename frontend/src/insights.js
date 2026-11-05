@@ -392,18 +392,36 @@ export function ablationStory(ablation, head) {
   };
 }
 
+/** Special tokens that only fill the text sequence to a fixed length. */
+export const isPaddingLabel = (label) =>
+  typeof label === "string" && /^<\|?(endoftext|pad)\|?>$/i.test(label.trim());
+
 /** Ranking and narrative for one cross-attention event; ``token`` focuses one map. */
-export function crossAttentionStory(event, labels, token = null) {
+export function crossAttentionStory(event, labels, token = null, frame = 0) {
   const mass = event?.token_mass;
   if (!Array.isArray(mass) || !mass.length || !Array.isArray(event.maps))
     return null;
-  const ranked = mass
+  const padding = (i) => isPaddingLabel(labels?.[i]);
+  const all = mass
     .map((m, index) => ({ index, mass: m }))
     .sort((a, b) => b.mass - a.mass);
+  // Padding is reported as a share, not ranked against the words of the prompt.
+  const words = all.filter((r) => !padding(r.index));
+  const ranked = words.length ? words : all;
   const peakMass = Math.max(1e-9, ranked[0].mass);
+  const total = mass.reduce((a, b) => a + b, 0);
+  const paddingShare =
+    total > 0
+      ? mass.reduce((a, m, i) => a + (padding(i) ? m : 0), 0) / total
+      : 0;
   const index = token ?? ranked[0].index;
-  const map = event.maps[index] || [];
   const [rows, cols] = event.grid;
+  const frames = event.frames ?? 1;
+  const whole = event.maps[index] || [];
+  const map =
+    frames > 1
+      ? whole.slice(frame * rows * cols, (frame + 1) * rows * cols)
+      : whole;
   let peak = 0,
     peakAt = 0,
     sum = 0;
@@ -423,6 +441,7 @@ export function crossAttentionStory(event, labels, token = null) {
     ? `\u201c${tokenText(labels[index])}\u201d`
     : `token ${index}`;
   const rank = ranked.findIndex((r) => r.index === index) + 1;
+  const of = frames > 1 ? " of this frame" : " of the image";
   const row = Math.floor(peakAt / cols),
     col = peakAt % cols;
   const vertical =
@@ -434,17 +453,23 @@ export function crossAttentionStory(event, labels, token = null) {
       ? "centre"
       : `${vertical} ${horizontal}`;
   const text =
-    `${name} is read most at the ${where} (${pct(peak)} of that region's attention) and ` +
+    `${name} is read most at the ${where} (${pctFine(peak)} of that region's attention) and ` +
     (spread >= 0.5
-      ? `broadly across ${pct(spread)} of the image`
-      : `in a focused area covering ${pct(spread)} of the image`) +
-    `; it ranks ${rank} of ${mass.length} tokens by mean attention (${pct(mean)}).`;
+      ? `broadly across ${pct(spread)}${of}`
+      : `in a focused area covering ${pct(spread)}${of}`) +
+    (rank > 0
+      ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
+      : ".") +
+    (paddingShare >= 0.05
+      ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
+      : "");
   const textShare =
     Array.isArray(event.text_mass) && event.text_mass.length
       ? event.text_mass.reduce((a, b) => a + b, 0) / event.text_mass.length
       : null;
   return {
     ranked,
+    paddingShare,
     peakMass,
     index,
     peak,
@@ -736,12 +761,7 @@ export function tokenMassShift(sectionA, sectionB) {
   const n = Math.min(a.token_mass.length, b.token_mass.length);
   const ranked = [];
   for (let i = 0; i < n; i++) {
-    const pad =
-      labels?.[i] !== undefined &&
-      /^<\|?(endoftext|pad)\|?>$/i.test(labels[i]) &&
-      i > 0 &&
-      labels[i - 1] === labels[i];
-    if (pad) continue;
+    if (isPaddingLabel(labels?.[i])) continue;
     ranked.push({
       index: i,
       label: labels?.[i] ?? null,
