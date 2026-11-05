@@ -25,6 +25,7 @@ import {
   GitDiff,
   CaretDown,
   ArrowsClockwise,
+  PushPin,
 } from "@phosphor-icons/react";
 import Scene from "./Scene";
 import MatrixWorkspace, { mix } from "./MatrixWorkspace";
@@ -51,6 +52,46 @@ function Button({ icon: Icon, children, ...props }) {
     </button>
   );
 }
+const mib = (bytes) =>
+  (bytes / (1024 * 1024)).toFixed(bytes < 10485760 ? 1 : 0);
+
+/** The name of one part of a run in the history list. */
+function historyLabel(t) {
+  const part =
+    {
+      module: "Layer outputs",
+      generation: "Response",
+      attention: "Attention",
+    }[t.step] ??
+    {
+      diffusion_step_capture: "Denoising steps",
+      attention_capture: "Attention",
+      pytorch_module_capture: "Module capture",
+    }[t.kind] ??
+    t.kind.replaceAll("_", " ");
+  return `${part} · ${Math.round(t.size_bytes / 1024)} KB`;
+}
+
+/** History entries grouped by run, newest run first. */
+function historyGroups(traces) {
+  const groups = new Map();
+  for (const t of [...(traces || [])].reverse()) {
+    if (!groups.has(t.run)) groups.set(t.run, []);
+    groups.get(t.run).push(t);
+  }
+  return [...groups].map(([run, members]) => ({
+    run,
+    members,
+    label: [
+      members[0].pinned && "Pinned",
+      members[0].name,
+      members[0].note && `“${members[0].note}”`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  }));
+}
+
 function Field({ label, children }) {
   return (
     <label className="field">
@@ -100,6 +141,7 @@ export function App() {
   const sessionRef = useRef(null);
   const [session, setSession] = useState(null);
   const [companions, setCompanions] = useState({});
+  const sessionRun = useRef(null);
   const variantOf = useRef("");
   const pairBRef = useRef("");
   useEffect(() => {
@@ -218,6 +260,8 @@ export function App() {
     event?.values?.length ?? 0,
     event?.slice_label ?? "",
   ]);
+  const retention = state?.retention;
+  const currentRecord = state?.traces?.find((t) => t.id === traceId);
   const selectedValue =
     valueIndex !== null ? (event?.values || []).flat()[valueIndex] : undefined;
   const expandedComponents = useMemo(() => {
@@ -322,9 +366,35 @@ export function App() {
     const index = events.findIndex((e) => eventPath(e) === path);
     if (index >= 0) setEventIndex(index);
   }
+  /** Reopening a run from history brings back its other parts: outputs, response and attention. */
+  async function restoreRun(id) {
+    const listed = await api("state");
+    const record = listed.traces.find((t) => t.id === id);
+    if (!record || record.run === sessionRun.current) return;
+    const ids = {};
+    for (const t of listed.traces)
+      if (t.run === record.run && t.step) ids[t.step] = t.id;
+    if (!record.step || !Object.keys(ids).length) {
+      sessionRun.current = null;
+      setSession(null);
+      setCompanions({});
+      return;
+    }
+    const [moduleTrace, generationTrace] = await Promise.all([
+      ids.module ? api(`traces/${ids.module}`) : null,
+      ids.generation ? api(`traces/${ids.generation}`) : null,
+    ]);
+    if (selectedTrace.current !== id) return;
+    sessionRun.current = record.run;
+    // No key: an older run is not the prompt in the box, so moving layers does not re-probe it.
+    setSession({ key: null, ids, run: record.run });
+    setCompanions({ module: moduleTrace, generation: generationTrace });
+  }
   async function openTrace(id, atLayer = null) {
     selectedTrace.current = id;
     const t = await api(`traces/${id}`);
+    if (selectedTrace.current !== id) return;
+    await restoreRun(id);
     if (selectedTrace.current !== id) return;
     setTraceId(id);
     setTrace(t);
@@ -392,7 +462,8 @@ export function App() {
               launchSessionStep(active, active.pending[0]);
             } else {
               const ids = { ...active.ids };
-              setSession({ key: active.key, ids });
+              sessionRun.current = active.run;
+              setSession({ key: active.key, ids, run: active.run });
               const [moduleTrace, generationTrace] = await Promise.all([
                 ids.module ? api(`traces/${ids.module}`) : null,
                 ids.generation ? api(`traces/${ids.generation}`) : null,
@@ -463,6 +534,8 @@ export function App() {
       input_mode: active.inputMode,
       modules: capturePaths,
       elements,
+      run_group: active.run,
+      run_step: step,
     };
     if (step === "generation") body.generate = responseTokens;
     else if (step === "attention") {
@@ -480,8 +553,14 @@ export function App() {
   /** Run everything for a text prompt: layer outputs, the response, then the attention probe. */
   function runSession(steps = ["module", "generation", "attention"], at = {}) {
     setPlaying(false);
+    const key = `${state?.loaded?.name}|${inputMode}|${prompt}`;
     const active = {
-      key: `${state?.loaded?.name}|${inputMode}|${prompt}`,
+      key,
+      // Re-probing a layer of the prompt in the box stays part of the same run.
+      run:
+        session?.key === key && session.run
+          ? session.run
+          : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
       prompt,
       inputMode,
       layer: at.layer ?? layer,
@@ -1577,7 +1656,10 @@ export function App() {
                 <>
                   <h2>
                     {trace?.preview ? "Generated output" : "Capture history"}
-                    <small>Local session · up to 8 traces / 32 MiB</small>
+                    <small>
+                      Local session · up to {state?.retention?.max_runs ?? 16}{" "}
+                      runs in memory
+                    </small>
                   </h2>
                   <p className="muted">
                     {state?.host === "comfyui"
@@ -1617,12 +1699,36 @@ export function App() {
               <option value="" disabled>
                 Select a capture
               </option>
-              {state?.traces.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} · {Math.round(t.size_bytes / 1024)} KB
-                </option>
-              ))}
+              {historyGroups(state?.traces).map((group) =>
+                group.members.length > 1 ? (
+                  <optgroup key={group.run} label={group.label}>
+                    {group.members.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {historyLabel(t)}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option key={group.run} value={group.members[0].id}>
+                    {group.label} · {historyLabel(group.members[0])}
+                  </option>
+                ),
+              )}
             </select>
+            {retention && (
+              <p className="micro">
+                {retention.runs} of {retention.max_runs} runs ·{" "}
+                {mib(retention.bytes)} of {mib(retention.max_bytes)} MiB in
+                memory · {retention.pinned_runs} of {retention.max_pinned_runs}{" "}
+                pinned. The oldest unpinned run is removed first.
+              </p>
+            )}
+            {traceId && !currentRecord && state?.traces && (
+              <p className="micro history-gone">
+                This capture has left memory. It stays open until you switch
+                away, and Export still saves it.
+              </p>
+            )}
             <div className="history-actions">
               <Button
                 icon={DownloadSimple}
@@ -1634,14 +1740,38 @@ export function App() {
               <Button
                 icon={Trash}
                 disabled={!traceId}
-                aria-label="Delete selected trace"
+                aria-label="Delete this run"
+                title="Delete this run and all of its parts"
                 onClick={() =>
                   action(async () => {
                     await api(`delete/${traceId}`, {});
+                    selectedTrace.current = "";
+                    sessionRun.current = null;
+                    setSession(null);
+                    setCompanions({});
                     setTrace(null);
                     setTraceId("");
                     setTree(null);
                   })
+                }
+              />
+              <Button
+                icon={PushPin}
+                disabled={!currentRecord}
+                className={currentRecord?.pinned ? "pinned" : ""}
+                aria-label={
+                  currentRecord?.pinned ? "Unpin this run" : "Pin this run"
+                }
+                aria-pressed={!!currentRecord?.pinned}
+                title={
+                  currentRecord?.pinned
+                    ? "Pinned: this run is kept when older captures are removed"
+                    : "Keep this run when older captures are removed"
+                }
+                onClick={() =>
+                  action(() =>
+                    api(`pin/${traceId}`, { pinned: !currentRecord.pinned }),
+                  )
                 }
               />
               <Button

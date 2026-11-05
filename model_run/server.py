@@ -52,6 +52,7 @@ def dispatch(app, method, route, body=None):
         if route == "cancel": return app.cancel()
         if route == "import": return app.publish(body, "Imported trace")
         if route.startswith("delete/"): return app.delete_trace(route[7:])
+        if route.startswith("pin/"): return app.pin_trace(route[4:], body.get("pinned"))
     raise LookupError("Unknown API endpoint")
 
 

@@ -288,7 +288,12 @@ the first 256 values and first 64 local parameters. Null represents a non-finite
 sample, not zero. Missing captures are never colored as observed zero values.
 
 The timeline replays recorded events; it does not claim real-time kernel timings
-or reverse model execution. Capture history retains at most eight traces / 32 MiB.
+or reverse model execution. Capture history keeps at most 16 runs, 64 traces or 256 MiB in memory.
+The parts of one Run (layer outputs, response, attention) count as one run, leave
+memory together, and come back together when reopened from history. You can pin up
+to 8 runs or 128 MiB to keep them when older captures are removed. Nothing is written
+to disk without Export, so restarting the host clears the history. A pinned run can
+still be removed as a last resort if a new capture would otherwise not fit.
 Export/import uses validated JSON up to 16 MiB per trace. Nothing is saved
 automatically. Text traces include decoded input tokens; exports can contain
 private input-derived data. Importing a trace does not execute model code.

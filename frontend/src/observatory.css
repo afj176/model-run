@@ -2737,3 +2737,10 @@ main {
 .matrix-stage:has(.slice-nav) .matrix-table-wrap {
   margin-top: 76px;
 }
+.history-gone {
+  color: var(--coral, #f57d78);
+}
+.history-actions button.pinned {
+  color: #fff;
+  background: var(--indigo, #4c409d);
+}

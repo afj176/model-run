@@ -415,7 +415,7 @@ class ModelRunObserve:
             trace["model_name"] = type(model.model.diffusion_model).__name__
             if isinstance(workflow_graph, dict) and unique_id is not None:
                 trace["native_rerun"] = True
-            result = app.publish(trace, trace["model_name"], replace_id=last_id[0])
+            result = app.publish(trace, trace["model_name"], replace_id=last_id[0], note=prompt if isinstance(prompt, str) else None)
             last_id[0] = result["id"]
             if trace.get("native_rerun"):
                 app.remember_workflow(result["id"], workflow_graph, unique_id)

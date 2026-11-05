@@ -4,6 +4,7 @@ from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 from threading import RLock
+import re
 import gc
 import json
 import time
@@ -14,6 +15,12 @@ from .catalog import discover_models
 from .host import ModelHost
 from .inventory import inspect_file, inspect_index
 from .trace_store import encode_trace
+
+MAX_RUNS = 16
+MAX_TRACES = 64
+MAX_RETAINED_BYTES = 256 * 1024 * 1024
+MAX_PINNED_RUNS = 8
+MAX_PINNED_BYTES = 128 * 1024 * 1024
 
 
 def bounded_int(value, low, high, name):
@@ -72,7 +79,10 @@ class Application:
                 loaded["chat_template"] = bool(getattr(self._loaded.get("tokenizer"), "chat_template", None))
             return {"host": self.host_kind, "job": deepcopy(self._state), "loaded": loaded,
                     "observation": self.host.snapshot(), "models": self.host.models(),
-                    "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision")} for t in self._traces]}
+                    "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision", "run", "step", "pinned", "note")} for t in self._traces],
+                    "retention": {"runs": len({t["run"] for t in self._traces}), "max_runs": MAX_RUNS,
+                                  "bytes": self._trace_bytes, "max_bytes": MAX_RETAINED_BYTES,
+                                  "pinned_runs": len({t["run"] for t in self._traces if t["pinned"]}), "max_pinned_runs": MAX_PINNED_RUNS}}
 
     def catalog(self):
         with self._lock:
@@ -235,6 +245,11 @@ class Application:
         ablate = request.get("ablate")
         if ablate not in (None, "head", "layer"):
             raise ValueError("ablate must be head or layer")
+        run_group, run_step = request.get("run_group"), request.get("run_step")
+        if run_group is not None and (not isinstance(run_group, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", run_group)):
+            raise ValueError("Invalid run group")
+        if run_step not in (None, "module", "generation", "attention"):
+            raise ValueError("Invalid run step")
         attach_to = request.get("attach_to")
         if ablate and not isinstance(attach_to, str):
             raise ValueError("Capture attention for this prompt before ablating heads")
@@ -383,7 +398,7 @@ class Application:
             elif trace is not None:
                 trace["model_name"] = item["name"]
                 trace["structure"] = self._tree
-                self.publish(trace, item["name"])
+                self.publish(trace, item["name"], run=run_group, step=run_step, note=prompt)
             if state["status"] == "failed":
                 raise RuntimeError(state["error"])
         return self._start("observe", observe)
@@ -447,38 +462,90 @@ class Application:
             name = record["name"] if record else "Attention capture"
         self.publish(target, name, replace_id=attach_to)
 
-    def publish(self, trace, name="Imported trace", *, replace_id=None):
+    def publish(self, trace, name="Imported trace", *, replace_id=None, run=None, step=None, note=None):
+        """Keep a trace in memory as encoded bytes. Traces of one run are kept and evicted together."""
         data = encode_trace(trace)
-        value = json.loads(data)
-        record = {"id": uuid4().hex, "name": str(name)[:160], "kind": trace["kind"], "size_bytes": len(data), "trace": value, "revision": 1}
+        record = {"id": uuid4().hex, "name": str(name)[:160], "kind": trace["kind"], "size_bytes": len(data), "data": data,
+                  "revision": 1, "run": run, "step": step, "pinned": False, "note": str(note)[:48] if note else None}
         with self._lock:
             previous = next((t for t in self._traces if t["id"] == replace_id), None)
             if previous is not None:
                 self._traces.remove(previous)
                 self._trace_bytes -= previous["size_bytes"]
-                record["id"] = previous["id"]
-                record["revision"] = previous["revision"] + 1
-            while self._traces and (len(self._traces) >= 8 or self._trace_bytes + len(data) > 32 * 1024 * 1024):
-                self._trace_bytes -= self._traces.pop(0)["size_bytes"]
+                record.update(id=previous["id"], revision=previous["revision"] + 1, run=previous["run"],
+                              step=previous["step"], pinned=previous["pinned"], note=record["note"] or previous["note"])
+            record["run"] = record["run"] or record["id"]
+            record["pinned"] = record["pinned"] or any(t["run"] == record["run"] and t["pinned"] for t in self._traces)
             self._traces.append(record)
             self._trace_bytes += len(data)
+            self._evict(record)
         return {"id": record["id"]}
+
+    def _over_limits(self):
+        return (len({t["run"] for t in self._traces}) > MAX_RUNS or len(self._traces) > MAX_TRACES
+                or self._trace_bytes > MAX_RETAINED_BYTES)
+
+    def _drop(self, record):
+        self._traces.remove(record)
+        self._trace_bytes -= record["size_bytes"]
+        self._native_workflows.pop(record["id"], None)
+
+    def _evict(self, newest):
+        """Oldest unpinned run first, then older traces of the newest run, then pinned runs as a last resort."""
+        while self._over_limits():
+            order = list(dict.fromkeys(t["run"] for t in reversed(self._traces)))[::-1]
+            others = [run for run in order if run != newest["run"]]
+            pinned = {t["run"] for t in self._traces if t["pinned"]}
+            unpinned = [run for run in others if run not in pinned]
+            same_run = [t for t in self._traces if t["run"] == newest["run"] and t is not newest]
+            if unpinned or not same_run and others:
+                victim = (unpinned or others)[0]
+                for record in [t for t in self._traces if t["run"] == victim]:
+                    self._drop(record)
+            elif same_run:
+                self._drop(same_run[0])
+            else:
+                break
 
     def trace(self, identifier):
         with self._lock:
             for record in self._traces:
                 if record["id"] == identifier:
-                    return deepcopy(record["trace"])
-        raise ValueError("Trace is no longer retained")
+                    data = record["data"]
+                    break
+            else:
+                raise ValueError("Trace is no longer retained")
+        return json.loads(data)
+
+    def pin_trace(self, identifier, pinned):
+        """Keep a whole run out of ordinary eviction, up to a cap that always leaves room for new captures."""
+        if type(pinned) is not bool:
+            raise ValueError("pinned must be true or false")
+        with self._lock:
+            record = next((t for t in self._traces if t["id"] == identifier), None)
+            if record is None:
+                raise ValueError("Trace is no longer retained")
+            members = [t for t in self._traces if t["run"] == record["run"]]
+            if pinned and not record["pinned"]:
+                held = {t["run"] for t in self._traces if t["pinned"]}
+                held_bytes = sum(t["size_bytes"] for t in self._traces if t["pinned"])
+                if len(held) >= MAX_PINNED_RUNS:
+                    raise ValueError(f"At most {MAX_PINNED_RUNS} runs can be pinned; unpin one or export it first")
+                if held_bytes + sum(t["size_bytes"] for t in members) > MAX_PINNED_BYTES:
+                    raise ValueError(f"Pinned runs can hold at most {MAX_PINNED_BYTES // (1024 * 1024)} MiB; unpin one or export it first")
+            for member in members:
+                member["pinned"] = pinned
+        return {"pinned": pinned}
 
     def delete_trace(self, identifier):
+        """Delete the whole run this trace belongs to, so no partial run is left behind."""
         with self._lock:
-            for record in list(self._traces):
-                if record["id"] == identifier:
-                    self._traces.remove(record)
-                    self._trace_bytes -= record["size_bytes"]
-                    return {"deleted": True}
-        raise ValueError("Unknown trace")
+            record = next((t for t in self._traces if t["id"] == identifier), None)
+            if record is None:
+                raise ValueError("Unknown trace")
+            for member in [t for t in self._traces if t["run"] == record["run"]]:
+                self._drop(member)
+        return {"deleted": True}
 
     def cancel(self):
         with self._lock:

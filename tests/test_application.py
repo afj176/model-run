@@ -50,12 +50,12 @@ class ApplicationTests(unittest.TestCase):
                 self.assertNotIn("path", package)
                 self.assertEqual(app.inspect(package["id"])["config"]["model_type"], "fixture")
                 with self.assertRaises(ValueError): app.inspect("../config.json")
-                ids = [app.publish(trace())["id"] for _ in range(10)]
-                self.assertEqual(len(app.snapshot()["traces"]), 8)
+                ids = [app.publish(trace())["id"] for _ in range(18)]
+                self.assertEqual(len(app.snapshot()["traces"]), 16)
                 with self.assertRaises(ValueError): app.trace(ids[0])
                 self.assertEqual(app.trace(ids[-1]), trace())
                 app.delete_trace(ids[-1])
-                self.assertEqual(len(app.snapshot()["traces"]), 7)
+                self.assertEqual(len(app.snapshot()["traces"]), 15)
             finally:
                 app.close()
 
@@ -84,6 +84,95 @@ class ApplicationTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+            app.close()
+
+    def test_runs_are_retained_and_evicted_whole(self):
+        import model_run.application as module
+        app = Application()
+        try:
+            first = [app.publish(trace(), run="a", step=step)["id"] for step in ("module", "generation", "attention")]
+            for index in range(module.MAX_RUNS - 1):
+                app.publish(trace(), run=f"r{index}")
+            self.assertEqual(app.snapshot()["retention"]["runs"], module.MAX_RUNS)
+            self.assertEqual(app.trace(first[0]), trace())
+            app.publish(trace(), run="next")
+            kept = {t["id"] for t in app.snapshot()["traces"]}
+            self.assertFalse(kept & set(first))  # the whole oldest run left together
+            self.assertEqual(app._trace_bytes, sum(t["size_bytes"] for t in app.snapshot()["traces"]))
+        finally:
+            app.close()
+
+    def test_pinned_runs_survive_and_pins_are_capped(self):
+        import model_run.application as module
+        app = Application()
+        try:
+            keep = app.publish(trace(), run="keep", step="module")["id"]
+            app.pin_trace(keep, True)
+            sibling = app.publish(trace(), run="keep", step="attention")["id"]
+            self.assertTrue(all(t["pinned"] for t in app.snapshot()["traces"] if t["run"] == "keep"))
+            for index in range(module.MAX_RUNS + 4):
+                app.publish(trace(), run=f"r{index}")
+            kept = {t["id"] for t in app.snapshot()["traces"]}
+            self.assertLessEqual({keep, sibling}, kept)
+            self.assertEqual(app.snapshot()["retention"]["runs"], module.MAX_RUNS)
+            for index in range(module.MAX_PINNED_RUNS - 1):
+                app.pin_trace(app.publish(trace(), run=f"p{index}")["id"], True)
+            extra = app.publish(trace(), run="extra")["id"]
+            with self.assertRaises(ValueError):
+                app.pin_trace(extra, True)
+            app.pin_trace(keep, False)
+            app.pin_trace(extra, True)
+            with self.assertRaises(ValueError):
+                app.pin_trace(extra, "yes")
+        finally:
+            app.close()
+
+    def test_replacing_a_trace_keeps_its_run_and_pin(self):
+        app = Application()
+        try:
+            identifier = app.publish(trace(), run="a", step="attention", note="p" * 99)["id"]
+            app.pin_trace(identifier, True)
+            app.publish(trace(), replace_id=identifier)
+            self.assertEqual(app.snapshot()["traces"][0]["note"], "p" * 48)
+            record = app.snapshot()["traces"][0]
+            self.assertEqual((record["run"], record["step"], record["pinned"], record["revision"]), ("a", "attention", True, 2))
+        finally:
+            app.close()
+
+    def test_delete_removes_the_whole_run(self):
+        app = Application()
+        try:
+            one = app.publish(trace(), run="a", step="module")["id"]
+            app.publish(trace(), run="a", step="attention")
+            other = app.publish(trace())["id"]
+            app.delete_trace(one)
+            self.assertEqual([t["id"] for t in app.snapshot()["traces"]], [other])
+            self.assertEqual(app._trace_bytes, app.snapshot()["traces"][0]["size_bytes"])
+        finally:
+            app.close()
+
+    def test_byte_limit_never_evicts_the_newest_trace(self):
+        import model_run.application as module
+        app = Application()
+        original = module.MAX_RETAINED_BYTES
+        try:
+            module.MAX_RETAINED_BYTES = 1
+            older = app.publish(trace(), run="a")["id"]
+            newest = app.publish(trace(), run="b")["id"]
+            self.assertEqual([t["id"] for t in app.snapshot()["traces"]], [newest])
+            self.assertNotEqual(older, newest)
+        finally:
+            module.MAX_RETAINED_BYTES = original
+            app.close()
+
+    def test_invalid_run_group_is_rejected(self):
+        app = Application()
+        try:
+            with self.assertRaises(ValueError):
+                app.run({"prompt": "x", "run_group": "../bad"})
+            with self.assertRaises(ValueError):
+                app.run({"prompt": "x", "run_step": "other"})
+        finally:
             app.close()
 
 
