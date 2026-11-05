@@ -43,6 +43,14 @@ def _plan_counts(sizes, names, max_slices=MAX_SLICES, max_frames=MAX_FRAMES):
     return counts
 
 
+def _same_image_shape(shape, latent_shape):
+    """Whether height and width are the latent's scaled by one whole factor."""
+    height, width, latent_height, latent_width = int(shape[-2]), int(shape[-1]), int(latent_shape[-2]), int(latent_shape[-1])
+    if not all((height, width, latent_height, latent_width)) or height * latent_width != width * latent_height:
+        return False
+    return latent_height % height == 0 or height % latent_height == 0
+
+
 def _layout(tensor, latent_shape, token_grid=None, text_tokens=None, reference_tokens=0):
     """Return (view, names, layout, assumption), or None when no navigation applies."""
     shape = list(tensor.shape)
@@ -76,6 +84,10 @@ def _layout(tensor, latent_shape, token_grid=None, text_tokens=None, reference_t
                 rows, cols, _, frames = grid
                 view = tensor[:, text_tokens:shape[1] - reference_tokens].reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
                 return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", JOINT_ASSUMPTION
+    if latent_shape is not None and len(shape) == len(latent_shape) and len(shape) in (4, 5) and _same_image_shape(shape, latent_shape):
+        # A convolutional block: the latent's layout at another resolution, such as inside a UNet.
+        names = ["batch", "channel", "frame", "height", "width"] if len(shape) == 5 else ["batch", "channel", "height", "width"]
+        return tensor, names, "features", None
     if len(shape) >= 4:
         return tensor, [None] * len(shape), "axes", None
     return None
@@ -93,6 +105,8 @@ class SliceRecorder:
         self.token_grid = token_grid
         self.text_tokens = None
         self.reference_tokens = 0
+        # With guidance a batch holds both prompts, and the first entry is usually the negative one.
+        self.conditional_batch = None
         # When many layers are recorded, each event's share, so the last layer gets as much as the first.
         self.per_event = per_event
         # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
@@ -129,6 +143,8 @@ class SliceRecorder:
             magnitude = chosen.abs().to(device="cpu")
             axes = [{"dim": 0, "name": "batch", "size": batch, "indices": indices,
                      "mean_abs": _clean(magnitude.mean(dim=(1, 2)).tolist()), "max_abs": _clean(magnitude.amax(dim=(1, 2)).tolist())}]
+            if self.conditional_batch in indices:
+                axes[0]["conditional"] = self.conditional_batch
         return {"layout": "sequence", "source_shape": list(tensor.shape), "axes": axes, "row_axis": "feature", "col_axis": name,
                 "rows": rows, "cols": cols, "source_rows": depth, "source_cols": kept, "pooled": pooled, "assumption": note,
                 "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
@@ -161,6 +177,11 @@ class SliceRecorder:
             kept_frames = min(frames, MAX_FRAMES, max(1, maps // 2))
             limits = {"max_frames": kept_frames, "max_slices": min(MAX_SLICES, max(kept_frames, kept_frames * (maps // kept_frames - 1)))}
         counts = _plan_counts([leading[dim] for dim in navigable], axis_names, **limits)
+        if self.per_event is not None:
+            # The all-channels maps count too, so a late layer is not left with nothing.
+            aggregate_at = next((i for i, name in enumerate(axis_names) if name in ("channel", "feature")), 0)
+            while (math.prod(counts) + math.prod(counts) // counts[aggregate_at]) * rows * cols > self.per_event and counts[aggregate_at] > 1:
+                counts[aggregate_at] -= 1
         kept = [_spaced(leading[dim], count) for dim, count in zip(navigable, counts)]
         aggregate = next((i for i, name in enumerate(axis_names) if name in ("channel", "feature")), 0)
         slice_count = math.prod(len(indices) for indices in kept)
@@ -194,6 +215,8 @@ class SliceRecorder:
             peaks = magnitude.amax(dim=others).index_select(0, index)
             axes.append({"dim": dim, "name": names[dim], "size": leading[dim], "indices": kept[position],
                          "mean_abs": _clean(means.to(device="cpu").tolist()), "max_abs": _clean(peaks.to(device="cpu").tolist())})
+            if names[dim] == "batch" and self.conditional_batch in kept[position]:
+                axes[-1]["conditional"] = self.conditional_batch
         return {"layout": layout, "source_shape": list(view.shape), "axes": axes,
                 "row_axis": names[-2], "col_axis": names[-1],
                 "rows": rows, "cols": cols, "source_rows": height, "source_cols": width,

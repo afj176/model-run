@@ -9,13 +9,14 @@ import time
 from .capture import capture_forward
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
 TEXT_LAST_MODELS = {"JoyImageTransformer3DModel", "MOSSImage"}
 LABELS_CHECKED = {"QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
+LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
 ALL_LAYER_PREFIX_VALUES = 65536
@@ -136,6 +137,7 @@ class DenoiserObserver:
                 latent_shape = self._latent_shape(arguments)
                 self._slices.text_tokens = self._text_token_count(arguments)
                 self._slices.reference_tokens = self._reference_token_count(arguments)
+                self._slices.conditional_batch = self._conditional_batch(arguments)
                 self._slices.sequence = self._token_sequence(latent_shape, self._slices.text_tokens)
                 output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
                     max_tensor_elements=self.elements, max_events=len(self.paths),
@@ -163,7 +165,20 @@ class DenoiserObserver:
     def _labels_checked_family(self):
         name = type(self.core).__name__
         # Klein is the Flux variant checked; Flux 1 uses other text encoders.
+        if name == "UNetModel":
+            # The same class also runs other text encoders, such as SD 2's and Kolors', which were not checked.
+            reader = next((module.attn2.to_k for module in self.core.modules() if hasattr(module, "attn2")), None)
+            return getattr(reader, "in_features", None) in LABELS_CHECKED_UNET_TEXT
         return name in LABELS_CHECKED or (name == "Flux" and bool(getattr(getattr(self.core, "params", None), "global_modulation", False)))
+
+    @staticmethod
+    def _conditional_batch(arguments):
+        """Which batch entry holds the positive prompt, when this call's batch says."""
+        conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
+        order = arguments.get("cond_or_uncond")
+        if not isinstance(order, list):
+            order = (conditioning.get("transformer_options") or {}).get("cond_or_uncond")
+        return order.index(0) if isinstance(order, list) and 0 in order and len(order) > 1 else None
 
     def _reference_token_count(self, arguments):
         """Tokens an edit model's reference images add, from the references this call actually received."""
@@ -577,10 +592,10 @@ def token_labels(clip, prompt):
         tokenizer = getattr(clip, "tokenizer", None)
         if hasattr(tokenizer, "decode"):
             # Per-token decode turns byte-level BPE pieces into readable text.
-            return [str(tokenizer.decode([p[0]], skip_special_tokens=False)) for p in best][:1024]
+            return collapse_padding([str(tokenizer.decode([p[0]], skip_special_tokens=False)) for p in best][:1024])
         if hasattr(tokenizer, "untokenize"):
             words = tokenizer.untokenize([(p[0], p[1]) for p in best])
-            return [str(word).replace("</w>", "") for _, word in words][:1024]
+            return collapse_padding([str(word).replace("</w>", "") for _, word in words][:1024])
     except Exception:
         return None
     return None

@@ -903,3 +903,26 @@ test("registers are described as registers, and their share is not called paddin
   assert.match(story.text, /learned registers/);
   assert.doesNotMatch(story.text, /padding/);
 });
+
+test("the attention story opens on a word even when a start token leads", () => {
+  const story = crossAttentionStory(
+    {
+      grid: [1, 2],
+      token_mass: [0.8, 0.05, 0.1],
+      maps: [
+        [0.8, 0.8],
+        [0.05, 0.05],
+        [0.1, 0.1],
+      ],
+    },
+    ["<|startoftext|>", " cat", " sat"],
+  );
+  assert.equal(story.ranked[0].index, 0);
+  assert.equal(story.index, 2);
+  assert.equal(
+    crossAttentionStory({ grid: [1, 1], token_mass: [1], maps: [[1]] }, [
+      "<bos>",
+    ]).index,
+    0,
+  );
+});

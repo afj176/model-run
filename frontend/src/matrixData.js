@@ -156,7 +156,9 @@ export function resolveSlice(slices, wanted = {}) {
     const want = wanted[axisKey(axis)];
     if (i === slices.aggregate_axis && (want === undefined || want === "all"))
       return null;
-    if (!Number.isInteger(want)) return 0;
+    // With guidance, a batch's first entry is usually the negative prompt.
+    if (!Number.isInteger(want))
+      return Math.max(0, axis.indices.indexOf(axis.conditional));
     let best = 0;
     axis.indices.forEach((index, p) => {
       if (Math.abs(index - want) < Math.abs(axis.indices[best] - want))
@@ -187,7 +189,9 @@ export function sliceEvent(event, wanted = {}) {
     .map((axis, i) =>
       positions[i] === null
         ? `all ${axisLabel(axis)}s`
-        : `${axisLabel(axis)} ${axis.indices[positions[i]]}`,
+        : axis.conditional === axis.indices[positions[i]]
+          ? "conditional"
+          : `${axisLabel(axis)} ${axis.indices[positions[i]]}`,
     )
     .join(" · ");
   const label =

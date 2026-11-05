@@ -33,11 +33,12 @@ export async function api(route, body, refreshed = false) {
 }
 export function displayNodes(tree, trace) {
   const nodes = tree?.nodes || [];
-  const blocks = nodes.filter((n) =>
-    /(?:^|\.)(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\.\d+$/.test(
-      n.path,
-    ),
-  );
+  // Outermost only: a UNet's input_blocks.4 holds transformer_blocks.0, which is not a layer of the model.
+  const stack = /(?:^|\.)[a-z_]*(?:blocks?|layers?)\.\d+(?=\.|$)/;
+  const blocks = nodes.filter((n) => {
+    const match = stack.exec(n.path);
+    return match && match.index + match[0].length === n.path.length;
+  });
   if (blocks.length) return blocks.slice(0, 64);
   if (nodes.length) {
     const roots = nodes.filter((n) => n.path && n.path.split(".").length <= 2);

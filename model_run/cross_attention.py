@@ -225,6 +225,14 @@ REGISTER_LIMITATION = ("This model appends learned registers after the prompt's 
 PADDING_LABEL = re.compile(r"^<\|?(?:pad|endoftext)\|?>$", re.IGNORECASE)
 
 
+def collapse_padding(labels):
+    """Some encoders pad with an ordinary token, as SDXL's does with '!', which must not read as a word."""
+    end = next((i for i, label in enumerate(labels) if str(label).strip() in ("<|endoftext|>", "</s>", "<eos>")), None)
+    if end is None or end + 1 >= len(labels) or len(set(labels[end + 1:])) != 1:
+        return labels
+    return [*labels[:end + 1], *[str(labels[end]).strip()] * (len(labels) - end - 1)]
+
+
 def place_registers(labels, text_tokens):
     """Labels for a model that keeps only real tokens and fills the rest with learned registers.
 

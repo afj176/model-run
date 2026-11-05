@@ -172,6 +172,12 @@ class VideoMapTests(unittest.TestCase):
 
 
 class LabelAlignmentTests(unittest.TestCase):
+    def test_padding_with_an_ordinary_token_is_collapsed(self):
+        from model_run.cross_attention import collapse_padding
+        self.assertEqual(collapse_padding(["<|startoftext|>", "a", "<|endoftext|>", "!", "!"]), ["<|startoftext|>", "a", "<|endoftext|>", "<|endoftext|>", "<|endoftext|>"])
+        self.assertEqual(collapse_padding(["a", "!", "!"]), ["a", "!", "!"])  # no end token: these may be words
+        self.assertEqual(collapse_padding(["<|endoftext|>", "a", "b"]), ["<|endoftext|>", "a", "b"])
+
     def test_registers_follow_the_real_tokens(self):
         from model_run.cross_attention import place_registers
         labels = ["<pad>"] * 6 + ["<bos>", "a", " cube"]

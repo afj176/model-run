@@ -292,3 +292,43 @@ test("a volume needs recorded maps along an axis", () => {
   assert.equal(stacked.volume_layout.axis, "channel");
   assert.equal(stacked.slice_label, "stacked by channel");
 });
+
+test("a guidance batch opens on the positive prompt and says so", () => {
+  const event = {
+    module: "m",
+    shape: [2, 1, 2],
+    values: [],
+    slices: {
+      axes: [
+        {
+          dim: 0,
+          name: "batch",
+          size: 2,
+          indices: [0, 1],
+          mean_abs: [1, 1],
+          max_abs: [1, 1],
+          conditional: 1,
+        },
+      ],
+      row_axis: "height",
+      col_axis: "width",
+      rows: 1,
+      cols: 2,
+      source_rows: 1,
+      source_cols: 2,
+      pooled: false,
+      assumption: null,
+      values: [1, 2, 3, 4],
+      aggregate_axis: 0,
+      aggregate: [9, 9],
+    },
+  };
+  const opened = sliceEvent(event, { batch: 1 });
+  assert.equal(opened.slice_label, "conditional");
+  assert.deepEqual(opened.values, [3, 4]);
+  assert.equal(sliceEvent(event, { batch: 0 }).slice_label, "batch 0");
+  assert.deepEqual(
+    resolveSlice({ ...event.slices, aggregate_axis: null }),
+    [1],
+  );
+});

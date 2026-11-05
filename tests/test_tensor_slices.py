@@ -87,6 +87,18 @@ class TensorSliceTests(unittest.TestCase):
         _, plain = capture_forward(Model().eval(), {"x": torch.zeros(1)}, ["layer"], max_tensor_elements=4)
         self.assertEqual(plain["events"][0]["shape"], [1, 6, 8])
 
+    def test_unet_features_are_named_and_every_layer_keeps_its_view(self):
+        recorder = SliceRecorder(max_values=524288, per_event=524288 // 208)
+        recorder.conditional_batch = 1
+        for _ in range(208):
+            record = recorder.record(torch.ones(2, 1280, 8, 8), [2, 4, 64, 64])
+            self.assertNotIn("unavailable", record)
+            validate_slices(record)
+        self.assertEqual([a["name"] for a in record["axes"]], ["batch", "channel"])
+        self.assertEqual(record["layout"], "features")
+        self.assertEqual(record["axes"][0]["conditional"], 1)
+        self.assertEqual(SliceRecorder().record(torch.ones(1, 8, 3, 5), [1, 4, 64, 64])["layout"], "axes")  # not the latent's shape
+
     def test_nothing_to_navigate_records_nothing(self):
         self.assertIsNone(SliceRecorder().record(torch.ones(1, 1, 8, 8)))
         self.assertIsNone(SliceRecorder().record(torch.ones(4, 4)))

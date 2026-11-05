@@ -184,10 +184,7 @@ export function describeActivation(stats, module, magnitude = false) {
 }
 
 export const layerOf = (module) => {
-  const m =
-    /(?:layers|blocks|transformer_blocks|double_blocks|single_blocks|joint_blocks)\.(\d+)/.exec(
-      module || "",
-    );
+  const m = /(?:layers?|blocks?)\.(\d+)/.exec(module || "");
   return m ? Number(m[1]) : null;
 };
 
@@ -398,6 +395,10 @@ export const isPaddingLabel = (label) =>
   typeof label === "string" &&
   /^<\|?(endoftext|pad|register)\|?>$/i.test(label.trim());
 
+/** Tokens the tokenizer adds around a prompt, such as <|startoftext|> or <bos>. */
+export const isSpecialLabel = (label) =>
+  typeof label === "string" && /^<[^<>]+>$/.test(label.trim());
+
 /** Ranking and narrative for one cross-attention event; ``token`` focuses one map. */
 export function crossAttentionStory(event, labels, token = null, frame = 0) {
   const mass = event?.token_mass;
@@ -417,7 +418,9 @@ export function crossAttentionStory(event, labels, token = null, frame = 0) {
     total > 0
       ? mass.reduce((a, m, i) => a + (padding(i) ? m : 0), 0) / total
       : 0;
-  const index = token ?? ranked[0].index;
+  // Start and role tokens often take most of the attention; open on a word when there is one.
+  const firstWord = ranked.find((r) => !isSpecialLabel(labels?.[r.index]));
+  const index = token ?? (firstWord ?? ranked[0]).index;
   const [rows, cols] = event.grid;
   const frames = event.frames ?? 1;
   const whole = event.maps[index] || [];
@@ -514,6 +517,9 @@ export function railLabel(path, index) {
       down_blocks: "Dn",
       up_blocks: "Up",
       mid_block: "M",
+      input_blocks: "In",
+      middle_block: "Mid",
+      output_blocks: "Out",
       blocks: "B",
       h: "L",
     }[family] || family.replace(/_blocks?$/, "").slice(0, 2);
