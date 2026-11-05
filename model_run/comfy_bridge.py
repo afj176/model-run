@@ -32,12 +32,14 @@ ZERO_PADDED_MODELS = {"Anima", "AnimateWanModel", "CameraWanModel", "CausalWanMo
                       "WanAnimate2Model", "WanDancerModel", "WanModel", "WanModel_S2V"}
 EXTRA_KEY_MODELS = {"HunYuanDiT"} | ZERO_PADDED_MODELS
 # These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
-SECOND_TEXT_LIMITATION = ("This model also reads its prompt through a Llama encoder whose tokens are not on this map. "
-                          "On a real run, masking a word in these T5 tokens barely changed the result, so a low value here does not mean the model ignored the word.")
+SECOND_TEXT_LIMITATION = ("This model reads its prompt three times over: T5 tokens, then the same Llama tokens twice, from Llama's last layer "
+                          "and from the layer this block uses. A word appears once in each, and its share is split between them.")
+REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm and duration to the prompt. Labels come from the prompt with "
+                             "default settings, so the caption's words line up but labels after it may name the wrong setting.")
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "Chroma", "Flux", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "Chroma", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -303,6 +305,10 @@ class DenoiserObserver:
             patch = getattr(getattr(self.core, "decoder", self.core), "patch_size", 1)
             audio_steps = int(latent_shape[-1]) // (patch if isinstance(patch, int) else 1)
         text_tokens = int(context.shape[1])
+        llama = conditioning.get("encoder_hidden_states_llama3")
+        if type(self.core).__name__ == "HiDreamImageTransformer2DModel" and isinstance(llama, torch.Tensor) and llama.ndim == 4:
+            # Its keys after the image are T5's tokens, then Llama's twice: its last layer and this block's layer.
+            text_tokens += 2 * int(llama.shape[-2])
         if type(self.core).__name__ in ZERO_PADDED_MODELS:
             # They pad the prompt to a fixed length with zeros, which are not tokens of the prompt.
             filled = context[batch_index].abs().sum(-1).nonzero()
@@ -530,6 +536,8 @@ class DenoiserObserver:
             self.trace["cross_attention"]["limitations"].append(UNCHECKED_LABEL_LIMITATION)
         if self._registers and "cross_attention" in self.trace and REGISTER_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(REGISTER_LIMITATION)
+        if type(self.core).__name__ == "AceStepConditionGenerationModel" and self.token_labels and "cross_attention" in self.trace and REBUILT_PROMPT_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(REBUILT_PROMPT_LIMITATION)
         if type(self.core).__name__ == "HiDreamImageTransformer2DModel" and "cross_attention" in self.trace and SECOND_TEXT_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(SECOND_TEXT_LIMITATION)
         if type(self.core).__name__ in SHAPE_MODELS and "cross_attention" in self.trace and SHAPE_LIMITATION not in self.trace["cross_attention"]["limitations"]:
@@ -773,8 +781,10 @@ def labels_from_encoders(model, sets, text_tokens):
         start = sets["llama"].index("user") + 3
         kept = sets["llama"][start:start + text_tokens]
         return kept if len(kept) == text_tokens else None
-    if model == "HiDreamImageTransformer2DModel" and len(sets.get("t5xxl", [])) == text_tokens:
-        return list(sets["t5xxl"])
+    if model == "HiDreamImageTransformer2DModel":
+        t5, llama = sets.get("t5xxl", []), sets.get("llama", [])
+        if t5 and llama and len(t5) + 2 * len(llama) == text_tokens:
+            return [*t5, *llama, *llama]
     return None
 
 

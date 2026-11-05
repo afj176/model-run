@@ -66,7 +66,9 @@ class EncoderLabelTests(unittest.TestCase):
         sets = {"l": ["a", "b"], "t5xxl": ["a", "</s>", "</s>"]}
         self.assertEqual(labels_from_encoders("OpenAISignatureMMDITWrapper", sets, 5), ["a", "b", "a", "</s>", "</s>"])
         self.assertIsNone(labels_from_encoders("OpenAISignatureMMDITWrapper", sets, 4))
-        self.assertEqual(labels_from_encoders("HiDreamImageTransformer2DModel", sets, 3), sets["t5xxl"])
+        hidream = {"t5xxl": ["a", "</s>"], "llama": ["a", "eot"]}
+        self.assertEqual(labels_from_encoders("HiDreamImageTransformer2DModel", hidream, 6), ["a", "</s>", "a", "eot", "a", "eot"])
+        self.assertIsNone(labels_from_encoders("HiDreamImageTransformer2DModel", hidream, 2))
         self.assertIsNone(labels_from_encoders("Flux", sets, 3))
         llama = {"llama": ["system", "x", "user", "h", "n", "a", "red", "eot", "more"]}
         self.assertEqual(labels_from_encoders("HunyuanVideo", llama, 3), ["a", "red", "eot"])
