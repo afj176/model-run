@@ -7,7 +7,7 @@ from .control import ObservationCancelled
 from .tensor_slices import SliceRecorder
 
 
-def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None, slices=None, latent_shape=None):
+def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None, slices=None, latent_shape=None, require_eval=True):
     """Run once and copy selected module output tensors to CPU, without mutating the model.
 
     Model construction, device placement, tokenization and trust remain the caller's responsibility.
@@ -17,7 +17,7 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
 
     if not isinstance(model, torch.nn.Module):
         raise TypeError("model must be an instantiated torch.nn.Module")
-    if any(module.training for module in model.modules()):
+    if require_eval and any(module.training for module in model.modules()):
         raise ValueError("all model modules must already be in evaluation mode")
     if not isinstance(inputs, dict):
         raise TypeError("inputs must be a dictionary of keyword arguments")

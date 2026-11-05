@@ -341,6 +341,8 @@ class Application:
                     trace["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in ids[0].tolist()]
                     for token in trace.get("output", {}).get("top_tokens", []):
                         token["text"] = tokenizer.decode([token["token_id"]])
+                    for token in trace.get("logits_view", {}).get("top", []):
+                        token["text"] = tokenizer.decode([token["token_id"]])
                     for entry in trace.get("logit_lens", {}).get("layers", []):
                         for token in entry["top_tokens"]:
                             token["text"] = tokenizer.decode([token["token_id"]])

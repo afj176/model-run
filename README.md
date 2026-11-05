@@ -2,7 +2,7 @@
 
 A local model observatory: inspect model artifacts, explore runtime structure in
 3D, and replay measured internal tensors. The same interface runs as a standalone
-application and inside ComfyUI. No CDN, remote inference, automatic downloads or
+application and inside ComfyUI. No CDN, remote inference, unrequested downloads or
 remote model code is required.
 
 ## Run standalone
@@ -25,6 +25,20 @@ existing process. Stop the printed PID to end that instance; traces in memory ar
 discarded. The HTTP server binds exclusively to loopback.
 
 ### Model library
+
+**Get models** searches the lists ComfyUI ships (its workflow templates and ComfyUI Manager's list)
+and, only when asked, Hugging Face, then installs into ComfyUI's folders. **By workflow** installs
+everything a template is missing. Standalone finds those lists through `--models-dir` or
+`--comfy-dir`; without either it has Hugging Face search only.
+
+- Nothing downloads without a click. The confirmation shows size, source, destination and free space.
+- Only `https` files from Hugging Face in `.safetensors` or `.sft` form can be installed. Formats that
+  can run code when loaded, such as `.ckpt`, are listed but refused.
+- Each file is checked against its published SHA-256 where there is one, its format is checked, and it
+  never replaces an existing file. A stopped download can resume.
+- Inside ComfyUI, installing only works from the computer running it, even with `--listen`.
+- For a gated model, accept its licence on Hugging Face and log in with its CLI. The app uses that login
+  but never stores it, and only sends it to huggingface.co.
 
 - **Inspect** reads bounded metadata. Unsupported formats remain listed without
   deserialization. Safetensors/index and optional ONNX readers are available.
@@ -278,6 +292,11 @@ ComfyUI, lighting up wherever the trace carries the data.
   layers were found on all of them; 24 got attention maps. A family this was not tested on
   should still run and record layers, because anything not understood is reported rather than
   guessed. Re-run `tools/check_comfy_families.py` from a ComfyUI folder after it updates.
+- **What do the newer nodes record?** `Model Run · Text Encode`, `· VAE Decode` and `· VAE Encode`
+  replace ComfyUI's own nodes and record their layers. `Observe` also records each sampler step.
+  Output stayed pixel-identical to the plain nodes on SD 1.5, SDXL, Flux2 Klein, Qwen-Image 2.1,
+  HiDream-O1 and LTX 2.5. Compare with a second plain run: ComfyUI's own first run after loading a
+  model can differ slightly from later ones, with no Model Run node involved.
 - **Are the word labels right?** Checked on Flux2 Klein, Qwen-Image 2.1, HiDream-O1 and
   LTX 2.5 by swapping one word and finding where the model's real text input changes. On the
   first three, all four swapped words first changed exactly the labelled position. LTX's

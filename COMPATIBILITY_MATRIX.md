@@ -72,4 +72,7 @@ Not run: the tiny config for these did not build or run, which is a limit of thi
 | LTX 2.3 dev: Gemma 3, distilled LoRA | All 48 layers, maps, labels place real tokens first |
 | SD 1.5: 512, guidance 7 | 26 layers, all with views; maps on every block with attention; labels checked by swapping words and by masks |
 | SDXL base: 1024, guidance 7 | 20 layers, all with views; maps on input 4 to output 5, where its attention blocks are; labels checked the same way |
+| Text Encode, VAE Decode and Observe's sampler steps: SD 1.5, SDXL, Flux2 Klein, LTX 2.5 | All recorded, and output pixel-identical to plain nodes. VAE Encode checked on SD 1.5 |
+| VAE Decode and sampler steps: Qwen-Image 2.1 | Recorded, output pixel-identical. It uses its own text node, so Text Encode does not apply |
+| Sampler steps: HiDream-O1 | Recorded, output pixel-identical. Its VAE and text encoder have no layers to record |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

@@ -7,6 +7,7 @@ import {
   tokenLabel,
   tokenText,
 } from "./insights";
+import { CacheGrowth } from "./TextPanels";
 
 /** The model's greedy response and, for each token it wrote, where that token came from. */
 export default function Response({ trace, doubtful = false }) {
@@ -141,6 +142,7 @@ export default function Response({ trace, doubtful = false }) {
           ))}
         </div>
       )}
+      <CacheGrowth steps={steps} />
       <div className="response-detail">
         <div>
           <h3>

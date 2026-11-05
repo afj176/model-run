@@ -7,6 +7,7 @@ from threading import Lock
 import time
 
 from .capture import capture_forward
+from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
 from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
@@ -400,6 +401,13 @@ class DenoiserObserver:
         if self.publish is not None:
             self._publish_safely(call)
 
+    def attach_denoising(self, section):
+        """Sampler steps outlast the call budget, so they publish on their own."""
+        if self.trace is None or self.publish is None:
+            return
+        self.trace["denoising"] = section
+        self._publish_safely(self.calls - 1)
+
     def attach_images(self, images):
         """Pin decoded output to this run's trace; frames only when there is more than one image."""
         if self.trace is None or self.publish is None:
@@ -429,6 +437,16 @@ class DenoiserObserver:
                 section["events"].pop()
                 self._skip(call, f"Dropped this call's map so the trace fits: {str(exc)[:120]}")
                 section["skipped"] = list(self._skipped)
+                try:
+                    self.publish(self.trace)
+                    return
+                except Exception as retry:  # noqa: BLE001 - reported below
+                    exc = retry
+            steps = (self.trace.get("denoising") or {}).get("steps") or []
+            if any("images" in step for step in steps):
+                for step in steps:
+                    step.pop("images", None)
+                self.trace["denoising"]["skipped"] = "The step images were dropped so that this trace could be kept; the numbers remain."
                 try:
                     self.publish(self.trace)
                     return
@@ -538,6 +556,7 @@ class ModelRunObserve:
                     "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
                     "clip": ("CLIP", {"tooltip": "Optional: with prompt, labels text tokens in the attention maps."}),
                     "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."}),
+                    "denoising_views": ("BOOLEAN", {"default": True, "tooltip": "Record the latent, predicted noise and estimate at each sampler step."}),
                     "ablate_tokens": ("STRING", {"default": "", "tooltip": "Intervention: comma-separated text token indices whose keys are masked out of every attention call for this run. Compare the result with a run that leaves this empty."})},
                 "hidden": {"workflow_graph": "PROMPT", "unique_id": "UNIQUE_ID"}}
 
@@ -545,7 +564,7 @@ class ModelRunObserve:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")  # Fresh observation budget for every queued execution.
 
-    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens="", workflow_graph=None, unique_id=None):
+    def observe(self, model, modules, max_calls, elements, output_selectors="{}", attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens="", denoising_views=True, workflow_graph=None, unique_id=None):
         import json
         if not isinstance(output_selectors, str) or len(output_selectors) > 8192:
             raise ValueError("Output selector JSON exceeds 8 KiB")
@@ -574,6 +593,9 @@ class ModelRunObserve:
                                      output_selectors=selectors,
                                     attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)
         clone.set_model_unet_function_wrapper(observer)
+        if denoising_views:
+            recorder = DenoisingRecorder(getattr(model.model, "latent_format", None), on_update=observer.attach_denoising)
+            clone.set_model_sampler_post_cfg_function(recorder)
         if block or ablated:
             options = clone.model_options.setdefault("transformer_options", {})
             observer.previous_attention = options.get("optimized_attention_override")

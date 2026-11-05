@@ -99,6 +99,13 @@ class TensorSliceTests(unittest.TestCase):
         self.assertEqual(record["axes"][0]["conditional"], 1)
         self.assertEqual(SliceRecorder().record(torch.ones(1, 8, 3, 5), [1, 4, 64, 64])["layout"], "axes")  # not the latent's shape
 
+    def test_vae_axes_are_only_named_when_the_shape_fits_the_image(self):
+        recorder = SliceRecorder(convolutional=True)
+        fits = recorder.record(torch.ones(1, 8, 2, 16, 16), [1, 4, 2, 8, 8])
+        self.assertEqual([a["name"] for a in fits["axes"]], ["channel", "frame"])
+        channels_last = recorder.record(torch.ones(1, 9, 64, 64, 48), [1, 128, 2, 8, 8])
+        self.assertEqual(channels_last["layout"], "axes")
+
     def test_nothing_to_navigate_records_nothing(self):
         self.assertIsNone(SliceRecorder().record(torch.ones(1, 1, 8, 8)))
         self.assertIsNone(SliceRecorder().record(torch.ones(4, 4)))

@@ -46,12 +46,17 @@ def _logit_lens(model, hidden_states, final_logits, top_k):
     head = model.get_output_embeddings()
     final_token = int(torch.argmax(final_logits).item())
     layers = []
+    previous = None
     with torch.inference_mode():
         for index, state in enumerate(hidden_states):
             if not isinstance(state, torch.Tensor) or state.ndim != 3 or state.shape[0] != 1:
                 raise ValueError("Unexpected hidden state shape")
             vector = state[0, -1].detach()
             residual_norm = float(vector.float().norm().item())
+            # What this layer wrote onto the stream, and how far that turned it.
+            written = None if previous is None else float((vector.float() - previous).norm().item())
+            turned = None if previous is None else float(torch.nn.functional.cosine_similarity(vector.float(), previous, dim=0).item())
+            previous = vector.float()
             projected = vector.unsqueeze(0).unsqueeze(0)
             # The last hidden state already carries the final norm; applying it again would distort the output layer.
             if norm is not None and index < len(hidden_states) - 1:
@@ -65,11 +70,70 @@ def _logit_lens(model, hidden_states, final_logits, top_k):
                            "top_tokens": [{"token_id": int(i), "probability": float(p)} for i, p in zip(indices.tolist(), values.tolist())],
                            "entropy_bits": _entropy_bits(probabilities),
                            "final_token_probability": float(probabilities[final_token].item()),
-                           "residual_norm": residual_norm})
+                           "residual_norm": residual_norm, "written_norm": written, "cosine_to_previous": turned})
     return {"method": "final_norm_and_output_embeddings" if norm is not None else "output_embeddings_without_norm",
             "position": "last_input_token", "final_token_id": final_token, "layers": layers,
             "limitations": ["Intermediate predictions apply the final norm and output head to earlier residual states; they are a lens, not the model's own output.",
                             "Index 0 is the embedding output; index k is the residual stream after decoder layer k-1; the last index is the normalised final state."]}
+
+
+TEMPERATURES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0)
+LOGIT_TOP = 200
+LOGIT_BINS = 48
+
+
+def _logits_view(logits):
+    """The raw scores, and what is needed to work out any temperature exactly in the browser."""
+    import torch
+    values, indices = torch.topk(logits, min(LOGIT_TOP, logits.numel()))
+    low, high = float(logits.min()), float(logits.max())
+    span = max(high - low, 1e-6)
+    counts = torch.histc(logits, bins=LOGIT_BINS, min=low, max=low + span).long().tolist()
+    return {"vocab_size": int(logits.numel()), "mean": float(logits.mean()), "std": float(logits.std()),
+            "top": [{"token_id": int(i), "logit": round(float(v), 5)} for i, v in zip(indices.tolist(), values.tolist())],
+            "histogram": {"edges": [round(low + span * i / LOGIT_BINS, 4) for i in range(LOGIT_BINS + 1)], "counts": counts},
+            "temperatures": [{"temperature": t, "log_total": float(torch.logsumexp(logits.double() / t, dim=-1))} for t in TEMPERATURES],
+            "limitations": ["Temperature, top-K and top-P here are worked out from this one measured distribution. The model never sampled with them, and later tokens would differ.",
+                            f"Top-K and top-P only see the {LOGIT_TOP} highest scores, which is enough unless a distribution is unusually flat."]}
+
+
+def _cache_size(past):
+    """Entries and memory the key-value cache holds, read from the tensors it actually contains."""
+    import torch
+    seen, entries, length, tensors = set(), 0, None, []
+    def walk(value):
+        if isinstance(value, torch.Tensor):
+            tensors.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item)
+    if hasattr(past, "to_legacy_cache"):
+        try:
+            walk(past.to_legacy_cache())
+        except Exception:  # noqa: BLE001 - some cache types cannot convert
+            tensors.clear()
+    if not tensors:
+        for attribute in ("layers", "key_cache", "value_cache"):
+            for item in getattr(past, attribute, None) or []:
+                if isinstance(item, torch.Tensor):
+                    tensors.append(item)
+                else:
+                    walk(getattr(item, "keys", None) if isinstance(getattr(item, "keys", None), torch.Tensor) else None)
+                    walk(getattr(item, "values", None) if isinstance(getattr(item, "values", None), torch.Tensor) else None)
+    if not tensors:
+        walk(past)
+    size = 0
+    for tensor in tensors:
+        if id(tensor) not in seen:
+            seen.add(id(tensor))
+            entries += 1
+            size += tensor.numel() * tensor.element_size()
+            if tensor.ndim >= 2:
+                length = max(length or 0, int(tensor.shape[-2]))
+    return {"tensors": entries, "bytes": int(size), "tokens": length} if entries else None
 
 
 def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=10, max_tensor_elements=4096, logit_lens=True, control=None):
@@ -99,6 +163,7 @@ def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=
     probabilities = torch.softmax(final_logits, dim=-1)
     values, indices = torch.topk(probabilities, min(top_k, probabilities.numel()))
     trace["task"] = "causal_lm_next_token"
+    trace["logits_view"] = _logits_view(final_logits.cpu())
     trace["input"] = {"token_count": int(input_ids.shape[1]), "token_ids_included": False}
     trace["output"] = {"position": int(input_ids.shape[1] - 1), "distribution": "raw_softmax",
                        "entropy_bits": _entropy_bits(probabilities),
@@ -525,6 +590,7 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
             past = getattr(output, "past_key_values", None)
             if past is None:
                 raise ValueError("Model returned no key-value cache; generation capture needs one")
+            cache = _cache_size(past)
             logits = getattr(output, "logits", None)
             if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
                 raise ValueError("Model did not return causal language model logits")
@@ -535,7 +601,9 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
             chosen = int(torch.argmax(last).item())
             record = {"index": step, "position": int(sequence.shape[1]), "token_id": chosen,
                       "probability": float(probabilities[chosen].item()), "entropy_bits": distribution["entropy_bits"],
-                      "top_tokens": distribution["top_tokens"]}
+                      "top_tokens": distribution["top_tokens"], "fed_tokens": int(pending.shape[1])}
+            if cache is not None:
+                record["cache"] = cache
             if provenance:
                 hidden_states = getattr(output, "hidden_states", None)
                 attentions = getattr(output, "attentions", None)

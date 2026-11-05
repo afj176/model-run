@@ -31,6 +31,8 @@ import Scene from "./Scene";
 import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
+import { Denoising, FeatureMaps, TextEncoderPanel } from "./ComfyPanels";
+import { AttentionLinks, LogitsPanel } from "./TextPanels";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import {
@@ -1792,8 +1794,18 @@ export function App() {
                   }
                 />,
               );
+            if (predictionTrace?.logits_view)
+              panels.push(<LogitsPanel key="logits" trace={predictionTrace} />);
+            if (trace?.kind === "attention_capture")
+              panels.push(<AttentionLinks key="links" trace={trace} />);
+            if (trace?.text_encoder)
+              panels.push(<TextEncoderPanel key="encoder" trace={trace} />);
+            if (trace?.denoising?.steps?.length)
+              panels.push(<Denoising key="denoising" trace={trace} />);
             if (trace?.cross_attention)
               panels.push(<CrossAttention key="xattn" trace={trace} />);
+            if (trace?.events?.some((e) => e.slices?.layout === "features"))
+              panels.push(<FeatureMaps key="features" trace={trace} />);
             if (!panels.length && trace?.preview?.mime === "image/png")
               panels.push(
                 <img

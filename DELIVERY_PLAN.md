@@ -25,7 +25,7 @@ Status: implemented and checked for the v0.1 scope below. Evidence and remaining
 
 ## Explicit release boundaries
 
-Remote code, automatic downloading, intervention, model training, generic media
+Remote code, downloading without an explicit request, intervention, model training, generic media
 preprocessing, operation-graph inference, and universal architecture support are
 outside this release. ComfyUI owns image/video/audio generation; Model Run observes
 its actual denoiser calls. Standalone diffusion reports latent steps and supported

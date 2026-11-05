@@ -100,7 +100,9 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False):
+        # Set when every tensor is known to be a convolutional block, such as inside a VAE.
+        self.convolutional = convolutional
         self.remaining = max_values
         self.token_grid = token_grid
         self.text_tokens = None
@@ -112,6 +114,13 @@ class SliceRecorder:
         # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
         self.sequence = sequence
 
+    def _placed(self, tensor, latent_shape):
+        # Some VAEs keep channels last in places; only name the axes when the shape really is the image's.
+        if self.convolutional and tensor.ndim in (4, 5) and (latent_shape is None or _same_image_shape(list(tensor.shape), latent_shape)):
+            names = ["batch", "channel", "frame", "height", "width"] if tensor.ndim == 5 else ["batch", "channel", "height", "width"]
+            return tensor, names, "features", None
+        return _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
+
     def record(self, tensor, latent_shape=None):
         """A slice record; None when the tensor has nothing to navigate; ``unavailable`` on failure."""
         try:
@@ -121,7 +130,7 @@ class SliceRecorder:
 
     def shows_image(self, tensor, latent_shape):
         """Whether this tensor is the image stream, so a block returning several can be read by its image."""
-        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
+        placed = self._placed(tensor, latent_shape)
         return placed is not None and placed[2] != "axes"
 
     def _sequence_record(self, tensor, kept, name, note):
@@ -156,7 +165,7 @@ class SliceRecorder:
             plan = self.sequence(int(tensor.shape[1]))
             if plan is not None:
                 return self._sequence_record(tensor, *plan)
-        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
+        placed = self._placed(tensor, latent_shape)
         if placed is None:
             return None
         view, names, layout, assumption = placed

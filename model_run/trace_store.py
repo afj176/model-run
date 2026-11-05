@@ -52,6 +52,91 @@ def _validate_cross_attention(section):
                 raise ValueError(f"Invalid cross-attention {key}")
 
 
+def _number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _optional_number(value):
+    return value is None or _number(value)
+
+
+DENOISING_IMAGES = {"latent", "estimate", "noise", "positive", "negative", "guidance"}
+
+
+def _validate_denoising(section):
+    """Per-step sampler records: measured numbers plus small JPEG panels."""
+    import base64
+    if not isinstance(section, dict) or section.get("method") != "sampler_post_cfg" or not isinstance(section.get("steps"), list) or len(section["steps"]) > 64:
+        raise ValueError("Invalid denoising section")
+    if not isinstance(section.get("limitations"), list) or section.get("projection") not in ("latent_rgb_factors", "first_channels"):
+        raise ValueError("Invalid denoising section")
+    if not isinstance(section.get("skipped", ""), str):
+        raise ValueError("Invalid denoising section")
+    for step in section["steps"]:
+        if not isinstance(step, dict) or type(step.get("index")) is not int or not _optional_number(step.get("sigma")):
+            raise ValueError("Invalid denoising step")
+        if not isinstance(step.get("rms"), dict) or any(not _optional_number(v) for v in step["rms"].values()):
+            raise ValueError("Invalid denoising step")
+        for key in ("estimate_change", "guidance_rms", "guidance_cosine", "guidance_scale"):
+            if not _optional_number(step.get(key)):
+                raise ValueError("Invalid denoising step")
+        images = step.get("images", {})
+        if not isinstance(images, dict) or set(images) - DENOISING_IMAGES:
+            raise ValueError("Invalid denoising images")
+        for encoded in images.values():
+            if not isinstance(encoded, str) or len(encoded) > 512 * 1024:
+                raise ValueError("Invalid denoising image")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except ValueError as exc:
+                raise ValueError("Invalid denoising image") from exc
+            if not raw.startswith(b"\xff\xd8\xff"):
+                raise ValueError("Denoising images must be JPEG")
+
+
+def _validate_text_encoder(section):
+    if not isinstance(section, dict) or not isinstance(section.get("encoders"), list) or len(section["encoders"]) > 8 or not isinstance(section.get("limitations"), list):
+        raise ValueError("Invalid text encoder section")
+    for encoder in section["encoders"]:
+        if not isinstance(encoder, dict) or not isinstance(encoder.get("encoder"), str) or not isinstance(encoder.get("tokens"), list) or not isinstance(encoder.get("layers"), list):
+            raise ValueError("Invalid text encoder")
+        count = len(encoder["tokens"])
+        if not 1 <= count <= 256 or len(encoder["layers"]) > 128:
+            raise ValueError("Invalid text encoder size")
+        for token in encoder["tokens"]:
+            if not isinstance(token, dict) or not isinstance(token.get("text"), str) or len(token["text"]) > 48 or not (token.get("id") is None or type(token["id"]) is int) or not _number(token.get("weight")) or type(token.get("special", False)) is not bool:
+                raise ValueError("Invalid text encoder token")
+        for layer in encoder["layers"]:
+            units = layer.get("units") if isinstance(layer, dict) else None
+            rows = layer.get("unit_values") if isinstance(layer, dict) else None
+            if (not isinstance(layer.get("path") if isinstance(layer, dict) else None, str) or not isinstance(layer.get("token_rms"), list) or len(layer["token_rms"]) != count
+                    or not all(_number(v) for v in layer["token_rms"]) or not isinstance(units, list) or len(units) > 256 or not all(type(u) is int for u in units)
+                    or not isinstance(rows, list) or len(rows) != count or any(not isinstance(r, list) or len(r) != len(units) or not all(_number(v) for v in r) for r in rows)):
+                raise ValueError("Invalid text encoder layer")
+        projection = encoder.get("map")
+        if not isinstance(projection, dict) or projection.get("method") != "pca" or not isinstance(projection.get("explained"), list) or not all(_number(v) for v in projection["explained"]):
+            raise ValueError("Invalid text encoder map")
+        points = projection.get("points")
+        if (not isinstance(points, list) or len(points) != len(encoder["layers"])
+                or any(not isinstance(layer, list) or len(layer) != count or any(not isinstance(p, list) or not all(_number(c) for c in p) for p in layer) for layer in points)):
+            raise ValueError("Invalid text encoder map")
+
+
+def _validate_logits(view):
+    if not isinstance(view, dict) or type(view.get("vocab_size")) is not int or not isinstance(view.get("top"), list) or len(view["top"]) > 512:
+        raise ValueError("Invalid logits view")
+    for token in view["top"]:
+        if not isinstance(token, dict) or type(token.get("token_id")) is not int or not _number(token.get("logit")):
+            raise ValueError("Invalid logits token")
+    grid = view.get("temperatures")
+    if not isinstance(grid, list) or not grid or any(not isinstance(g, dict) or not _number(g.get("temperature")) or not _number(g.get("log_total")) for g in grid):
+        raise ValueError("Invalid logits temperatures")
+    histogram = view.get("histogram")
+    if (not isinstance(histogram, dict) or not isinstance(histogram.get("edges"), list) or not isinstance(histogram.get("counts"), list)
+            or len(histogram["edges"]) != len(histogram["counts"]) + 1 or not all(_number(v) for v in histogram["edges"] + histogram["counts"])):
+        raise ValueError("Invalid logits histogram")
+
+
 def _validate_generation(trace):
     """A greedy response with per-token provenance."""
     def _tokens_ok(tokens):
@@ -144,6 +229,12 @@ def _validate(trace):
         if trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture"):
             raise ValueError("Cross-attention maps belong to denoiser traces")
         _validate_cross_attention(trace["cross_attention"])
+    if "denoising" in trace:
+        _validate_denoising(trace["denoising"])
+    if "text_encoder" in trace:
+        _validate_text_encoder(trace["text_encoder"])
+    if "logits_view" in trace:
+        _validate_logits(trace["logits_view"])
     if "token_ablation" in trace:
         block = trace["token_ablation"]
         if (trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture") or not isinstance(block, dict)

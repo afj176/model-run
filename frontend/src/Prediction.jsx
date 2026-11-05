@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
 import { lensStory, pct, tokenLabel } from "./insights";
+import { ResidualStream } from "./TextPanels";
 
 const show = (text) =>
   text === undefined || text === null
@@ -124,6 +125,7 @@ export default function Prediction({ trace }) {
             {pct(story?.finalProbability ?? 0)}). Pink cells already rank the
             final token first. Most uncertain at {story?.uncertainLabel}.
           </p>
+          <ResidualStream lens={lens} />
           {picked && (
             <div className="lens-detail">
               <b>{picked.label}</b>
