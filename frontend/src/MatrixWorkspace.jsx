@@ -21,6 +21,8 @@ import {
   callDeltas,
   describeActivation,
   layerOf,
+  layerStops,
+  moduleInStop,
   layerSeries,
   pct,
   rowSummary,
@@ -200,14 +202,21 @@ export default function MatrixWorkspace({
     trace?.kind === "attention_capture"
       ? trace.layer
       : layerOf(event?.module ?? events[eventIndex]?.module);
-  const layerIndices = layers
-    .map((n) => layerOf(n.path))
-    .filter((n) => n !== null);
-  const stepTotal = layerIndices.length;
+  const stops = useMemo(() => layerStops(layers.map((n) => n.path)), [layers]);
+  const stopPositions = stops.map((_, i) => i);
+  const stepTotal = stops.length;
+  const eventModule = event?.module ?? events[eventIndex]?.module;
   const stepIndex =
     currentLayer === null || currentLayer === undefined
       ? -1
-      : layerIndices.indexOf(currentLayer);
+      : (() => {
+          if (trace?.kind !== "attention_capture") {
+            const exact = stops.findIndex((s) => moduleInStop(eventModule, s));
+            if (exact >= 0) return exact;
+          }
+          return stops.findIndex((s) => s.number === currentLayer);
+        })();
+  const currentStop = stepIndex >= 0 ? stops[stepIndex] : null;
   const eventLabel =
     trace?.kind === "attention_capture"
       ? `L${trace.layer} · ${trace.head_mean ? "head mean" : `H${trace.head}`} · Attention (Q × K)`
@@ -216,13 +225,15 @@ export default function MatrixWorkspace({
         : event?.step !== undefined
           ? `Step ${event.step}`
           : "—";
-  function pickLayer(index) {
+  function pickLayer(stop) {
     if (onPickLayer) {
-      onPickLayer(index);
+      onPickLayer(stop.number);
       return;
     }
-    setLayer(index);
-    const at = events.findIndex((e) => layerOf(e.module) === index);
+    setLayer(stop.number);
+    let at = events.findIndex((e) => moduleInStop(e.module, stop));
+    if (at < 0 && !stop.repeated)
+      at = events.findIndex((e) => layerOf(e.module) === stop.number);
     if (at >= 0 && trace?.kind !== "attention_capture") onPickEvent?.(at);
   }
   const neighborhood = useMemo(() => {
@@ -327,9 +338,11 @@ export default function MatrixWorkspace({
             {data ? (
               <p className="matrix-meta">
                 <span>
-                  {currentLayer !== null && currentLayer !== undefined
-                    ? `L${currentLayer} · `
-                    : ""}
+                  {currentStop
+                    ? `${currentStop.label} · `
+                    : currentLayer !== null && currentLayer !== undefined
+                      ? `L${currentLayer} · `
+                      : ""}
                   {attention
                     ? `Attention${trace.head_mean ? " · head mean" : trace.head !== undefined ? ` · head ${trace.head}` : ""}`
                     : data.source}
@@ -648,13 +661,13 @@ export default function MatrixWorkspace({
             />
           </span>
           <div className="matrix-track">
-            {series && series.points.length > 1 && (
+            {series && series.points.length > 1 && !stops[0]?.repeated && (
               <Sparkline series={series} activeLayer={currentLayer} />
             )}
             <div className="matrix-track-dots">
               <span className="matrix-track-line" />
               <OrdinalDot label="Input" />
-              {condense(layerIndices, stepIndex).map((entry, i) =>
+              {condense(stopPositions, stepIndex).map((entry, i) =>
                 entry === "gap" ? (
                   <span key={`gap${i}`} className="matrix-ellipsis">
                     ···
@@ -662,10 +675,14 @@ export default function MatrixWorkspace({
                 ) : (
                   <OrdinalDot
                     key={entry}
-                    label={`L${entry}`}
-                    active={entry === currentLayer}
-                    pending={busy && entry === layer && entry !== currentLayer}
-                    onClick={() => pickLayer(entry)}
+                    label={stops[entry].label}
+                    active={entry === stepIndex}
+                    pending={
+                      busy &&
+                      stops[entry].number === layer &&
+                      entry !== stepIndex
+                    }
+                    onClick={() => pickLayer(stops[entry])}
                   />
                 ),
               )}
@@ -676,12 +693,12 @@ export default function MatrixWorkspace({
             className="matrix-step"
             title={
               stepIndex >= 0
-                ? "Which decoder layer the stage shows; click a dot or use the Layer select to move"
+                ? "Which layer the stage shows; click a dot or use the Layer select to move"
                 : undefined
             }
           >
             {stepIndex >= 0
-              ? `Layer ${currentLayer} · ${stepIndex + 1} of ${stepTotal}`
+              ? `${currentStop.name[0].toUpperCase()}${currentStop.name.slice(1)} · ${stepIndex + 1} of ${stepTotal}`
               : event?.denoiser_call !== undefined
                 ? `Call ${event.denoiser_call} · ${eventIndex + 1} of ${events.length}`
                 : event?.step !== undefined

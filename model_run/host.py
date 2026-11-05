@@ -70,7 +70,7 @@ class ModelHost:
             raise ValueError("module_paths must be a list or tuple")
         paths = list(module_paths)
         methods = {"module_outputs": "capture", "next_token": "next_token",
-                   "probe_attention": "probe_attention", "ablate_heads": "ablate_heads", "patch_layers": "patch_layers", "generate": "generate", "denoising_steps": "capture_steps"}
+                   "probe_attention": "probe_attention", "ablate_heads": "ablate_heads", "patch_layers": "patch_layers", "generate": "generate", "denoising_steps": "capture_steps", "classify": "classify", "transcribe": "transcribe"}
         if operation not in methods:
             raise UnsupportedCapability("Unknown observation operation")
         with self._lock:
@@ -81,7 +81,7 @@ class ModelHost:
             if item["state"] != "ready":
                 raise RuntimeError("Model resource is not ready")
             adapter = item["adapter"]
-            feature = "module_outputs" if operation in ("probe_attention", "ablate_heads", "patch_layers") else ("next_token" if operation == "generate" else operation)
+            feature = "module_outputs" if operation in ("probe_attention", "ablate_heads", "patch_layers", "classify", "transcribe") else ("next_token" if operation == "generate" else operation)
             negotiation = adapter.negotiate([feature])
             if not negotiation["accepted"] or not callable(getattr(adapter, methods[operation], None)):
                 raise UnsupportedCapability(f"Operation unavailable: {operation}")
@@ -103,6 +103,8 @@ class ModelHost:
                 elif operation == "patch_layers":
                     trace = adapter.patch_layers(inputs["input_ids"], inputs["source_ids"], control=control, **options)
                     output = None
+                elif operation in ("classify", "transcribe"):
+                    output, trace = getattr(adapter, operation)(inputs, paths, control=control, **options)
                 elif operation == "generate":
                     trace = adapter.generate(inputs["input_ids"], control=control, **options)
                     output = None

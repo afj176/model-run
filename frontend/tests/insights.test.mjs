@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  imageAttentionStory,
+  layerLabels,
+  layerStops,
+  moduleInStop,
+} from "../src/insights.js";
+import {
   ablationStory,
   responseSegments,
   responseStory,
@@ -648,4 +654,47 @@ test("stepDeltas lines up ComfyUI runs by module and denoiser call", () => {
   assert.equal(deltas[0].relative, 0);
   const story = diffusionCompareStory({ deltas });
   assert.match(story.text, /The observed output diverges from call 1/);
+});
+
+test("imageAttentionStory finds the strongest patch and its concentration", () => {
+  const story = imageAttentionStory([0.1, 0.1, 0.1, 0.5, null, 0.2], [2, 3]);
+  assert.equal(story.peak, 0.5);
+  assert.deepEqual([story.row, story.col], [1, 0]);
+  assert.equal(story.count, 6);
+  assert.ok(
+    Math.abs(story.top4Share - 0.9 / 1) < 1e-9 || story.top4Share > 0.8,
+  );
+  assert.equal(imageAttentionStory([], [1, 1]), null);
+});
+
+test("layer stops tell encoder and decoder apart", () => {
+  const whisper = [
+    "model.encoder.layers.0",
+    "model.encoder.layers.1",
+    "model.decoder.layers.0",
+    "model.decoder.layers.1",
+  ];
+  assert.deepEqual(layerLabels(whisper), ["E0", "E1", "D0", "D1"]);
+  const stops = layerStops([...whisper, "model.encoder.layer_norm"]);
+  assert.equal(stops.length, 4);
+  assert.equal(stops[2].name, "decoder layer 0");
+  assert.equal(stops[2].repeated, true);
+  assert.equal(moduleInStop("model.decoder.layers.0", stops[0]), false);
+  assert.equal(moduleInStop("model.decoder.layers.0.fc1", stops[2]), true);
+  const flux = layerStops(["double_blocks.0", "single_blocks.0"]);
+  assert.equal(flux[1].name, "single blocks layer 0");
+  const single = layerStops(["model.layers.0", "model.layers.1"]);
+  assert.deepEqual(
+    single.map((s) => s.label),
+    ["L0", "L1"],
+  );
+  assert.equal(single[1].name, "Layer 1");
+  assert.equal(single[0].repeated, false);
+  // Native traces record a module path relative to the denoiser.
+  assert.equal(
+    moduleInStop("transformer_blocks.0", {
+      path: "model.diffusion_model.transformer_blocks.0",
+    }),
+    true,
+  );
 });

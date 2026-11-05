@@ -2744,3 +2744,89 @@ main {
   color: #fff;
   background: var(--indigo, #4c409d);
 }
+
+/* Image model results. */
+.image-classification-head h2 small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.image-classification-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 12px;
+}
+.image-attention {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(280px, 100%);
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--lilac);
+}
+.image-attention img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.image-attention-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+.image-attention-grid i {
+  background: var(--coral, #f57d78);
+}
+.image-attention-missing {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+}
+.image-classification-side {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.image-labels {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.image-labels li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 8px;
+  font-size: 13px;
+}
+.image-labels span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-labels i {
+  grid-column: 1 / -1;
+  height: 4px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: var(--indigo);
+}
+.image-layer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.image-layer input {
+  flex: 1;
+  min-width: 0;
+}

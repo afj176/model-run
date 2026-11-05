@@ -33,8 +33,9 @@ import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
-import { layerNodePath, layerOf, railLabel } from "./insights";
+import { layerLabels, layerNodePath, layerOf } from "./insights";
 import SliceNavigator from "./SliceNavigator";
+import ImageClassification from "./ImageClassification";
 import { sliceEvent } from "./matrixData";
 import Compare from "./Compare";
 import { buildReport } from "./report";
@@ -52,6 +53,16 @@ function Button({ icon: Icon, children, ...props }) {
     </button>
   );
 }
+const MAX_MEDIA_BYTES = 11 * 1024 * 1024;
+
+/** What was actually fed to the model, in words. */
+function mediaSummary(media) {
+  if (media.kind === "image")
+    return `${media.name} · ${media.source_width} × ${media.source_height}`;
+  const rate = (media.source_rate / 1000).toFixed(1);
+  return `${media.name} · used ${media.used_seconds} s of ${media.source_seconds} s · ${rate} kHz converted to ${media.rate / 1000} kHz mono`;
+}
+
 const mib = (bytes) =>
   (bytes / (1024 * 1024)).toFixed(bytes < 10485760 ? 1 : 0);
 
@@ -130,6 +141,7 @@ export function App() {
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [sliceWanted, setSliceWanted] = useState({});
+  const [mediaFile, setMediaFile] = useState(null);
   const pickSlice = useCallback(
     (key, value) => setSliceWanted((w) => ({ ...w, [key]: value })),
     [],
@@ -331,6 +343,9 @@ export function App() {
         (_, i) => i,
       );
   const textModel = state?.loaded?.task === "text";
+  const mediaTask = ["image", "audio"].includes(state?.loaded?.task)
+    ? state.loaded.task
+    : null;
   // Layer choices: numeric decoder layers for text models, block nodes otherwise.
   const blockMode = !textModel && (Boolean(state?.loaded) || native);
   const layerChoices = useMemo(() => {
@@ -339,9 +354,10 @@ export function App() {
         value: String(n),
         label: `L${n}`,
       }));
+    const labels = layerLabels(nodes.map((n) => n.path));
     return nodes.map((n, i) => ({
       value: n.path,
-      label: `${railLabel(n.path, i)} · ${n.path.split(".").slice(-2).join(".")}`,
+      label: `${labels[i]} · ${n.path.split(".").slice(-2).join(".")}`,
     }));
   }, [blockMode, layerOptions, nodes]);
   const status = busy
@@ -598,8 +614,37 @@ export function App() {
       setSelected(eventPath(events[at]));
     }
   }
+  async function pickMedia(file) {
+    if (!file) return;
+    if (file.size > MAX_MEDIA_BYTES)
+      throw new Error("Files can be at most 11 MiB");
+    const encoded = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => reject(new Error("The file could not be read"));
+      reader.readAsDataURL(file);
+    });
+    setMediaFile({ name: file.name, base64: encoded, task: mediaTask });
+  }
   function run(attention = false, ablate = null) {
     setPlaying(false);
+    if (mediaTask) {
+      if (mediaFile?.task !== mediaTask) {
+        setError(
+          `Choose ${mediaTask === "image" ? "an image" : "an audio"} file first`,
+        );
+        return;
+      }
+      action(() =>
+        api("run", {
+          prompt: mediaFile.name.slice(0, 160) || mediaTask,
+          media: { base64: mediaFile.base64 },
+          modules: capturePaths,
+          elements,
+        }),
+      );
+      return;
+    }
     action(() =>
       api("run", {
         prompt,
@@ -888,29 +933,55 @@ export function App() {
         </div>
       </nav>
       <section className="input-bar" aria-label="Capture input">
-        <label htmlFor="prompt">{native ? "Capture" : "Prompt"}</label>
-        <input
-          id="prompt"
-          value={
-            native
-              ? "Connect Model Run · Observe to your MODEL, then queue the workflow in ComfyUI."
-              : prompt
-          }
-          readOnly={native}
-          onChange={(e) => setPrompt(e.target.value)}
-          maxLength={8192}
-        />
+        <label htmlFor="prompt">
+          {native
+            ? "Capture"
+            : mediaTask === "image"
+              ? "Image"
+              : mediaTask === "audio"
+                ? "Audio"
+                : "Prompt"}
+        </label>
+        {mediaTask ? (
+          <input
+            id="prompt"
+            key={mediaTask}
+            type="file"
+            accept={
+              mediaTask === "image"
+                ? "image/png,image/jpeg,image/webp"
+                : ".wav,.flac,.ogg,.mp3,audio/*"
+            }
+            onChange={(e) => action(() => pickMedia(e.target.files?.[0]))}
+          />
+        ) : (
+          <input
+            id="prompt"
+            value={
+              native
+                ? "Connect Model Run · Observe to your MODEL, then queue the workflow in ComfyUI."
+                : prompt
+            }
+            readOnly={native}
+            onChange={(e) => setPrompt(e.target.value)}
+            maxLength={8192}
+          />
+        )}
         <div className="tokens">
           <span className={busy ? "muted working" : "muted"}>
             {busy
               ? sessionRef.current
                 ? `Capturing ${{ module: "layer outputs", generation: "the response", attention: "attention" }[sessionRef.current.pending[0]] || "…"} (${Object.keys(sessionRef.current.ids).length + 1} of ${Object.keys(sessionRef.current.ids).length + sessionRef.current.pending.length})…`
                 : `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
-              : trace?.tokens
-                ? `Tokens (${trace.tokens.length})`
-                : native
-                  ? "Native execution"
-                  : "Tokens appear after a capture"}
+              : trace?.input_media
+                ? mediaSummary(trace.input_media)
+                : mediaTask
+                  ? `Choose a file, then Run. It stays on this computer.`
+                  : trace?.tokens
+                    ? `Tokens (${trace.tokens.length})`
+                    : native
+                      ? "Native execution"
+                      : "Tokens appear after a capture"}
           </span>
           {trace?.tokens?.map((t, i) => (
             <span
@@ -1300,7 +1371,7 @@ export function App() {
                         }
                         onClick={() => choose(n.path)}
                       >
-                        {railLabel(n.path, i)}
+                        {layerLabels(nodes.map((x) => x.path))[i]}
                       </button>
                     ))}
                   </div>
@@ -1634,6 +1705,8 @@ export function App() {
                   ? companions.generation
                   : null;
             const panels = [];
+            if (trace?.image_classification)
+              panels.push(<ImageClassification key="image" trace={trace} />);
             if (predictionTrace)
               panels.push(
                 <Prediction key="prediction" trace={predictionTrace} />,

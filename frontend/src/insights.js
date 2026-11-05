@@ -936,3 +936,71 @@ export function responseSegments(steps = []) {
     answerStart: close < 0 ? null : close + 1,
   };
 }
+
+/** Where one layer's class token looked: its strongest patch and how concentrated its attention is. */
+export function imageAttentionStory(patches, grid) {
+  const values = (patches || []).map((v) => (Number.isFinite(v) ? v : 0));
+  if (!values.length || !Array.isArray(grid)) return null;
+  const total = values.reduce((a, b) => a + b, 0);
+  const sorted = [...values].sort((a, b) => b - a);
+  const peak = sorted[0];
+  const at = values.indexOf(peak);
+  return {
+    peak,
+    count: values.length,
+    row: Math.floor(at / grid[1]),
+    col: at % grid[1],
+    top4Share:
+      total > 0 ? sorted.slice(0, 4).reduce((a, b) => a + b, 0) / total : 0,
+  };
+}
+
+/** Short labels for layers, naming the stack when two stacks reuse the same label (encoder and decoder). */
+export function layerLabels(paths) {
+  const base = paths.map((path, i) => railLabel(path, i));
+  const seen = new Map();
+  for (const label of base) seen.set(label, (seen.get(label) || 0) + 1);
+  const stacked = paths.map((path, i) => {
+    if (seen.get(base[i]) < 2) return base[i];
+    const parts = path.split(".");
+    const family = parts.at(-3) || parts[0];
+    return `${family[0].toUpperCase()}${parts.at(-1)}`;
+  });
+  const again = new Map();
+  for (const label of stacked) again.set(label, (again.get(label) || 0) + 1);
+  return stacked.map((label, i) =>
+    again.get(label) < 2 ? label : paths[i].split(".").slice(-3).join("."),
+  );
+}
+
+/** The stack a layer belongs to, in words: encoder for model.encoder.layers.0, double blocks for double_blocks.0. */
+function stackName(path) {
+  const parts = path.split(".");
+  const near = parts.at(-2) || "stack";
+  const family = /^(layers?|blocks?)$/.test(near) ? parts.at(-3) || near : near;
+  return family.replaceAll("_", " ");
+}
+
+/** The layers a timeline can stop at, each knowing its own path, even when numbers repeat across stacks. */
+export function layerStops(paths) {
+  const kept = paths.filter((path) => layerOf(path) !== null);
+  const labels = layerLabels(kept);
+  const numbers = kept.map(layerOf);
+  const repeated = new Set(numbers).size < numbers.length;
+  return kept.map((path, i) => ({
+    path,
+    number: numbers[i],
+    label: labels[i],
+    name: repeated
+      ? `${stackName(path)} layer ${numbers[i]}`
+      : `Layer ${numbers[i]}`,
+    repeated,
+  }));
+}
+
+/** Whether an event's module is this layer or sits inside it. */
+export const moduleInStop = (module, stop) =>
+  !!module &&
+  (module === stop.path ||
+    module.startsWith(`${stop.path}.`) ||
+    stop.path.endsWith(`.${module}`));

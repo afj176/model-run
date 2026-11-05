@@ -255,6 +255,19 @@ ComfyUI, lighting up wherever the trace carries the data.
   frame of a video. The workflow stays in memory for retained traces and is never
   written to a trace or an export; a seed set to randomize still reruns with the
   seed it actually used.
+- **Image and speech models in the standalone app.** Local image classifiers and
+  Whisper now load and run on a file you choose, which stays on this computer.
+  Verified on `google/vit-base-patch16-224` and `openai/whisper-tiny`. An image model
+  shows its top labels, per-layer outputs with the patch grid, and the class token's
+  measured attention over the image as the model received it, for each layer.
+  Attention shows where a layer looked, not why it decided. Whisper shows the
+  transcript with a confidence for each token, and encoder and decoder layer outputs.
+  It uses the first 30 seconds, and its probabilities are taken after Whisper's own
+  token rules. There is no audio view or attention map for Whisper yet. Ablation,
+  patching and attention probes remain text-only. ComfyUI owns its own model loading,
+  so these loaders are standalone only; their traces open the same way in ComfyUI.
+  Reading images needs Pillow, and audio needs soundfile and scipy. Without
+  torchvision, images use Transformers' PIL processor where the model has one.
 - **Attention maps that are not available.** SeedVR2's attention never passes
   `transformer_options`, so ComfyUI's override hook cannot see it. HiDream-O1's
   layout (257 queries, 273 keys, 17 text tokens) is not understood. Both report

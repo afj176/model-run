@@ -14,6 +14,8 @@ from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
 from .inventory import inspect_file, inspect_index
+from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image,
+                           load_local_media_model, read_config, task_for_config)
 from .trace_store import encode_trace
 
 MAX_RUNS = 16
@@ -105,6 +107,7 @@ class Application:
             for directory in dirs:
                 if any((parent / "model_index.json").is_file() for parent in directory.parents if parent in dirs):
                     continue  # Pipeline components are not standalone causal models.
+                display = directory.name
                 if (directory / "model_index.json").is_file():
                     task = "diffusion"
                 elif (directory / "config.json").is_file() and any(directory.glob("*.safetensors")):
@@ -115,13 +118,13 @@ class Application:
                         config = json.loads(config_path.read_text(encoding="utf-8"))
                     except (ValueError, UnicodeError):
                         continue
-                    architectures = config.get("architectures", []) if isinstance(config, dict) else []
-                    task = "text" if isinstance(architectures, list) and any(isinstance(a, str) and a.endswith("ForCausalLM") for a in architectures) else "inventory"
+                    task = task_for_config(config)
+                    display = declared_name(config, directory.name) if task in ("image", "audio") else directory.name
                 else:
                     continue
                 identifier = sha256(str(directory).encode()).hexdigest()[:24]
                 paths[identifier] = directory
-                result["artifacts"].insert(0, {"id": identifier, "name": directory.name,
+                result["artifacts"].insert(0, {"id": identifier, "name": display,
                     "relative_path": self._relative(directory), "format": "local_package", "status": "candidate",
                     "task": task, "configured_categories": [], "capabilities": {},
                     "limitations": ["Local configuration candidate; load verifies runtime compatibility."]})
@@ -200,6 +203,7 @@ class Application:
             raise ValueError("Standalone loading requires a complete local Transformers or Diffusers directory")
         def load():
             self._release()
+            display = path.name
             if (path / "model_index.json").is_file():
                 import torch
                 from diffusers import DiffusionPipeline
@@ -211,6 +215,14 @@ class Application:
                 core = getattr(pipeline, "transformer", None) or getattr(pipeline, "unet", None)
                 tree = inspect_module_tree(core) if core is not None else {"nodes": [], "limitations": ["Pipeline has no exposed torch denoiser"]}
                 release = lambda: pipeline.to("cpu")
+            elif task_for_config(read_config(path)) in ("image", "audio"):
+                config = read_config(path)
+                task = task_for_config(config)
+                model, processor = load_local_media_model(path, task, device=device)
+                adapter = ImageClassifierAdapter(model) if task == "image" else SpeechAdapter(model)
+                tokenizer = processor
+                tree, release = adapter.structure(), lambda: model.to("cpu")
+                display = declared_name(config, path.name)
             else:
                 from .local_text import load_local_text_model
                 model, tokenizer = load_local_text_model(path, device=device, attention_implementation="eager")
@@ -223,7 +235,7 @@ class Application:
                 return
             self.host.register(identifier, adapter, release=release)
             with self._lock:
-                self._loaded = {"id": identifier, "name": path.name, "device": device, "task": task,
+                self._loaded = {"id": identifier, "name": display, "device": device, "task": task,
                                 "adapter": adapter, "tokenizer": tokenizer}
                 self._tree = tree
         return self._start("load", load)
@@ -335,6 +347,41 @@ class Application:
                                 token["text"] = tokenizer.decode([token["token_id"]])
                         trace["source_run"]["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in inputs["source_ids"][0].tolist()]
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
+            elif item["task"] in ("image", "audio"):
+                if ablate or patching or generate is not None or request.get("attention") or request.get("ablate_tokens") is not None or request.get("cross_attention") is not None:
+                    raise ValueError("Ablation, patching and attention probes apply to text models; running this model records its layers and output")
+                processor = item["tokenizer"]
+                if not paths:
+                    paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
+                if item["task"] == "image":
+                    image = decode_image(request.get("media"))
+                    pixels = processor(images=image, return_tensors="pt")["pixel_values"]
+                    inputs = {"pixel_values": pixels.to(device=item["device"], dtype=torch.float32)}
+                    operation, options = "classify", {"max_tensor_elements": elements, "top_k": 5}
+                    def decorate(output, trace):
+                        import base64
+                        import io
+                        # What the model received: its processor's size, not the upload's.
+                        buffer = io.BytesIO()
+                        image.resize((int(pixels.shape[-1]), int(pixels.shape[-2]))).save(buffer, format="PNG")
+                        trace["image_classification"]["input_image"] = {"mime": "image/png", "base64": base64.b64encode(buffer.getvalue()).decode()}
+                        trace["input_media"] = {"kind": "image", "name": prompt[:160], "source_width": image.width, "source_height": image.height}
+                        trace["limitations"].append("This application trace includes the input image; exported traces may contain private images.")
+                else:
+                    samples, audio = decode_audio(request.get("media"))
+                    features = processor(samples, sampling_rate=audio["rate"], return_tensors="pt")["input_features"]
+                    inputs = {"input_features": features.to(device=item["device"], dtype=torch.float32)}
+                    operation, options = "transcribe", {"max_tensor_elements": elements, "top_k": 5}
+                    def decorate(output, trace):
+                        text = processor.tokenizer
+                        transcript = trace["transcript_generation"]
+                        transcript["tokens"] = [{"id": i, "text": text.decode([i])} for i in transcript.pop("prompt_token_ids")]
+                        for step in transcript["steps"]:
+                            step["text"] = text.decode([step["token_id"]])
+                            for token in step["top_tokens"]:
+                                token["text"] = text.decode([token["token_id"]])
+                        transcript["response"] = text.decode([s["token_id"] for s in transcript["steps"]], skip_special_tokens=True)
+                        trace["input_media"] = {**audio, "name": prompt[:160]}
             else:
                 if ablate:
                     raise ValueError("Head ablation needs a loaded text model")
@@ -398,7 +445,16 @@ class Application:
             elif trace is not None:
                 trace["model_name"] = item["name"]
                 trace["structure"] = self._tree
-                self.publish(trace, item["name"], run=run_group, step=run_step, note=prompt)
+                transcript = trace.pop("transcript_generation", None)
+                if transcript is not None:
+                    # A transcript and its layer outputs are one run: published as its two parts.
+                    group = run_group or uuid4().hex
+                    transcript["model_name"] = item["name"]
+                    transcript["input_media"] = trace.get("input_media")
+                    self.publish(transcript, item["name"], run=group, step="generation", note=prompt)
+                    self.publish(trace, item["name"], run=group, step="module", note=prompt)
+                else:
+                    self.publish(trace, item["name"], run=run_group, step=run_step, note=prompt)
             if state["status"] == "failed":
                 raise RuntimeError(state["error"])
         return self._start("observe", observe)

@@ -9,6 +9,7 @@ description = "Local model observatory and ComfyUI runtime visualization extensi
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
+media = ["pillow", "soundfile", "scipy"]
 onnx = ["onnx>=1.17,<2"]
 torch = ["torch>=2.3,<3"]
 transformers = ["torch>=2.3,<3", "transformers>=4.51,<6"]

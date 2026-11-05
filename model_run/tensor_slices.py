@@ -13,6 +13,7 @@ MAX_SLICES = 64
 MAX_FRAMES = 16
 SIDE = 16
 TRACE_VALUES = 262144
+PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 PACKED_ASSUMPTION = "Tokens are assumed to be packed in frame, row, column order, the same assumption the attention maps use."
 
 
@@ -38,9 +39,14 @@ def _plan_counts(sizes, names):
     return counts
 
 
-def _layout(tensor, latent_shape):
+def _layout(tensor, latent_shape, token_grid=None):
     """Return (view, names, layout, assumption), or None when no navigation applies."""
     shape = list(tensor.shape)
+    if token_grid is not None and len(shape) == 3:
+        prefix, rows, cols = token_grid
+        if shape[1] == prefix + rows * cols:
+            view = tensor[:, prefix:].reshape(shape[0], rows, cols, shape[2]).permute(0, 3, 1, 2)
+            return view, ["batch", "feature", "row", "column"], "patch_tokens", PATCH_ASSUMPTION
     if latent_shape is not None and shape == list(latent_shape) and len(shape) in (4, 5):
         names = ["batch", "channel", "frame", "height", "width"] if len(shape) == 5 else ["batch", "channel", "height", "width"]
         return tensor, names, "latent", None
@@ -63,8 +69,9 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None):
         self.remaining = max_values
+        self.token_grid = token_grid
 
     def record(self, tensor, latent_shape=None):
         """A slice record; None when the tensor has nothing to navigate; ``unavailable`` on failure."""
@@ -75,7 +82,7 @@ class SliceRecorder:
 
     def _record(self, tensor, latent_shape):
         import torch
-        placed = _layout(tensor, latent_shape)
+        placed = _layout(tensor, latent_shape, self.token_grid)
         if placed is None:
             return None
         view, names, layout, assumption = placed

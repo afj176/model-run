@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { eventPath } from "./api";
-import { activationStats, railLabel } from "./insights";
+import { activationStats, layerLabels } from "./insights";
 
 /** The Run View stage: a model map (one slab per block or step, tinted by its
  * captured activity) linked to a floating field of the selected event's values.
@@ -474,8 +474,8 @@ export default function Scene({
         }
         if (active) {
           const text = active
-            ? `${railLabel(node.path, i)} · ${node.path.split(".").slice(-2).join(".")}`
-            : railLabel(node.path, i);
+            ? `${layerLabels(nodes.map((x) => x.path))[i]} · ${node.path.split(".").slice(-2).join(".")}`
+            : layerLabels(nodes.map((x) => x.path))[i];
           const sprite = makeLabel(text, {
             highlight: active,
             align: "right",
