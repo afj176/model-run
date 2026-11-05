@@ -27,13 +27,15 @@ BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "ErnieImageModel",
 # Their latent runs along time, so a map is a strip, not an image.
 AUDIO_MODELS = {"AceStepConditionGenerationModel", "ACEStepTransformer2DModel", "AudioDiffusionTransformer"}
 TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
-# Their cross-attention keys start with this prompt and go on: Hunyuan DiT's second encoder, Anima's zero padding.
-EXTRA_KEY_MODELS = {"Anima", "HunYuanDiT"}
+# Their cross-attention keys start with this prompt and go on: Hunyuan DiT's second encoder, zero padding in the others.
+ZERO_PADDED_MODELS = {"Anima", "AnimateWanModel", "CameraWanModel", "CausalWanModel", "HumoWanModel", "SCAIL2WanModel", "SCAILWanModel", "VaceWanModel",
+                      "WanAnimate2Model", "WanDancerModel", "WanModel", "WanModel_S2V"}
+EXTRA_KEY_MODELS = {"HunYuanDiT"} | ZERO_PADDED_MODELS
 # These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "Flux", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -213,7 +215,7 @@ class DenoiserObserver:
             # The same class also runs other text encoders, such as SD 2's and Kolors', which were not checked.
             reader = next((module.attn2.to_k for module in self.core.modules() if hasattr(module, "attn2")), None)
             return getattr(reader, "in_features", None) in LABELS_CHECKED_UNET_TEXT
-        return name in LABELS_CHECKED or (name == "Flux" and bool(getattr(getattr(self.core, "params", None), "global_modulation", False)))
+        return name in LABELS_CHECKED
 
     @staticmethod
     def _conditional_batch(arguments):
@@ -298,8 +300,8 @@ class DenoiserObserver:
             patch = getattr(getattr(self.core, "decoder", self.core), "patch_size", 1)
             audio_steps = int(latent_shape[-1]) // (patch if isinstance(patch, int) else 1)
         text_tokens = int(context.shape[1])
-        if type(self.core).__name__ == "Anima":
-            # It pads the prompt to 512 with zeros, which are not tokens of the prompt.
+        if type(self.core).__name__ in ZERO_PADDED_MODELS:
+            # They pad the prompt to a fixed length with zeros, which are not tokens of the prompt.
             filled = context[batch_index].abs().sum(-1).nonzero()
             text_tokens = int(filled.max()) + 1 if len(filled) else text_tokens
         return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": text_tokens,
@@ -460,6 +462,8 @@ class DenoiserObserver:
             aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ == "AudioDiffusionTransformer":
                 aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
+            if aligned is None and type(self.core).__name__ in ZERO_PADDED_MODELS and len(self.token_labels) > current["text_tokens"]:
+                aligned = list(self.token_labels[:current["text_tokens"]])
             if aligned is None and type(self.core).__name__ == "SingleStreamDiT" and len(self.token_labels) > current["text_tokens"]:
                 # Krea 2's encoder keeps only what follows the template's opening, ending with the same tokens.
                 aligned = list(self.token_labels[-current["text_tokens"]:])
@@ -737,24 +741,29 @@ def token_labels(clip, prompt):
     """Best-effort token strings from the CLIP's own tokenizer; None when unavailable."""
     try:
         tokenized = clip.tokenize(prompt[:8192])
-        best = []
-        for value in (tokenized.values() if isinstance(tokenized, dict) else [tokenized]):
+        best, best_key, lists = [], None, 0
+        for key, value in (tokenized.items() if isinstance(tokenized, dict) else [(None, tokenized)]):
             if not isinstance(value, list):
                 continue  # tokenizers may attach flags such as keep_vision
+            lists += 1
             flat = [pair for chunk in value if isinstance(chunk, (list, tuple)) for pair in chunk]
             if len(flat) > len(best):
-                best = flat
+                best, best_key = flat, key
         if not best:
             return None
         tokenizer = getattr(clip, "tokenizer", None)
-        if isinstance(tokenized, dict) and "t5xxl" in tokenized and "qwen3_06b" in tokenized:
-            # Anima's text keys follow its T5 ids, though its decode() reads Qwen ids.
-            from .comfy_components import readable_piece
-            return [readable_piece(word) for _, word in tokenizer.t5xxl.untokenize([(p[0], p[1]) for p in best])][:1024]
+        from .comfy_components import readable_piece
+        # With several encoders, a shared decode() reads one encoder's ids, which turns another's into wrong words.
+        own = getattr(tokenizer, best_key, None) if isinstance(best_key, str) else None
+        pieces = None
+        reader = own if hasattr(own, "untokenize") else tokenizer
+        if hasattr(reader, "untokenize"):
+            pieces = [readable_piece(word) for _, word in reader.untokenize([(p[0], p[1]) for p in best])]
+        if hasattr(own, "untokenize") and lists > 1:
+            return collapse_padding(pieces[:1024])
         if hasattr(tokenizer, "decode"):
-            # Per-token decode turns byte-level BPE pieces into readable text.
-            # T5 has a token that is only a space, which decodes to nothing.
-            return collapse_padding([str(tokenizer.decode([p[0]], skip_special_tokens=False)) or "\u2581" for p in best][:1024])
+            # Per-token decode turns byte-level BPE pieces into readable text. T5 decodes its space, end and padding tokens to nothing.
+            return collapse_padding([str(tokenizer.decode([p[0]], skip_special_tokens=False)) or (pieces[i] if pieces else str(p[0])) for i, p in enumerate(best)][:1024])
         if hasattr(tokenizer, "untokenize"):
             words = tokenizer.untokenize([(p[0], p[1]) for p in best])
             return collapse_padding([str(word).replace("</w>", "") for _, word in words][:1024])
