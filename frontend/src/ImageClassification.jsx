@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { imageAttentionStory, pct, pctFine } from "./insights";
+import { imageAttentionStory, pct, pctFine, validIndex } from "./insights";
 
 /** What an image model predicted, and where each layer's class token looked on the input. */
 export default function ImageClassification({ trace }) {
@@ -7,7 +7,7 @@ export default function ImageClassification({ trace }) {
   const layers = record?.attention_layers || [];
   const [picked, setPicked] = useState(null);
   useEffect(() => setPicked(null), [trace]);
-  const index = picked ?? layers.length - 1;
+  const index = validIndex(picked, layers.length, layers.length - 1);
   const layer = layers[index];
   const story = useMemo(
     () => (layer ? imageAttentionStory(layer.patches, record.grid) : null),

@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, Pause } from "@phosphor-icons/react";
-import { pct, pctFine, speechTokenStory, tokenText } from "./insights";
+import {
+  pct,
+  pctFine,
+  speechTokenStory,
+  tokenText,
+  validIndex,
+} from "./insights";
 
 // One hue per plot: magnitude runs light to dark on the paper surface.
 const LOW = [252, 247, 239];
@@ -37,7 +43,7 @@ export default function AudioView({ trace }) {
   const tokens = view?.tokens || [];
   const [layerAt, setLayerAt] = useState(null);
   const [picked, setPicked] = useState(null);
-  const [hover, setHover] = useState(null);
+  const [hovered, setHovered] = useState(null);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const melRef = useRef(null);
@@ -46,16 +52,23 @@ export default function AudioView({ trace }) {
   useEffect(() => {
     setLayerAt(null);
     setPicked(null);
-    setHover(null);
+    setHovered(null);
     setTime(0);
     setPlaying(false);
   }, [trace]);
-  const layer = layers[layerAt ?? layers.length - 1];
+  const layerIndex = validIndex(layerAt, layers.length, layers.length - 1);
+  const layer = layers[layerIndex];
+  const hover = hovered && tokens[hovered.row] ? hovered : null;
+  // Rows stay readable on short transcripts and bounded on long ones.
+  const rowHeight = Math.max(
+    10,
+    Math.min(15, Math.floor(900 / Math.max(1, tokens.length))),
+  );
   const defaultToken = Math.max(
     0,
     tokens.findIndex((t) => !isSpecial(t.text) && (t.text || "").trim()),
   );
-  const index = picked ?? defaultToken;
+  const index = validIndex(picked, tokens.length, defaultToken);
   const peak = useMemo(() => {
     let most = 1e-9;
     for (const row of layer?.maps || [])
@@ -112,7 +125,7 @@ export default function AudioView({ trace }) {
       ((e.clientX - box.left) / box.width) * view.time_bins,
     );
     if (tokens[row] && col >= 0 && col < view.time_bins)
-      setHover({
+      setHovered({
         row,
         seconds: ((col + 0.5) / view.time_bins) * view.seconds,
         value: layer.maps[row][col],
@@ -192,6 +205,10 @@ export default function AudioView({ trace }) {
                   className={i === index ? "selected" : ""}
                   aria-pressed={i === index}
                   title={`${pctFine(t.probability)} probability`}
+                  style={{
+                    height: `${rowHeight}px`,
+                    lineHeight: `${rowHeight}px`,
+                  }}
                   onClick={() => setPicked(i)}
                 >
                   {tokenText(t.text)}
@@ -200,10 +217,10 @@ export default function AudioView({ trace }) {
             </div>
             <div
               className="audio-plot audio-map"
-              style={{ height: `${tokens.length * 15}px` }}
+              style={{ height: `${tokens.length * rowHeight}px` }}
               onClick={pickFromMap}
               onMouseMove={moveOverMap}
-              onMouseLeave={() => setHover(null)}
+              onMouseLeave={() => setHovered(null)}
             >
               <canvas
                 ref={mapRef}
@@ -212,7 +229,10 @@ export default function AudioView({ trace }) {
               />
               <i
                 className="audio-row-mark"
-                style={{ top: `${index * 15}px` }}
+                style={{
+                  top: `${index * rowHeight}px`,
+                  height: `${rowHeight}px`,
+                }}
               />
               <i className="audio-playhead" style={{ left: playhead }} />
             </div>
@@ -238,7 +258,7 @@ export default function AudioView({ trace }) {
                 type="range"
                 min="0"
                 max={layers.length - 1}
-                value={layerAt ?? layers.length - 1}
+                value={layerIndex}
                 aria-label="Decoder layer"
                 onChange={(e) => setLayerAt(Number(e.target.value))}
               />

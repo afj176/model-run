@@ -1016,3 +1016,19 @@ export function speechTokenStory(map, outside, seconds) {
     outside: outside ?? 0,
   };
 }
+
+/** A remembered position if it still exists in a list of this length, otherwise the fallback. */
+export const validIndex = (picked, length, fallback) =>
+  Number.isInteger(picked) && picked >= 0 && picked < length
+    ? picked
+    : fallback;
+
+/** The parts of the run a trace belongs to, as the server groups them; null when it is not part of one. */
+export function runParts(traces, id) {
+  const record = (traces || []).find((t) => t.id === id);
+  if (!record?.step) return null;
+  const ids = {};
+  for (const t of traces)
+    if (t.run === record.run && t.step) ids[t.step] = t.id;
+  return { run: record.run, ids };
+}

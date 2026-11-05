@@ -88,6 +88,40 @@ class SequenceTests(unittest.TestCase):
             validate_slices(record)
 
 
+class BatchedSequenceTests(unittest.TestCase):
+    def test_guidance_batches_keep_a_map_per_entry(self):
+        from model_run.tensor_slices import validate_slices
+        recorder = SliceRecorder(sequence=lambda length: (length, "time", "note") if length == 9 else None)
+        tensor = torch.ones(2, 9, 4)
+        tensor[1] = 3
+        record = recorder.record(tensor)
+        validate_slices(record)
+        self.assertEqual(record["axes"][0]["name"], "batch")
+        self.assertEqual(len(record["values"]), 2 * 4 * 9)
+        self.assertEqual((record["values"][0], record["values"][-1]), (1.0, 3.0))
+        self.assertEqual(record["axes"][0]["mean_abs"], [1.0, 3.0])
+        self.assertEqual(SliceRecorder(sequence=lambda _: (9, "time", None)).record(torch.ones(1, 9, 4))["axes"], [])
+
+
+class LongAudioTests(unittest.TestCase):
+    def test_only_what_is_used_is_decoded(self):
+        import numpy as np
+        import soundfile
+        from unittest import mock
+        buffer = io.BytesIO()
+        soundfile.write(buffer, np.zeros(16000 * 120, dtype="float32"), 16000, format="FLAC")
+        real = soundfile.SoundFile.read
+        asked = []
+        def spy(self, frames=-1, **kwargs):
+            asked.append(frames)
+            return real(self, frames=frames, **kwargs)
+        with mock.patch.object(soundfile.SoundFile, "read", spy):
+            samples, info = decode_audio(media(buffer.getvalue()))
+        self.assertEqual(asked, [31 * 16000])
+        self.assertEqual(len(samples), 30 * 16000)
+        self.assertEqual((info["source_seconds"], info["used_seconds"], info["clipped"]), (120.0, 30.0, True))
+
+
 class ImageAdapterTests(unittest.TestCase):
     def test_classify_measures_labels_attention_and_patch_slices(self):
         adapter = ImageClassifierAdapter(tiny_vit())
@@ -133,6 +167,17 @@ class ImageAdapterTests(unittest.TestCase):
 
 @unittest.skipUnless((WHISPER / "model.safetensors").is_file(), "Local Whisper package not present")
 class SpeechAdapterTests(unittest.TestCase):
+    def test_english_only_models_run_without_a_task(self):
+        model, processor = load_local_media_model(WHISPER, "audio")
+        model.generation_config.is_multilingual = False
+        model.generation_config.eos_token_id = [model.generation_config.eos_token_id]
+        features = processor(torch.zeros(16000).numpy(), sampling_rate=16000, return_tensors="pt")["input_features"]
+        _, trace = SpeechAdapter(model).transcribe({"input_features": features}, ["model.encoder.layers.0"], max_new_tokens=4, max_tensor_elements=8,
+            audio_info={"used_seconds": 1.0, "hop_length": 160, "rate": 16000})
+        generation = trace["transcript_generation"]
+        self.assertIn(generation["stopped"], ("eos", "max_new_tokens"))
+        self.assertIn("only transcribes English", " ".join(generation["limitations"]))
+
     def test_transcribe_records_steps_that_match_the_sequence(self):
         model, processor = load_local_media_model(WHISPER, "audio")
         features = processor(torch.zeros(16000).numpy(), sampling_rate=16000, return_tensors="pt")["input_features"]

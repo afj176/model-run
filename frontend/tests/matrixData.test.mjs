@@ -220,3 +220,39 @@ test("sliceEvent shows a whole sequence as one feature-by-time map", () => {
   assert.match(seen.slice_note, /Only the audio is shown/);
   assert.deepEqual(extractMatrix({}, seen).axes, ["feature", "time"]);
 });
+
+test("a batched sequence is read one batch entry at a time", () => {
+  const event = {
+    module: "audio",
+    shape: [2, 2, 8],
+    values: [],
+    slices: {
+      layout: "sequence",
+      axes: [
+        {
+          dim: 0,
+          name: "batch",
+          size: 2,
+          indices: [0, 1],
+          mean_abs: [1, 2],
+          max_abs: [1, 2],
+        },
+      ],
+      row_axis: "feature",
+      col_axis: "time",
+      rows: 1,
+      cols: 2,
+      source_rows: 8,
+      source_cols: 2,
+      pooled: true,
+      assumption: null,
+      values: [1, 2, 3, 4],
+      aggregate_axis: null,
+      aggregate: [],
+    },
+  };
+  assert.deepEqual(sliceEvent(event).values, [1, 2]);
+  const second = sliceEvent(event, { batch: 1 });
+  assert.deepEqual(second.values, [3, 4]);
+  assert.equal(second.slice_label, "feature by time · batch 1");
+});

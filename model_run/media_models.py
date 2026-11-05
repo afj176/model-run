@@ -21,7 +21,7 @@ MAX_IMAGE_PIXELS = 64_000_000
 IMAGE_FORMATS = ("PNG", "JPEG", "WEBP")
 SPEECH_RATE = 16000
 MAX_SPEECH_SECONDS = 30
-MAX_TRANSCRIPT_TOKENS = 128
+MAX_TRANSCRIPT_TOKENS = 256
 CLS_METHOD = "class_token_attention_row"
 AUDIO_METHOD = "whisper_cross_attention"
 MEL_COLS = 300
@@ -84,13 +84,15 @@ def decode_audio(media):
     import soundfile
     from scipy.signal import resample_poly
     try:
-        samples, rate = soundfile.read(io.BytesIO(_decode_bytes(media)), dtype="float32", always_2d=True)
+        with soundfile.SoundFile(io.BytesIO(_decode_bytes(media))) as source:
+            rate, channels, total = source.samplerate, source.channels, source.frames
+            # Only what will be used is decoded: a small compressed file can hold hours of audio.
+            samples = source.read(frames=min(total, (MAX_SPEECH_SECONDS + 1) * rate), dtype="float32", always_2d=True)
     except (soundfile.LibsndfileError, RuntimeError, TypeError) as exc:
         raise ValueError("That file is not readable audio; use WAV, FLAC, OGG or MP3") from exc
     if not len(samples) or rate < 1:
         raise ValueError("The audio file has no samples")
-    channels = samples.shape[1]
-    duration = len(samples) / rate
+    duration = total / rate
     mono = samples.mean(axis=1)
     if rate != SPEECH_RATE:
         divisor = math.gcd(int(rate), SPEECH_RATE)
@@ -98,7 +100,7 @@ def decode_audio(media):
     kept = mono[:MAX_SPEECH_SECONDS * SPEECH_RATE]
     return kept, {"kind": "audio", "source_rate": int(rate), "source_channels": int(channels),
                   "source_seconds": round(duration, 3), "used_seconds": round(len(kept) / SPEECH_RATE, 3),
-                  "rate": SPEECH_RATE, "clipped": len(kept) < len(mono)}
+                  "rate": SPEECH_RATE, "clipped": duration > MAX_SPEECH_SECONDS}
 
 
 def _image_processor(auto, path, shared):
@@ -269,9 +271,16 @@ class SpeechAdapter(TorchModuleAdapter):
                 if control is not None:
                     control.check()
                 return torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
+        generation_config = self.model.generation_config
+        multilingual = bool(getattr(generation_config, "is_multilingual", False))
+        # English-only models refuse a task; only models that can translate need one.
+        language = {"task": "transcribe"} if multilingual else {}
+        # The decoder's position limit counts the tokens it starts from, so leave room for them.
+        room = int(getattr(self.model.config, "max_target_positions", max_new_tokens + 8)) - 8
+        limit = max(1, min(max_new_tokens, room))
         def forward():
             with torch.inference_mode():
-                generated = self.model.generate(features, task="transcribe", do_sample=False, num_beams=1, max_new_tokens=max_new_tokens,
+                generated = self.model.generate(features, **language, do_sample=False, num_beams=1, max_new_tokens=limit,
                                                 return_dict_in_generate=True, output_scores=True, stopping_criteria=StoppingCriteriaList([Cancellable()]))
             sequence = generated.sequences
             output, trace = capture_forward(self.model, {"input_features": features, "decoder_input_ids": sequence, "output_attentions": True}, module_paths, control=control,
@@ -284,7 +293,8 @@ class SpeechAdapter(TorchModuleAdapter):
         if prefix < 1:
             raise ValueError("The decoder returned fewer tokens than scores")
         steps = []
-        eos = getattr(self.model.generation_config, "eos_token_id", None)
+        eos = generation_config.eos_token_id
+        ends = set(eos) if isinstance(eos, (list, tuple)) else {eos}
         for index, score in enumerate(scores):
             probabilities = torch.softmax(score[0].detach().to(device="cpu", dtype=torch.float32), dim=-1)
             token = ids[prefix + index]
@@ -295,10 +305,10 @@ class SpeechAdapter(TorchModuleAdapter):
         trace["audio_view"] = _audio_view(features, output, steps, info, used_mel, used_frames, encoder_length)
         trace["transcript_generation"] = {
             "schema_version": "1.0", "kind": "generation_capture", "status": "completed", "decoding": "greedy", "provenance": False,
-            "stopped": "eos" if ids[-1] == eos else "max_new_tokens", "input": {"token_count": prefix}, "steps": steps,
+            "stopped": "eos" if ids[-1] in ends else "max_new_tokens", "input": {"token_count": prefix}, "steps": steps,
             "prompt_token_ids": ids[:prefix], "model_class": trace["model_class"], "torch_version": trace["torch_version"],
             "limitations": ["Probabilities are softmax of the decoder's scores after Whisper's own token rules, which is what greedy decoding chose from.",
-                            "Whisper picked the language itself; the tokens before the transcript show what it chose.",
+                            "Whisper picked the language itself; the tokens before the transcript show what it chose." if multilingual else "This model only transcribes English.",
                             "Only the first 30 seconds of audio are used."]}
         trace["adapter_id"] = self.adapter_id
         return output, trace

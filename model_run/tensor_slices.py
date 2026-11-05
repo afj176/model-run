@@ -13,6 +13,7 @@ MAX_SLICES = 64
 MAX_FRAMES = 16
 SIDE = 16
 SEQUENCE_COLS = 64
+MAX_SEQUENCE_BATCH = 8
 TRACE_VALUES = 262144
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 PACKED_ASSUMPTION = "Tokens are assumed to be packed in frame, row, column order, the same assumption the attention maps use."
@@ -84,25 +85,32 @@ class SliceRecorder:
             return {"unavailable": f"Slices could not be recorded: {type(exc).__name__}"}
 
     def _sequence_record(self, tensor, kept, name, note):
-        """One feature-by-time map of a [1, T, D] tensor, so all of its length can be seen."""
+        """A feature-by-time map of a [B, T, D] tensor per batch entry, so all of its length can be seen."""
         import torch
-        depth = int(tensor.shape[2])
+        batch, depth = int(tensor.shape[0]), int(tensor.shape[2])
         rows, cols = min(depth, SIDE), min(kept, SEQUENCE_COLS)
-        if rows * cols > self.remaining:
+        indices = _spaced(batch, MAX_SEQUENCE_BATCH)
+        if len(indices) * rows * cols > self.remaining:
             return {"unavailable": "This trace's slice budget was already spent on earlier events."}
-        self.remaining -= rows * cols
-        view = tensor.detach()[0, :kept].to(dtype=torch.float32).transpose(0, 1).unsqueeze(0).unsqueeze(0)
+        self.remaining -= len(indices) * rows * cols
+        chosen = tensor.detach()[indices, :kept].to(dtype=torch.float32)
+        view = chosen.transpose(1, 2).unsqueeze(1)
         pooled = (rows, cols) != (depth, kept)
         if pooled:
             view = torch.nn.functional.adaptive_avg_pool2d(view, (rows, cols))
-        return {"layout": "sequence", "source_shape": list(tensor.shape), "axes": [], "row_axis": "feature", "col_axis": name,
+        axes = []
+        if batch > 1:
+            magnitude = chosen.abs().to(device="cpu")
+            axes = [{"dim": 0, "name": "batch", "size": batch, "indices": indices,
+                     "mean_abs": _clean(magnitude.mean(dim=(1, 2)).tolist()), "max_abs": _clean(magnitude.amax(dim=(1, 2)).tolist())}]
+        return {"layout": "sequence", "source_shape": list(tensor.shape), "axes": axes, "row_axis": "feature", "col_axis": name,
                 "rows": rows, "cols": cols, "source_rows": depth, "source_cols": kept, "pooled": pooled, "assumption": note,
                 "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
                 "aggregate_measure": None, "aggregate": []}
 
     def _record(self, tensor, latent_shape):
         import torch
-        if self.sequence is not None and tensor.ndim == 3 and tensor.shape[0] == 1:
+        if self.sequence is not None and tensor.ndim == 3:
             plan = self.sequence(int(tensor.shape[1]))
             if plan is not None:
                 return self._sequence_record(tensor, *plan)
@@ -171,8 +179,18 @@ def validate_slices(record):
     axes, rows, cols = record.get("axes"), record.get("rows"), record.get("cols")
     if record.get("layout") == "sequence":
         values = record.get("values")
-        if (axes != [] or type(rows) is not int or type(cols) is not int or not 1 <= rows <= SIDE or not 1 <= cols <= SEQUENCE_COLS
-                or not isinstance(values, list) or len(values) != rows * cols or record.get("aggregate") != []):
+        if not isinstance(axes, list) or len(axes) > 1:
+            raise ValueError("Invalid sequence record")
+        batches = 1
+        for axis in axes:
+            indices = axis.get("indices") if isinstance(axis, dict) else None
+            if (not isinstance(indices, list) or not 1 <= len(indices) <= MAX_SEQUENCE_BATCH or type(axis.get("size")) is not int
+                    or any(type(i) is not int or not 0 <= i < axis["size"] for i in indices)
+                    or any(not isinstance(axis.get(field), list) or len(axis[field]) != len(indices) for field in ("mean_abs", "max_abs"))):
+                raise ValueError("Invalid sequence axis")
+            batches = len(indices)
+        if (type(rows) is not int or type(cols) is not int or not 1 <= rows <= SIDE or not 1 <= cols <= SEQUENCE_COLS
+                or not isinstance(values, list) or len(values) != batches * rows * cols or record.get("aggregate") != []):
             raise ValueError("Invalid sequence record")
         for value in values:
             if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):

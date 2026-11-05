@@ -33,7 +33,7 @@ import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
-import { layerLabels, layerNodePath, layerOf } from "./insights";
+import { layerLabels, layerNodePath, layerOf, runParts } from "./insights";
 import SliceNavigator from "./SliceNavigator";
 import ImageClassification from "./ImageClassification";
 import AudioView from "./AudioView";
@@ -155,6 +155,7 @@ export function App() {
   const [session, setSession] = useState(null);
   const [companions, setCompanions] = useState({});
   const sessionRun = useRef(null);
+  const runKeys = useRef(new Map());
   const variantOf = useRef("");
   const pairBRef = useRef("");
   useEffect(() => {
@@ -385,26 +386,31 @@ export function App() {
   }
   /** Reopening a run from history brings back its other parts: outputs, response and attention. */
   async function restoreRun(id) {
-    const listed = await api("state");
-    const record = listed.traces.find((t) => t.id === id);
-    if (!record || record.run === sessionRun.current) return;
-    const ids = {};
-    for (const t of listed.traces)
-      if (t.run === record.run && t.step) ids[t.step] = t.id;
-    if (!record.step || !Object.keys(ids).length) {
+    const parts = runParts((await api("state")).traces, id);
+    if (!parts) {
       sessionRun.current = null;
       setSession(null);
       setCompanions({});
       return;
     }
+    const known = sessionRun.current;
+    // Already showing this run with this part: nothing to rebuild. A part published since is picked up.
+    if (known?.run === parts.run && known.ids.includes(id)) return;
+    // A part that has left memory is shown as missing; it must not stop this trace from opening.
+    const fetchPart = (partId) =>
+      partId ? api(`traces/${partId}`).catch(() => null) : null;
     const [moduleTrace, generationTrace] = await Promise.all([
-      ids.module ? api(`traces/${ids.module}`) : null,
-      ids.generation ? api(`traces/${ids.generation}`) : null,
+      fetchPart(parts.ids.module),
+      fetchPart(parts.ids.generation),
     ]);
     if (selectedTrace.current !== id) return;
-    sessionRun.current = record.run;
-    // No key: an older run is not the prompt in the box, so moving layers does not re-probe it.
-    setSession({ key: null, ids, run: record.run });
+    sessionRun.current = { run: parts.run, ids: Object.values(parts.ids) };
+    // A run keeps the prompt key it was captured with, so its own prompt can still re-probe layers.
+    setSession({
+      key: runKeys.current.get(parts.run) ?? null,
+      ids: parts.ids,
+      run: parts.run,
+    });
     setCompanions({ module: moduleTrace, generation: generationTrace });
   }
   async function openTrace(id, atLayer = null) {
@@ -479,7 +485,11 @@ export function App() {
               launchSessionStep(active, active.pending[0]);
             } else {
               const ids = { ...active.ids };
-              sessionRun.current = active.run;
+              sessionRun.current = {
+                run: active.run,
+                ids: Object.values(ids),
+              };
+              runKeys.current.set(active.run, active.key);
               setSession({ key: active.key, ids, run: active.run });
               const [moduleTrace, generationTrace] = await Promise.all([
                 ids.module ? api(`traces/${ids.module}`) : null,
@@ -1862,7 +1872,8 @@ export function App() {
               />
             </div>
             <p className="micro">
-              Exports include captured values and decoded input tokens.
+              Exports include captured values, decoded input tokens, and any
+              input image or audio.
             </p>
           </details>
         </div>

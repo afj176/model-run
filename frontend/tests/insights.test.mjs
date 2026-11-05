@@ -1,3 +1,4 @@
+import { runParts, validIndex } from "../src/insights.js";
 import { speechTokenStory } from "../src/insights.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -706,4 +707,27 @@ test("speechTokenStory places the strongest slice in seconds", () => {
   assert.equal(story.peakSeconds, 5);
   assert.equal(story.outside, 0.2);
   assert.equal(speechTokenStory([], null, 8).peak, 0);
+});
+
+test("validIndex drops a remembered position the new list no longer has", () => {
+  assert.equal(validIndex(15, 4, 1), 1);
+  assert.equal(validIndex(2, 4, 1), 2);
+  assert.equal(validIndex(0, 4, 1), 0);
+  assert.equal(validIndex(null, 4, 1), 1);
+  assert.equal(validIndex(0, 0, -1), -1);
+});
+
+test("runParts finds a trace's run, with later parts replacing earlier ones", () => {
+  const traces = [
+    { id: "a", run: "r", step: "module" },
+    { id: "b", run: "r", step: "attention" },
+    { id: "c", run: "r", step: "attention" },
+    { id: "d", run: "other", step: null },
+  ];
+  assert.deepEqual(runParts(traces, "a"), {
+    run: "r",
+    ids: { module: "a", attention: "c" },
+  });
+  assert.equal(runParts(traces, "d"), null);
+  assert.equal(runParts(traces, "gone"), null);
 });
