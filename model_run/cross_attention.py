@@ -46,7 +46,8 @@ def pooled_grid(rows, cols, text_tokens, max_grid):
         scale += 1
 
 
-def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None, text_start=0, reference_tokens=0):
+def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None, text_start=0, reference_tokens=0,
+            image_first=False, known_image_tokens=None, query_lead=0):
     """Return a bounded map record, or ``{"unavailable": reason}`` when the geometry is not understood.
 
     ``q`` and ``k`` are either ``[B, heads, L, D]`` or ``[B, L, heads*D]``. Text keys occupy
@@ -54,6 +55,10 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     before the text, or -1 when the text comes last, because some models place it after the image. Image queries are the whole query sequence
     (classic cross-attention, keys are text only) or the positions after the text block
     (joint attention over the concatenated text+image sequence).
+
+    ``image_first`` is for keys that run image, text, then other conditioning, so the text is neither
+    first nor last. ``known_image_tokens`` says how many tokens are the image when the sequence's length
+    cannot, and ``query_lead`` counts queries before the image that are not part of it.
     """
     import torch
     if not isinstance(q, torch.Tensor) or not isinstance(k, torch.Tensor) or q.ndim not in (3, 4) or k.ndim != q.ndim:
@@ -80,8 +85,22 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     if q.shape[-1] != k.shape[-1]:
         return {"unavailable": "Query and key head widths differ"}
     key_count, query_count, dim = int(k.shape[2]), int(q.shape[2]), int(q.shape[3])
-    if key_count == text_tokens and query_count != text_tokens:
+    if query_lead and query_count <= query_lead:
+        return {"unavailable": "These queries are the model's own summary tokens, not the image"}
+    if query_lead and key_count == query_count:
+        return {"unavailable": "Self-attention in this block has no text keys"}
+    if stream == "audio" and known_image_tokens and query_count == key_count:
+        return {"unavailable": "Self-attention in this block has no text keys"}
+    if stream == "audio" and known_image_tokens:
+        # An audio model's queries end with its time steps, and its keys can hold more than the prompt.
+        kind, first_image_query = "cross", query_count - known_image_tokens
+    elif known_image_tokens and not image_first and query_count == known_image_tokens and key_count not in (text_tokens, query_count):
+        # Queries are the image alone and keys hold more than this prompt, as Hunyuan DiT's second encoder.
         kind, first_image_query = "cross", 0
+    elif image_first and key_count >= (known_image_tokens or query_count) + text_tokens:
+        kind, first_image_query = "joint", 0
+    elif key_count == text_tokens and query_count != text_tokens:
+        kind, first_image_query = "cross", query_lead
     elif key_count == query_count and key_count > text_tokens:
         kind, first_image_query = "joint", 0 if text_start == -1 else text_start + text_tokens
     elif key_count > text_tokens and query_count >= key_count - text_tokens:
@@ -92,9 +111,17 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         return {"unavailable": f"Sequence lengths (queries {query_count}, keys {key_count}, text {text_tokens}) do not form cross or joint attention"}
     image_tokens = query_count - first_image_query - (text_tokens if text_start == -1 and kind == "joint" and key_count == query_count else 0)
     first_text_key = key_count - text_tokens if text_start == -1 else text_start
+    if known_image_tokens:
+        image_tokens = known_image_tokens
+    if image_first and kind == "joint":
+        image_tokens = known_image_tokens or query_count
+        first_text_key = image_tokens
     # An edit model's reference images follow the generated image, and only the image gets a map.
     if reference_tokens and image_tokens > reference_tokens and stream != "audio" and image_grid(image_tokens, latent_shape) is None:
         image_tokens -= reference_tokens
+    # One query is a pooled summary, not an image, unless the image really is one token.
+    if image_tokens == 1 and max(int(latent_shape[-2]), int(latent_shape[-1])) > 1:
+        return {"unavailable": "A single query token is a pooled summary, not the image"}
     # An audio stream runs along one axis, so its map is a strip over time.
     grid = (1, image_tokens, 1, 1) if stream == "audio" else image_grid(image_tokens, latent_shape)
     if grid is None:
@@ -110,6 +137,8 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         m = mask
         if m.ndim in (3, 4):
             m = m[batch_index] if m.shape[0] > 1 else m[0]
+        if m.ndim == 3 and m.shape[0] == heads:
+            m = m[0]  # a mask repeated for each head
         while m.ndim > 1 and m.shape[0] == 1:
             m = m[0]
         if m.ndim not in (1, 2) or m.shape[-1] != key_count:
@@ -147,7 +176,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         maps = maps.reshape(text_tokens, kept * out_rows * out_cols)
         text_mass = maps.sum(0)
         token_mass = maps.mean(1)
-    return {**({"stream": stream} if stream else {}), **({"text_spreads": True} if kind == "joint" and key_count != query_count else {}),
+    return {**({"stream": stream} if stream else {}), **({"text_spreads": True} if kind == "joint" and key_count != query_count and not image_first else {}),
             "attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
             "source_grid": [rows, cols], "grid_factor": factor, "grid": [out_rows, out_cols], "scale": scale,
             "frames": kept, "frame_indices": frame_indices, "source_frames": frames,

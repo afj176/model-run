@@ -4,6 +4,8 @@ import base64
 import io
 import logging
 import os
+import sys
+from contextlib import contextmanager
 from threading import Lock
 import time
 
@@ -17,7 +19,18 @@ from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
-TEXT_LAST_MODELS = {"JoyImageTransformer3DModel", "MOSSImage"}
+TEXT_LAST_MODELS = {"AceStepConditionGenerationModel", "AsymmDiTJoint", "ErnieImageModel", "Flux3", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MOSSImage"}
+# Measured the same way: keys run image, text, then other conditioning, so the text is neither first nor last.
+IMAGE_FIRST_MODELS = {"HiDreamImageTransformer2DModel", "StageC"}
+# These call ComfyUI's attention without transformer_options, so its override never reaches them.
+BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "ErnieImageModel", "HunYuanDiT", "HunYuanDiTPlain", "PixArtMS"}
+# Their latent runs along time, so a map is a strip, not an image.
+AUDIO_MODELS = {"AceStepConditionGenerationModel", "ACEStepTransformer2DModel", "AudioDiffusionTransformer"}
+TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
+# These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
+SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
+SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
+                    "and a voxel model's frames are depth slices through the shape.")
 LABELS_CHECKED = {"QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
@@ -60,6 +73,30 @@ def all_layer_plan(paths, max_calls, elements):
             "slice_values": ALL_LAYER_SLICE_VALUES, "slice_per_event": ALL_LAYER_SLICE_VALUES // events}
 
 
+@contextmanager
+def reach_attention(core, override):
+    """Send a bypassing model's attention through ``override`` for one call, then put it back.
+
+    Each attention module has a slot ComfyUI consults for its kernel, used by int8 weights. The
+    kernel that was there still runs, so the output is unchanged.
+    """
+    from comfy.ldm.modules.attention import optimized_attention
+    def routed(previous):
+        def run(q, k, v, heads, *args, **kwargs):
+            def kernel(_q, _k, _v, _heads, *inner, **options):
+                return (previous or optimized_attention)(q, k, v, heads, *inner, **options)
+            return override(kernel, q.peek(), k.peek(), v, heads, *args, **kwargs)
+        return run
+    slots = [(m, m.function) for m in core.modules() if type(m).__name__ == "ComfyAttention"]
+    for module, previous in slots:
+        module.function = routed(previous)
+    try:
+        yield
+    finally:
+        for module, previous in slots:
+            module.function = previous
+
+
 class DenoiserObserver:
     def __init__(self, patcher, module_paths, *, max_calls=8, elements=1024, publish=None, output_selectors=None,
                  attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None, slice_values=None, slice_per_event=None):
@@ -79,8 +116,10 @@ class DenoiserObserver:
         core = patcher.model.diffusion_model
         lead = getattr(core, "register_tokens", None)
         # Measured with tools/check_comfy_families.py: where text sits in joint attention, when it is not first.
-        self._text_lead = int(lead.shape[1]) if hasattr(lead, "shape") and len(lead.shape) == 3 else 0
+        self._text_lead = int(lead.shape[1]) if hasattr(lead, "shape") and len(lead.shape) == 3 else TEXT_LEADS.get(type(core).__name__, 0)
         self._text_start = -1 if type(core).__name__ in TEXT_LAST_MODELS else self._text_lead
+        self._image_first = type(core).__name__ in IMAGE_FIRST_MODELS
+        self._audio_only = type(core).__name__ in AUDIO_MODELS
         self._labels_dropped = False
         self.ablate_tokens = parse_token_list(ablate_tokens)
         self._ablation_applied = 0
@@ -245,6 +284,10 @@ class DenoiserObserver:
         packed = getattr(self.base_model, "latent_shapes", None)
         latent_shape = list(packed[0]) if isinstance(packed, (list, tuple)) and len(packed) > 1 else list(latent.shape)
         audio_steps = int(packed[1][2]) if isinstance(packed, (list, tuple)) and len(packed) > 1 and len(packed[1]) > 2 else None
+        if self._audio_only:
+            # ACE-Step 1.5 groups time steps, while the first ACE-Step's patch is a pair for the frequency axis.
+            patch = getattr(getattr(self.core, "decoder", self.core), "patch_size", 1)
+            audio_steps = int(latent_shape[-1]) // (patch if isinstance(patch, int) else 1)
         return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": int(context.shape[1]),
                 "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
@@ -252,6 +295,22 @@ class DenoiserObserver:
     def _skip(self, call, reason):
         if len(self._skipped) < 32:
             self._skipped.append({"denoiser_call": call, "reason": str(reason)[:200]})
+
+    def _image_layout(self, latent_shape, text_tokens):
+        """Tokens that are the image and queries before it, for models whose lengths cannot say: (known, lead)."""
+        name = type(self.core).__name__
+        if name == "HiDreamImageTransformer2DModel":
+            patch = int(self.core.patch_size)
+            return (int(latent_shape[-2]) // patch) * (int(latent_shape[-1]) // patch), 0
+        if name == "MiniMaxH3Model":
+            # Tokens run text, video, then audio, and only the video gets an image map.
+            frames, height, width = (int(size) // int(patch) for size, patch in zip(latent_shape[-3:], self.core.patch_size))
+            return frames * height * width, 0
+        if name == "Fibo2":
+            # Queries run summary tokens, the image, then any reference images.
+            gist = sys.modules[type(self.core).__module__].gist_count(text_tokens, self.core.max_gist_tokens)
+            return int(latent_shape[-2]) * int(latent_shape[-1]), gist
+        return None, 0
 
     def attention_override(self, func, q, k, v, heads, *args, **kwargs):
         """ComfyUI optimized_attention_override: measure the selected block, then run the real kernel."""
@@ -267,6 +326,12 @@ class DenoiserObserver:
                 query_count = int(q.shape[-2] if q.ndim == 4 else q.shape[1])
                 joint = "block_type" in options or "block" not in options and joint_by_geometry(query_count, key_count, current["text_tokens"], current["latent_shape"], self._text_lead)
                 span = text_key_range(query_count, key_count, current["text_tokens"], allow_joint=joint, text_start=self._text_start)
+                if self._image_first:
+                    start = self._image_layout(current["latent_shape"], current["text_tokens"])[0] or query_count
+                    span = (start, start + current["text_tokens"]) if key_count >= start + current["text_tokens"] else None
+                elif self._audio_only and query_count != key_count and key_count >= self._text_lead + current["text_tokens"]:
+                    start = key_count - current["text_tokens"] if self._text_start == -1 else self._text_lead
+                    span = (start, start + current["text_tokens"])
                 if span is not None:
                     existing = kwargs["mask"] if "mask" in kwargs else (args[0] if args else None)
                     bias = key_mask(self.ablate_tokens, int(k.shape[-2] if k.ndim == 4 else k.shape[1]), start=span[0], existing=existing, device=q.device, dtype=q.dtype)
@@ -289,8 +354,10 @@ class DenoiserObserver:
                     ordinal = current.get("ordinal", 0)
                     current["ordinal"] = ordinal + 1
                     label, allow_joint = f"call:{ordinal}", False
-                is_audio = (current.get("audio_steps") is not None and int(q.shape[-2] if q.ndim == 4 else q.shape[1]) == current["audio_steps"]
-                            and int(k.shape[-2] if k.ndim == 4 else k.shape[1]) == current["text_tokens"])
+                query_count = int(q.shape[-2] if q.ndim == 4 else q.shape[1])
+                key_count = int(k.shape[-2] if k.ndim == 4 else k.shape[1])
+                is_audio = current.get("audio_steps") is not None and (query_count == current["audio_steps"] and key_count == current["text_tokens"]
+                            or self._audio_only and query_count >= current["audio_steps"] and query_count != key_count and key_count >= self._text_lead + current["text_tokens"])
                 audio_label = None
                 if is_audio:
                     # Named by what it is, so the choice does not depend on how many other calls each block makes.
@@ -305,12 +372,18 @@ class DenoiserObserver:
                         seen.append(label)
                 if self.attention_block in (label, audio_label):
                     mask = kwargs.get("mask", args[0] if args else None)
+                    known, lead = self._image_layout(current["latent_shape"], current["text_tokens"])
+                    if self._audio_only and is_audio:
+                        known = current["audio_steps"]
+                    elif type(self.core).__name__ == "HunYuanDiT" and key_count != query_count:
+                        known = query_count
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=self._text_start, reference_tokens=current.get("reference_tokens", 0))
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=self._text_start, reference_tokens=current.get("reference_tokens", 0),
+                                          image_first=self._image_first, known_image_tokens=known, query_lead=lead)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
-                    elif measurement["attention_kind"] == "joint" and not allow_joint and not label.startswith("call:") or measurement["attention_kind"] == "joint" and not allow_joint and not joint_by_geometry(
-                            int(q.shape[-2] if q.ndim == 4 else q.shape[1]), int(k.shape[-2] if k.ndim == 4 else k.shape[1]), current["text_tokens"], current["latent_shape"], self._text_lead):
+                    elif not (self._image_first or known) and (measurement["attention_kind"] == "joint" and not allow_joint and not label.startswith("call:") or measurement["attention_kind"] == "joint" and not allow_joint and not joint_by_geometry(
+                            int(q.shape[-2] if q.ndim == 4 else q.shape[1]), int(k.shape[-2] if k.ndim == 4 else k.shape[1]), current["text_tokens"], current["latent_shape"], self._text_lead)):
                         current["reason"] = "Self-attention in this block has no text keys"
                     else:
                         self._mixes_text = self._mixes_text or bool(measurement.get("text_spreads"))
@@ -323,6 +396,12 @@ class DenoiserObserver:
         return func(q, k, v, heads, *args, **kwargs)
 
     def _invoke(self, function, args):
+        if type(self.core).__name__ in BYPASS_ATTENTION_MODELS:
+            with reach_attention(self.core, self.attention_override):
+                return self._invoke_reached(function, args)
+        return self._invoke_reached(function, args)
+
+    def _invoke_reached(self, function, args):
         if self.previous is not None:
             return self.previous(function, args)
         return function(args["input"], args["timestep"], **args["c"])
@@ -395,6 +474,8 @@ class DenoiserObserver:
             self.trace["cross_attention"]["limitations"].append(UNCHECKED_LABEL_LIMITATION)
         if self._registers and "cross_attention" in self.trace and REGISTER_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(REGISTER_LIMITATION)
+        if type(self.core).__name__ in SHAPE_MODELS and "cross_attention" in self.trace and SHAPE_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(SHAPE_LIMITATION)
         if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(TEXT_MIXING_LIMITATION)
         if "cross_attention" in self.trace and self._skipped:

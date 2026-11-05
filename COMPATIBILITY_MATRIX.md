@@ -33,32 +33,72 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | SDXL UNet | 9 | yes | yes | text only (cross-attention) |
 | Stable Diffusion 3 | 2 | yes | yes | first |
 | AuraFlow | 3 | yes | yes | after 8 other tokens |
-| Hunyuan DiT | 2 | yes | no: attention bypasses ComfyUI's hook | not reached |
+| Hunyuan DiT | 2 | yes | yes | first |
+| PixArt | 3 | yes | yes | text only (cross-attention) |
 | Flux 1 | 4 | yes | yes | first |
 | Flux 2 | 4 | yes | yes | first |
+| Chroma | 6 | yes | yes | first |
 | Hunyuan Video | 6 | yes | yes | first |
 | Wan 2.x | 2 | yes | yes | text only (cross-attention) |
 | LTX Video | 2 | yes | yes | text only (cross-attention) |
+| Mochi | 2 | yes | yes | after the image (from its source; every key changes with the text here) |
 | Cosmos Predict2 | 2 | yes | yes | text only (cross-attention) |
 | Lumina 2 / Z-Image | 2 | yes | yes | first |
 | Qwen-Image | 2 | yes | yes | first |
 | Qwen-Image 2.1 | 2 | yes | yes | first |
+| HiDream I1 | 2 | yes | yes | after 64 other tokens |
+| Flux 3 | 2 | yes | yes | after the image |
+| Lens | 2 | yes | yes | after the image |
 | OmniGen 2 | 2 | yes | yes | first |
 | Boogu | 3 | yes | yes | first |
-| Stable Audio | 2 | yes | no: layout not an image | text only (cross-attention) |
-| ACE-Step | 4 | yes | no: layout not an image | after 1 other tokens |
+| Stable Audio | 2 | yes | yes | text only (cross-attention) |
+| ACE-Step | 4 | yes | yes | after 1 other tokens |
 | Mage Flow | 2 | yes | yes | first |
 | JoyImage | 2 | yes | yes | after the image |
 | Ideogram 4 | 2 | yes | yes | first |
 | Krea 2 | 6 | yes | yes | first |
 | MOSS Image | 4 | yes | yes | after the image |
+| Fibo 2 | 3 | yes | yes | first |
 | Kandinsky 5 | 3 | yes | yes | text only (cross-attention) |
-| Ernie Image | 2 | yes | no: attention bypasses ComfyUI's hook | not reached |
+| Ernie Image | 2 | yes | yes | after the image |
+| CogVideoX | 2 | yes | yes | first |
 | Hunyuan Image 2.1 | 6 | yes | yes | first |
 | PixelDiT | 3 | yes | yes | first |
+| Wan causal AR | 2 | yes | yes | text only (cross-attention) |
+| Wan VACE | 3 | yes | yes | after 96 other tokens |
+| Wan Camera | 3 | yes | yes | text only (cross-attention) |
+| Wan HuMo | 2 | yes | yes | text only (cross-attention) |
+| Wan Animate | 2 | yes | yes | text only (cross-attention) |
+| Wan Animate 2 | 2 | yes | yes | text only (cross-attention) |
+| Wan S2V | 3 | yes | yes | text only (cross-attention) |
+| Wan SCAIL | 2 | yes | yes | text only (cross-attention) |
+| Wan SCAIL 2 | 2 | yes | yes | text only (cross-attention) |
+| Wan Dancer | 2 | yes | yes | not reached |
+| Cosmos Video | 6 | yes | yes | text only (cross-attention) |
+| Z-Image pixel space | 3 | yes | yes | first |
+| PiD | 4 | yes | yes | first |
+| Chroma Radiance | 7 | yes | yes | first |
+| Stable Cascade C | 8 | yes | yes | after 256 other tokens |
+| Stable Cascade B | 4 | yes | no: conditions on a pooled summary, not words | after the image |
+| MiniMax H3 | 3 | yes | yes | first |
+| ACE-Step 1.5 | 8 | yes | yes | after the image |
+| Trellis 2 | 6 | yes | yes | text only (cross-attention) |
+| Hunyuan3D 2 | 2 | yes | no: shape tokens are not an image | first |
+| Hunyuan3D 2.1 | 3 | yes | no: shape tokens are not an image | text only (cross-attention) |
+| TripoSplat | 6 | yes | no: shape tokens are not an image | after 16 other tokens |
+| YuE 2 | 2 | yes | no: its text arrives as a precomputed key cache | not reached |
+| MiniMax Music 3 | 36 | yes | no: its condition is mixed into the audio, with no attention to text | not reached |
+| SenseNova U1.5 | 1 | yes | no: text is token IDs inside the model, not a text input | not reached |
 | Anima | 8 | yes | yes | text only (cross-attention) |
 
-Not run: the tiny config for these did not build or run, which is a limit of this check and says nothing about the node: PixArt, Chroma, Mochi, HiDream I1, Flux 3, Lens, Fibo 2, CogVideoX.
+Where a map exists, the check also changes only the text and confirms the map reads text where the keys really changed; a mismatch prints `WRONG`. Word labels are a separate check that needs real weights, and the app says when a family's have not been checked.
+
+Not in this table:
+
+- LTX 2.5 with audio, HiDream-O1 and SeedVR2 are checked on real weights below instead.
+- SVD, Stable Zero123, SV3D, Lotus, SD x4 upscaler, instruct-pix2pix, SSD-1B, LongCat Image, Ming Image, Hunyuan Video 1.5 and the other subclasses use a network class listed above with a different config. They have not been run themselves.
+- SAM 3, Depth Anything 3, RT-DETR, MoGe and SAM 3D Body do not sample, so `Observe`, which records sampler calls, does not apply to them.
+- YuE 2, MiniMax Music 3 and SenseNova U1.5 were built from their fixed sizes with fewer layers or smaller settings, and SenseNova's text path was not exercised.
 
 ## Real weights through ComfyUI
 

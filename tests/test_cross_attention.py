@@ -5,7 +5,7 @@ try:
 except ImportError:
     torch = None
 
-from model_run.cross_attention import image_grid, pooled_grid, measure, MAX_MAP_VALUES
+from model_run.cross_attention import image_grid, pooled_grid, measure, text_key_range, MAX_MAP_VALUES
 
 
 class GridTests(unittest.TestCase):
@@ -115,6 +115,35 @@ class MeasureTests(unittest.TestCase):
     def test_masks_follow_the_text_wherever_it_sits(self):
         from model_run.cross_attention import text_key_range
         self.assertEqual(text_key_range(21, 21, 5, allow_joint=True, text_start=-1), (16, 21))
+
+    def test_keys_can_run_image_text_then_other_conditioning(self):
+        # HiDream I1 and Stable Cascade: 16 image, 5 text, 3 other, and only the text is read.
+        keys = torch.zeros(1, 2, 24, 8)
+        keys[:, :, 16:21] = 1.0
+        hidream = measure(keys, keys, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], image_first=True, known_image_tokens=16)
+        self.assertEqual((hidream["attention_kind"], hidream["source_grid"]), ("joint", [4, 4]))
+        self.assertEqual(hidream["image_tokens"], 16)
+        # Stable Cascade's queries are the image alone.
+        cascade = measure(torch.zeros(1, 2, 16, 8), keys, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], image_first=True)
+        self.assertEqual(cascade["source_grid"], [4, 4])
+        self.assertAlmostEqual(sum(cascade["token_mass"]), 5 / 24, places=4)
+
+    def test_audio_queries_end_with_time_steps(self):
+        # ACE-Step: 8 time steps, keys are a speaker token, 5 words and 2 lyric tokens.
+        found = measure(torch.randn(1, 2, 8, 8), torch.randn(1, 2, 8, 8)[:, :, :8], heads=2, text_tokens=5, latent_shape=[1, 8, 16, 8], stream="audio", text_start=1, known_image_tokens=8)
+        self.assertIn("unavailable", found)  # equal lengths are self-attention
+        found = measure(torch.randn(1, 2, 9, 8), torch.randn(1, 2, 8, 8), heads=2, text_tokens=5, latent_shape=[1, 8, 16, 8], stream="audio", text_start=1, known_image_tokens=8)
+        self.assertEqual((found["attention_kind"], found["source_grid"], found["stream"]), ("cross", [1, 8], "audio"))
+
+    def test_summary_tokens_before_the_image_are_not_mapped(self):
+        # Fibo 2: 16 summary tokens that happen to fit the grid must not be read as the image.
+        q, k = torch.randn(1, 2, 16, 8), torch.randn(1, 2, 5, 8)
+        self.assertIn("summary tokens", measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], known_image_tokens=16, query_lead=16)["unavailable"])
+        same = torch.randn(1, 2, 32, 8)
+        self.assertIn("no text keys", measure(same, same, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], known_image_tokens=16, query_lead=16)["unavailable"])
+        joined = torch.randn(1, 2, 32, 8)
+        found = measure(joined, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4], known_image_tokens=16, query_lead=16)
+        self.assertEqual((found["attention_kind"], found["source_grid"]), ("cross", [4, 4]))
         self.assertEqual(text_key_range(24, 24, 5, allow_joint=True, text_start=3), (3, 8))
         self.assertEqual(text_key_range(21, 21, 5, allow_joint=True), (0, 5))
 
