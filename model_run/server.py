@@ -46,6 +46,13 @@ def dispatch(app, method, route, body=None):
         if route.startswith("native-workflow/"): return app.native_workflow(route[16:])
     if method == "POST":
         if route == "scan": return app.scan()
+        if route == "install/search": return app.installer.search(body.get("query", ""), category=body.get("category"), source=body.get("source"), missing_only=bool(body.get("missing_only")), names=app.installed_names())
+        if route == "install/workflows": return app.installer.workflows(body.get("query", ""), names=app.installed_names())
+        if route == "install/hub": return app.installer.hub_search(body.get("query"))
+        if route == "install/hub-files": return app.installer.hub_files(body.get("repo"), names=app.installed_names())
+        if route == "install/plan": return app.installer.plan(body.get("items"))
+        if route == "install/start": return app.installer.start(body.get("items"))
+        if route == "install/cancel": return app.installer.cancel(body.get("id"), discard=bool(body.get("discard")))
         if route == "load": return app.load(body.get("id"), body.get("device", "cpu"))
         if route == "unload": return app.unload()
         if route == "run": return app.run(body)
@@ -127,6 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description="Model Run local observatory")
     parser.add_argument("--models-dir", help="ComfyUI models root")
     parser.add_argument("--extra-paths", action="append", default=[])
+    parser.add_argument("--comfy-dir", help="ComfyUI folder, to read the model lists it ships")
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
     from .comfy_paths import standard_model_paths, read_extra_paths
@@ -135,8 +143,11 @@ def main():
         entries.extend(standard_model_paths(args.models_dir)["entries"])
     for config in args.extra_paths:
         entries.extend(read_extra_paths(config)["entries"])
+    # A folder that does not exist yet can still be installed into.
+    folders = list(entries)
     entries = [entry for entry in entries if entry.get("exists", True)]
-    app = Application(entries)
+    comfy_dir = args.comfy_dir or (str(Path(args.models_dir).resolve().parent) if args.models_dir else None)
+    app = Application(entries, install_folders=folders, comfy_dir=comfy_dir)
     server = make_server(app, args.port)
     print(f"Model Run: http://127.0.0.1:{server.server_port}", flush=True)
     app.scan()

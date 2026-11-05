@@ -14,6 +14,7 @@ from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
 from .inventory import inspect_file, inspect_index
+from .model_install import ModelInstaller
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
 from .trace_store import encode_trace
@@ -32,8 +33,10 @@ def bounded_int(value, low, high, name):
 
 
 class Application:
-    def __init__(self, entries=(), *, host_kind="standalone"):
+    def __init__(self, entries=(), *, host_kind="standalone", install_folders=None, comfy_dir=None):
         self.entries = list(entries)
+        folders = install_folders if callable(install_folders) else (lambda: list(install_folders if install_folders is not None else self.entries))
+        self.installer = ModelInstaller(folders, comfy_dir=comfy_dir)
         self.host_kind = host_kind
         self.host = ModelHost(max_models=1)
         self._lock = RLock()
@@ -75,12 +78,17 @@ class Application:
             return {"job_id": job_id}
 
     def snapshot(self):
+        if self.installer.take_rescan():
+            try:
+                self.scan()
+            except RuntimeError:
+                self.installer.request_rescan()  # another job is running; pick it up on a later poll
         with self._lock:
             loaded = None if self._loaded is None else {k: self._loaded[k] for k in ("id", "name", "task", "device")}
             if loaded is not None:
                 loaded["chat_template"] = bool(getattr(self._loaded.get("tokenizer"), "chat_template", None))
             return {"host": self.host_kind, "job": deepcopy(self._state), "loaded": loaded,
-                    "observation": self.host.snapshot(), "models": self.host.models(),
+                    "observation": self.host.snapshot(), "models": self.host.models(), "install": self.installer.status(),
                     "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision", "run", "step", "pinned", "note")} for t in self._traces],
                     "retention": {"runs": len({t["run"] for t in self._traces}), "max_runs": MAX_RUNS,
                                   "bytes": self._trace_bytes, "max_bytes": MAX_RETAINED_BYTES,
@@ -89,6 +97,11 @@ class Application:
     def catalog(self):
         with self._lock:
             return deepcopy(self._catalog)
+
+    def installed_names(self):
+        with self._lock:
+            return {(origin["category"], artifact["name"]) for artifact in self._catalog["artifacts"] for origin in artifact.get("origins", [])
+                    if isinstance(origin, dict) and "category" in origin}
 
     def scan(self):
         def discover():
@@ -619,6 +632,7 @@ class Application:
     def close(self):
         with self._lock:
             self._closed = True
+        self.installer.close()
         self.cancel()
         self._executor.shutdown(wait=True)
         return self.host.close()

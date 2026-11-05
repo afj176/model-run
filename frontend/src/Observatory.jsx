@@ -48,6 +48,7 @@ import ImageClassification from "./ImageClassification";
 import AudioView from "./AudioView";
 import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
+import ModelInstall from "./ModelInstall";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
 const num = (n) =>
@@ -179,6 +180,7 @@ export function App() {
     [head, setHead] = useState(0),
     [inspection, setInspection] = useState(null),
     [capturePaths, setCapturePaths] = useState([]),
+    [libraryTab, setLibraryTab] = useState("local"),
     [speed, setSpeed] = useState(1);
   const importRef = useRef(),
     lastJob = useRef(),
@@ -397,6 +399,11 @@ export function App() {
         : state?.loaded
           ? "Ready to capture"
           : "Local observatory";
+  const refreshCatalog = useCallback(() => {
+    api("catalog")
+      .then(setCatalog)
+      .catch(() => {});
+  }, []);
   async function action(fn) {
     setError("");
     try {
@@ -2008,130 +2015,159 @@ export function App() {
         >
           {modal === "models" ? (
             <>
-              <p className="muted">
-                Models from configured ComfyUI paths. Local packages load in
-                standalone mode; native checkpoints run through ComfyUI.
-              </p>
-              <div className="library-toolbar">
-                <input
-                  aria-label="Search models"
-                  placeholder="Search models or formats…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <Button
-                  icon={ArrowClockwise}
-                  disabled={busy}
-                  onClick={() =>
-                    action(async () => {
-                      await api("scan", {});
-                      setInspection(null);
-                    })
-                  }
+              <div className="tabs" role="tablist" aria-label="Model library">
+                <button
+                  role="tab"
+                  aria-selected={libraryTab === "local"}
+                  className={libraryTab === "local" ? "active" : ""}
+                  onClick={() => setLibraryTab("local")}
                 >
-                  Refresh
-                </Button>
+                  On this computer
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={libraryTab === "install"}
+                  className={libraryTab === "install" ? "active" : ""}
+                  onClick={() => setLibraryTab("install")}
+                >
+                  Get models
+                </button>
               </div>
-              <div className="library-list">
-                {catalog.artifacts
-                  .filter(
-                    (a) =>
-                      !a.relative_path?.includes("/.cache/") &&
-                      (a.format !== "unknown" ||
-                        /\.(gguf|onnx|ckpt|pt|pth|bin)$/i.test(a.name)),
-                  )
-                  .filter((a) =>
-                    `${a.name} ${a.format} ${a.relative_path}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  )
-                  .map((a) => (
-                    <div className="artifact" key={a.id}>
-                      <div>
-                        <b>{a.name}</b>
-                        <span>
-                          {a.format} · {a.status}
-                          {a.tensor_count
-                            ? ` · ${a.tensor_count.toLocaleString()} tensors`
-                            : ""}
-                        </span>
-                        <small>{a.relative_path}</small>
-                      </div>
-                      <button
-                        onClick={() =>
-                          action(async () =>
-                            setInspection(await api(`inspect/${a.id}`)),
-                          )
-                        }
-                      >
-                        Inspect
-                      </button>
-                      {["safetensors", "safetensors_index"].includes(
-                        a.format,
-                      ) &&
-                        a.status === "metadata_inspected" && (
-                          <button
-                            onClick={() =>
-                              action(async () => {
-                                const structure = await api(
-                                  `artifact-structure/${a.id}`,
-                                );
-                                setTree(structure);
-                                setTrace(null);
-                                setTraceId("");
-                                setSelected("");
-                                setCapturePaths([]);
-                                setPlaying(false);
-                                setView("model");
-                                setPanel("component");
-                                setModal(null);
-                              })
-                            }
-                          >
-                            Explore
-                          </button>
-                        )}
-                      {a.task !== "inventory" &&
-                        state?.host === "standalone" && (
-                          <button
-                            className="primary"
-                            disabled={busy}
-                            onClick={() =>
-                              action(async () => {
-                                await api("load", { id: a.id, device });
-                                setModal(null);
-                              })
-                            }
-                          >
-                            Load
-                          </button>
-                        )}
-                    </div>
-                  ))}
-                {!catalog.artifacts.length && (
-                  <div className="library-empty">
-                    <h3>No model paths configured yet</h3>
-                    <p>
-                      Start with <code>--models-dir</code> pointing to ComfyUI’s
-                      models folder, or <code>--extra-paths</code> pointing to
-                      its configuration. Inside ComfyUI, Model Run uses the live
-                      folder registry.
-                    </p>
-                    <p>You can still import and explore traces.</p>
+              {libraryTab === "install" ? (
+                <ModelInstall
+                  jobs={state?.install?.jobs || []}
+                  onInstalled={refreshCatalog}
+                />
+              ) : (
+                <>
+                  <p className="muted">
+                    Models from configured ComfyUI paths. Local packages load in
+                    standalone mode; native checkpoints run through ComfyUI.
+                  </p>
+                  <div className="library-toolbar">
+                    <input
+                      aria-label="Search models"
+                      placeholder="Search models or formats…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                    <Button
+                      icon={ArrowClockwise}
+                      disabled={busy}
+                      onClick={() =>
+                        action(async () => {
+                          await api("scan", {});
+                          setInspection(null);
+                        })
+                      }
+                    >
+                      Refresh
+                    </Button>
                   </div>
-                )}
-              </div>
-              {catalog.errors?.length > 0 && (
-                <details>
-                  <summary>{catalog.errors.length} discovery notices</summary>
-                  <pre>{JSON.stringify(catalog.errors, null, 2)}</pre>
-                </details>
-              )}
-              {inspection && (
-                <details open className="inspection">
-                  <summary>Artifact metadata</summary>
-                  <pre>{JSON.stringify(inspection, null, 2)}</pre>
-                </details>
+                  <div className="library-list">
+                    {catalog.artifacts
+                      .filter(
+                        (a) =>
+                          !a.relative_path?.includes("/.cache/") &&
+                          (a.format !== "unknown" ||
+                            /\.(gguf|onnx|ckpt|pt|pth|bin)$/i.test(a.name)),
+                      )
+                      .filter((a) =>
+                        `${a.name} ${a.format} ${a.relative_path}`
+                          .toLowerCase()
+                          .includes(search.toLowerCase()),
+                      )
+                      .map((a) => (
+                        <div className="artifact" key={a.id}>
+                          <div>
+                            <b>{a.name}</b>
+                            <span>
+                              {a.format} · {a.status}
+                              {a.tensor_count
+                                ? ` · ${a.tensor_count.toLocaleString()} tensors`
+                                : ""}
+                            </span>
+                            <small>{a.relative_path}</small>
+                          </div>
+                          <button
+                            onClick={() =>
+                              action(async () =>
+                                setInspection(await api(`inspect/${a.id}`)),
+                              )
+                            }
+                          >
+                            Inspect
+                          </button>
+                          {["safetensors", "safetensors_index"].includes(
+                            a.format,
+                          ) &&
+                            a.status === "metadata_inspected" && (
+                              <button
+                                onClick={() =>
+                                  action(async () => {
+                                    const structure = await api(
+                                      `artifact-structure/${a.id}`,
+                                    );
+                                    setTree(structure);
+                                    setTrace(null);
+                                    setTraceId("");
+                                    setSelected("");
+                                    setCapturePaths([]);
+                                    setPlaying(false);
+                                    setView("model");
+                                    setPanel("component");
+                                    setModal(null);
+                                  })
+                                }
+                              >
+                                Explore
+                              </button>
+                            )}
+                          {a.task !== "inventory" &&
+                            state?.host === "standalone" && (
+                              <button
+                                className="primary"
+                                disabled={busy}
+                                onClick={() =>
+                                  action(async () => {
+                                    await api("load", { id: a.id, device });
+                                    setModal(null);
+                                  })
+                                }
+                              >
+                                Load
+                              </button>
+                            )}
+                        </div>
+                      ))}
+                    {!catalog.artifacts.length && (
+                      <div className="library-empty">
+                        <h3>No model paths configured yet</h3>
+                        <p>
+                          Start with <code>--models-dir</code> pointing to
+                          ComfyUI’s models folder, or <code>--extra-paths</code>{" "}
+                          pointing to its configuration. Inside ComfyUI, Model
+                          Run uses the live folder registry.
+                        </p>
+                        <p>You can still import and explore traces.</p>
+                      </div>
+                    )}
+                  </div>
+                  {catalog.errors?.length > 0 && (
+                    <details>
+                      <summary>
+                        {catalog.errors.length} discovery notices
+                      </summary>
+                      <pre>{JSON.stringify(catalog.errors, null, 2)}</pre>
+                    </details>
+                  )}
+                  {inspection && (
+                    <details open className="inspection">
+                      <summary>Artifact metadata</summary>
+                      <pre>{JSON.stringify(inspection, null, 2)}</pre>
+                    </details>
+                  )}
+                </>
               )}
               <footer>
                 <Field label="Load device">

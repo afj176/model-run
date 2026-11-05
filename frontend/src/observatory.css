@@ -2969,3 +2969,122 @@ main {
   background: var(--lilac, #eee7f3);
   font-size: 13px;
 }
+
+.model-install .library-list {
+  max-height: 38vh;
+}
+.install-note {
+  color: #b3261e;
+}
+.artifact small.install-note {
+  color: #b3261e;
+}
+.install-have {
+  font-size: 11px;
+  color: var(--mint);
+  white-space: nowrap;
+}
+.artifact span.install-have {
+  margin: 0;
+  color: #0b7a66;
+}
+.install-count {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.install-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.install-check input {
+  flex: none;
+}
+.install-confirm {
+  border: 1px solid var(--indigo);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+  background: var(--lilac);
+}
+.install-confirm h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.install-plan-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.install-plan-item b,
+.install-plan-item span,
+.install-plan-item small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.install-plan-item b {
+  font-size: 13px;
+}
+.install-plan-item span,
+.install-plan-item small {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.install-folder {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  margin-top: 6px;
+}
+.install-folder select {
+  min-width: 0;
+  flex: 1;
+}
+.install-total {
+  font-size: 12px;
+  margin: 10px 0;
+}
+.install-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.install-jobs {
+  margin-bottom: 12px;
+}
+.install-job {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.install-job > div {
+  flex: 1;
+  min-width: 0;
+}
+.install-job b,
+.install-job span,
+.install-job small {
+  display: block;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.install-job span {
+  color: var(--muted);
+  margin-top: 3px;
+}
+.install-job progress {
+  width: 100%;
+  margin-top: 5px;
+}
+@media (max-width: 640px) {
+  .library-toolbar {
+    flex-wrap: wrap;
+  }
+  .library-toolbar input {
+    min-width: 100%;
+  }
+}

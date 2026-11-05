@@ -12,6 +12,7 @@ from .tensor_slices import SliceRecorder
 from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
+NOT_INSTALL_FOLDERS = {"custom_nodes", "configs", "datasets", "diffusers"}
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
 TEXT_LAST_MODELS = {"JoyImageTransformer3DModel", "MOSSImage"}
@@ -461,7 +462,11 @@ def application():
         import folder_paths
         entries = [{"category": category, "path": path} for category, value in folder_paths.folder_names_and_paths.items()
                    if category != "custom_nodes" for path in value[0]]
-        _application = Application(entries, host_kind="comfyui")
+        def install_folders():
+            # Live, so a folder a custom node registers later can be installed into.
+            return [{"category": category, "path": path} for category, value in folder_paths.folder_names_and_paths.items()
+                    if category not in NOT_INSTALL_FOLDERS for path in value[0]]
+        _application = Application(entries, host_kind="comfyui", install_folders=install_folders, comfy_dir=folder_paths.base_path)
         _application.scan()
     return _application
 
@@ -601,6 +606,13 @@ def token_labels(clip, prompt):
     return None
 
 
+def local_request(request):
+    """Same machine, by address and by name; a forwarded or rebound request is not."""
+    from urllib.parse import urlsplit
+    host = urlsplit(f"//{request.host}").hostname
+    return request.remote in ("127.0.0.1", "::1") and host in ("127.0.0.1", "localhost", "::1") and "X-Forwarded-For" not in request.headers
+
+
 def install_routes():
     """Mount the same built app under ComfyUI, without opening another port."""
     import asyncio
@@ -616,6 +628,9 @@ def install_routes():
         if (origin and urlsplit(origin).netloc != request.host) or request.headers.get("Sec-Fetch-Site") == "cross-site":
             return web.json_response({"error": "Cross-origin requests are disabled"}, status=403)
         route = request.match_info["route"]
+        # Installing writes to disk, so a ComfyUI started with --listen must not offer it to the network.
+        if route.startswith("install/") and not local_request(request):
+            return web.json_response({"error": "Models can only be installed from the computer running ComfyUI"}, status=403)
         if route == "session" and request.method == "GET":
             return web.json_response({"token": token}, headers={"Cache-Control": "no-store"})
         if request.headers.get("X-Model-Run-Token") != token:
