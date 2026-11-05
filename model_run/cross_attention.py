@@ -47,7 +47,7 @@ def pooled_grid(rows, cols, text_tokens, max_grid):
 
 
 def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None, text_start=0, reference_tokens=0,
-            image_first=False, known_image_tokens=None, query_lead=0):
+            image_first=False, known_image_tokens=None, query_lead=0, image_at=None):
     """Return a bounded map record, or ``{"unavailable": reason}`` when the geometry is not understood.
 
     ``q`` and ``k`` are either ``[B, heads, L, D]`` or ``[B, L, heads*D]``. Text keys occupy
@@ -58,7 +58,8 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
 
     ``image_first`` is for keys that run image, text, then other conditioning, so the text is neither
     first nor last. ``known_image_tokens`` says how many tokens are the image when the sequence's length
-    cannot, and ``query_lead`` counts queries before the image that are not part of it.
+    cannot, and ``query_lead`` counts queries before the image that are not part of it. ``image_at``
+    is where the image starts in joint attention when padding follows the text.
     """
     import torch
     if not isinstance(q, torch.Tensor) or not isinstance(k, torch.Tensor) or q.ndim not in (3, 4) or k.ndim != q.ndim:
@@ -87,8 +88,10 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     key_count, query_count, dim = int(k.shape[2]), int(q.shape[2]), int(q.shape[3])
     if query_lead and query_count <= query_lead:
         return {"unavailable": "These queries are the model's own summary tokens, not the image"}
-    if query_lead and key_count == query_count:
+    if query_lead and key_count == query_count or image_at == 0:
         return {"unavailable": "Self-attention in this block has no text keys"}
+    if image_at is not None and image_at < 0:
+        return {"unavailable": "These queries hold no image"}
     if stream == "audio" and known_image_tokens and query_count == key_count:
         return {"unavailable": "Self-attention in this block has no text keys"}
     if stream == "audio" and known_image_tokens:
@@ -111,6 +114,8 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         return {"unavailable": f"Sequence lengths (queries {query_count}, keys {key_count}, text {text_tokens}) do not form cross or joint attention"}
     image_tokens = query_count - first_image_query - (text_tokens if text_start == -1 and kind == "joint" and key_count == query_count else 0)
     first_text_key = key_count - text_tokens if text_start == -1 else text_start
+    if image_at is not None:
+        first_image_query = image_at
     if known_image_tokens:
         image_tokens = known_image_tokens
     if image_first and kind == "joint":

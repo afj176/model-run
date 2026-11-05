@@ -27,11 +27,13 @@ BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "ErnieImageModel",
 # Their latent runs along time, so a map is a strip, not an image.
 AUDIO_MODELS = {"AceStepConditionGenerationModel", "ACEStepTransformer2DModel", "AudioDiffusionTransformer"}
 TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
+# Their cross-attention keys start with this prompt and go on: Hunyuan DiT's second encoder, Anima's zero padding.
+EXTRA_KEY_MODELS = {"Anima", "HunYuanDiT"}
 # These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"PixArtMS", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
+LABELS_CHECKED = {"Anima", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -261,6 +263,13 @@ class DenoiserObserver:
     def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""
         measure_call = measure_call and self.attention_block is not None and call < MAX_ATTENTION_CALLS
+        options = arguments.get("c", {}).get("transformer_options") if isinstance(arguments.get("c"), dict) else None
+        order = arguments.get("cond_or_uncond")
+        if not isinstance(order, list):
+            order = (options or {}).get("cond_or_uncond")
+        # A negative prompt run on its own has other tokens than the labels name.
+        if isinstance(order, list) and order and 0 not in order:
+            measure_call = False
         if not measure_call and not self.ablate_tokens:
             return None
         import torch
@@ -288,7 +297,12 @@ class DenoiserObserver:
             # ACE-Step 1.5 groups time steps, while the first ACE-Step's patch is a pair for the frequency axis.
             patch = getattr(getattr(self.core, "decoder", self.core), "patch_size", 1)
             audio_steps = int(latent_shape[-1]) // (patch if isinstance(patch, int) else 1)
-        return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": int(context.shape[1]),
+        text_tokens = int(context.shape[1])
+        if type(self.core).__name__ == "Anima":
+            # It pads the prompt to 512 with zeros, which are not tokens of the prompt.
+            filled = context[batch_index].abs().sum(-1).nonzero()
+            text_tokens = int(filled.max()) + 1 if len(filled) else text_tokens
+        return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": text_tokens,
                 "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
@@ -304,8 +318,11 @@ class DenoiserObserver:
             return (int(latent_shape[-2]) // patch) * (int(latent_shape[-1]) // patch), 0
         if name == "MiniMaxH3Model":
             # Tokens run text, video, then audio, and only the video gets an image map.
-            frames, height, width = (int(size) // int(patch) for size, patch in zip(latent_shape[-3:], self.core.patch_size))
-            return frames * height * width, 0
+            frames = int(latent_shape[-3]) // int(self.core.patch_size[0]) if len(latent_shape) == 5 else 1
+            return frames * (int(latent_shape[-2]) // int(self.core.patch_size[1])) * (int(latent_shape[-1]) // int(self.core.patch_size[2])), 0
+        if name in ("NextDiT", "NextDiTPixelSpace"):
+            patch = int(self.core.patch_size)
+            return (int(latent_shape[-2]) // patch) * (int(latent_shape[-1]) // patch), 0
         if name == "Fibo2":
             # Queries run summary tokens, the image, then any reference images.
             gist = sys.modules[type(self.core).__module__].gist_count(text_tokens, self.core.max_gist_tokens)
@@ -325,10 +342,15 @@ class DenoiserObserver:
                 # an unlabelled call with equal query and key counts is self-attention and has no text keys.
                 query_count = int(q.shape[-2] if q.ndim == 4 else q.shape[1])
                 joint = "block_type" in options or "block" not in options and joint_by_geometry(query_count, key_count, current["text_tokens"], current["latent_shape"], self._text_lead)
+                known, lead = self._image_layout(current["latent_shape"], current["text_tokens"])
+                # A known layout says it is joint attention where the lengths alone cannot.
+                joint = joint or bool(known and not lead and query_count == key_count and query_count > known)
                 span = text_key_range(query_count, key_count, current["text_tokens"], allow_joint=joint, text_start=self._text_start)
                 if self._image_first:
                     start = self._image_layout(current["latent_shape"], current["text_tokens"])[0] or query_count
                     span = (start, start + current["text_tokens"]) if key_count >= start + current["text_tokens"] else None
+                elif type(self.core).__name__ in EXTRA_KEY_MODELS and query_count != key_count and key_count >= current["text_tokens"]:
+                    span = (0, current["text_tokens"])
                 elif self._audio_only and query_count != key_count and key_count >= self._text_lead + current["text_tokens"]:
                     start = key_count - current["text_tokens"] if self._text_start == -1 else self._text_lead
                     span = (start, start + current["text_tokens"])
@@ -375,11 +397,13 @@ class DenoiserObserver:
                     known, lead = self._image_layout(current["latent_shape"], current["text_tokens"])
                     if self._audio_only and is_audio:
                         known = current["audio_steps"]
-                    elif type(self.core).__name__ == "HunYuanDiT" and key_count != query_count:
+                    elif type(self.core).__name__ in EXTRA_KEY_MODELS and key_count != query_count:
                         known = query_count
+                    # Z-Image pads its text to a multiple, so the image starts where the queries' length says.
+                    image_at = query_count - known if known and type(self.core).__name__ in ("NextDiT", "NextDiTPixelSpace") else None
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
                                           mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=self._text_start, reference_tokens=current.get("reference_tokens", 0),
-                                          image_first=self._image_first, known_image_tokens=known, query_lead=lead)
+                                          image_first=self._image_first, known_image_tokens=known, query_lead=lead, image_at=image_at)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
                     elif not (self._image_first or known) and (measurement["attention_kind"] == "joint" and not allow_joint and not label.startswith("call:") or measurement["attention_kind"] == "joint" and not allow_joint and not joint_by_geometry(
@@ -396,7 +420,25 @@ class DenoiserObserver:
         return func(q, k, v, heads, *args, **kwargs)
 
     def _invoke(self, function, args):
-        if type(self.core).__name__ in BYPASS_ATTENTION_MODELS:
+        if not (self.attention_block or self.ablate_tokens):
+            return self._invoke_reached(function, args)
+        conditioning = args.get("c")
+        options = conditioning.get("transformer_options") if isinstance(conditioning, dict) else None
+        if not isinstance(options, dict):
+            return self._invoke_reached(function, args)
+        # A node after this one, such as Model Attention Backend, may have put its own override in place.
+        found = options.get("optimized_attention_override")
+        if found is not None and found != self.attention_override:
+            self.previous_attention = found
+        # ComfyUI's override wins over a module's own kernel, so a quantized model must keep the override out of it.
+        own_kernel = self.previous_attention is None and any(type(m).__name__ == "ComfyAttention" and m.function is not None for m in self.core.modules())
+        options = dict(options)
+        if own_kernel:
+            options.pop("optimized_attention_override", None)
+        else:
+            options["optimized_attention_override"] = self.attention_override
+        args = {**args, "c": {**conditioning, "transformer_options": options}}
+        if own_kernel or type(self.core).__name__ in BYPASS_ATTENTION_MODELS:
             with reach_attention(self.core, self.attention_override):
                 return self._invoke_reached(function, args)
         return self._invoke_reached(function, args)
@@ -418,6 +460,9 @@ class DenoiserObserver:
             aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ == "AudioDiffusionTransformer":
                 aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
+            if aligned is None and type(self.core).__name__ == "SingleStreamDiT" and len(self.token_labels) > current["text_tokens"]:
+                # Krea 2's encoder keeps only what follows the template's opening, ending with the same tokens.
+                aligned = list(self.token_labels[-current["text_tokens"]:])
             self._labels_dropped = aligned is None
             self.token_labels = aligned
         if self.trace is None:
@@ -702,6 +747,10 @@ def token_labels(clip, prompt):
         if not best:
             return None
         tokenizer = getattr(clip, "tokenizer", None)
+        if isinstance(tokenized, dict) and "t5xxl" in tokenized and "qwen3_06b" in tokenized:
+            # Anima's text keys follow its T5 ids, though its decode() reads Qwen ids.
+            from .comfy_components import readable_piece
+            return [readable_piece(word) for _, word in tokenizer.t5xxl.untokenize([(p[0], p[1]) for p in best])][:1024]
         if hasattr(tokenizer, "decode"):
             # Per-token decode turns byte-level BPE pieces into readable text.
             # T5 has a token that is only a space, which decodes to nothing.

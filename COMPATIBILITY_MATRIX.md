@@ -65,7 +65,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | Hunyuan Image 2.1 | 6 | yes | yes | first |
 | PixelDiT | 3 | yes | yes | first |
 | Wan causal AR | 2 | yes | yes | text only (cross-attention) |
-| Wan VACE | 3 | yes | yes | after 96 other tokens |
+| Wan VACE | 3 | yes | yes | text only (cross-attention) |
 | Wan Camera | 3 | yes | yes | text only (cross-attention) |
 | Wan HuMo | 2 | yes | yes | text only (cross-attention) |
 | Wan Animate | 2 | yes | yes | text only (cross-attention) |
@@ -119,4 +119,10 @@ Not in this table:
 | Sampler steps: HiDream-O1 | Recorded, output pixel-identical. Its VAE and text encoder have no layers to record |
 | PixArt Sigma: 512, guidance 4.5, 10 steps | Layers and sampler steps recorded, output pixel-identical. Maps through the attention slot. Masking only "red" removed the red and masking only "wooden" kept it, so labels are marked checked on this one prompt and seed |
 | Stable Audio Open: 6 seconds, guidance 6 | Layers and sampler steps recorded, output files byte-identical. Time-strip maps with labels; the last two tokens are its seconds numbers, placed from its source code. Masking tokens changed the output, but word positions were not tested by listening, so labels stay marked unchecked |
+| Anima: 768, guidance 4, 12 steps | All layers, sampler steps, text encoder and VAE recorded, output pixel-identical. Maps run on the real prompt tokens, leaving out its 501 zero padding keys. Masking "red" removed the red and masking "wooden" removed the wood |
+| MOSS Image `int8`: 768, guidance 2.5, 12 steps | Same, pixel-identical with attention measured. This model exposed that ComfyUI's override skips a module's own int8 kernel, which changed the image, so such models now measure through the attention slot. Masking removed the red and the wood |
+| Z-Image `int8`: 768, guidance 4, 12 steps | Same, pixel-identical. Its text is padded before the image, and only maps on joint blocks count. Masking "red" gave a bare wooden cube, and masking "wooden" kept it red |
+| Krea 2 `fp8`: 768, 8 steps | Same, pixel-identical. Its encoder drops the template's opening, so labels are the last 12 tokens. Masking "red" gave a wooden cube, and masking "wooden" kept it red |
+| MiniMax H3 `int8`, NVFP4 encoder, Attention Backend node: 768 image and 22-frame video | Same, pixel-identical. Masking "red" gave a white cube and masking "wooden" removed the wood in the image test. Video maps cover the video tokens; its audio tokens are in the same sequence and get no strip of their own |
+| Attention measured on Flux2 Klein, Qwen-Image 2.1, LTX 2.5 | Still pixel-identical with the new attention routing. A HiDream-O1 rerun also matched, but its block name matched nothing, so it measured no attention |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

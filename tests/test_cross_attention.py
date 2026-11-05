@@ -132,6 +132,17 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(stable_audio_labels(["a", "</s>"], 4), ["a", "</s>", "<seconds start>", "<seconds total>"])
         self.assertIsNone(stable_audio_labels(["a", "</s>"], 3))
 
+    def test_image_can_start_after_padded_text(self):
+        # Z-Image: 5 words, 3 padding, 16 image tokens.
+        joined = torch.zeros(1, 2, 24, 8)
+        found = measure(joined, joined, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], known_image_tokens=16, image_at=8)
+        self.assertEqual((found["attention_kind"], found["source_grid"], found["image_tokens"]), ("joint", [4, 4], 16))
+        # Its refiner attends among image tokens only, which must not read as text.
+        image = torch.zeros(1, 2, 16, 8)
+        self.assertIn("no text keys", measure(image, image, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], known_image_tokens=16, image_at=0)["unavailable"])
+        short = torch.zeros(1, 2, 5, 8)
+        self.assertIn("no image", measure(short, short, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], known_image_tokens=16, image_at=-11)["unavailable"])
+
     def test_audio_queries_end_with_time_steps(self):
         # ACE-Step: 8 time steps, keys are a speaker token, 5 words and 2 lyric tokens.
         found = measure(torch.randn(1, 2, 8, 8), torch.randn(1, 2, 8, 8)[:, :, :8], heads=2, text_tokens=5, latent_shape=[1, 8, 16, 8], stream="audio", text_start=1, known_image_tokens=8)
