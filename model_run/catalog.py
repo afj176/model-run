@@ -1,10 +1,12 @@
 """Bounded discovery of model artifacts under explicit configured roots."""
 import os
 from pathlib import Path
+import re
 from .inventory import InventoryError, inspect_file, inspect_index
 
 MAX_FILES = 10000
 MAX_DEPTH = 12
+PLACEHOLDER = re.compile(r"put_.+_here")
 
 
 def discover_models(entries, *, max_files=MAX_FILES, max_depth=MAX_DEPTH):
@@ -36,7 +38,8 @@ def discover_models(entries, *, max_files=MAX_FILES, max_depth=MAX_DEPTH):
             folders[:] = eligible if depth < max_depth else []
             for name in sorted(files):
                 candidate = Path(directory) / name
-                if candidate.is_symlink():
+                # ComfyUI ships an empty put_checkpoints_here in each of its folders.
+                if candidate.is_symlink() or PLACEHOLDER.fullmatch(name):
                     continue
                 key = os.path.normcase(str(candidate.resolve()))
                 if key in seen:

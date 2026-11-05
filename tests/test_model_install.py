@@ -153,6 +153,27 @@ class Install(Base):
         self.assertEqual([r[0] for r in hub.requests], ["HEAD"])
         self.assertFalse(self.vae.exists())
 
+    def test_a_copy_in_another_folder_of_the_type_counts_as_installed(self):
+        data = safetensors()
+        other = self.root / "shared" / "vae"
+        other.mkdir(parents=True)
+        (other / "a.safetensors").write_bytes(data)
+        self.folders.append({"category": "vae", "path": str(other)})
+        installer = self.installer(FakeHub(data))
+        item = installer.plan([self.request(len(data))])["items"][0]
+        self.assertFalse(item["ok"])
+        self.assertIn("already installed", item["reason"])
+        chosen = installer.plan([{**self.request(len(data)), "folder": str(self.vae)}])["items"][0]
+        self.assertTrue(chosen["ok"])
+
+    def test_lists_are_found_in_any_comfy_folder(self):
+        with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as code:
+            cache = Path(code) / "user" / "__manager" / "cache"
+            cache.mkdir(parents=True)
+            url = "https://huggingface.co/o/r/resolve/main/only-in-cache.safetensors"
+            (cache / "1_model-list.json").write_text(json.dumps({"models": [{"name": "x", "filename": "only-in-cache.safetensors", "url": url, "save_path": "vae", "type": "vae"}]}), encoding="utf-8")
+            self.assertTrue(any(m["filename"] == "only-in-cache.safetensors" for m in load_index([data, code])["models"].values()))
+
     def test_install_checks_the_hash_and_arrives_whole(self):
         data = safetensors()
         installer = self.installer(FakeHub(data))

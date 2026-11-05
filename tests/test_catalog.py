@@ -23,6 +23,14 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(item["capabilities"]["execution"]["status"], "unverified")
             self.assertEqual(next(x for x in result["artifacts"] if x["format"] == "unknown")["status"], "uninspected")
 
+    def test_comfy_placeholders_are_not_models(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as tmp:
+            root = Path(tmp)
+            (root / "put_checkpoints_here").write_bytes(b"")
+            (root / "put_this.bin").write_bytes(b"x")
+            found = discover_models([{"category": "checkpoints", "path": str(root)}])
+            self.assertEqual([Path(a["path"]).name for a in found["artifacts"]], ["put_this.bin"])
+
     def test_limit_invalid_and_missing(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as tmp:
             root = Path(tmp)

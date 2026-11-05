@@ -3,17 +3,18 @@ import re
 import base64
 import io
 import logging
+import os
 from threading import Lock
 import time
 
 from .capture import capture_forward
+from .comfy_paths import NOT_INSTALL_FOLDERS
 from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
 from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
-NOT_INSTALL_FOLDERS = {"custom_nodes", "configs", "datasets", "diffusers"}
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
 TEXT_LAST_MODELS = {"JoyImageTransformer3DModel", "MOSSImage"}
@@ -484,7 +485,8 @@ def application():
             # Live, so a folder a custom node registers later can be installed into.
             return [{"category": category, "path": path} for category, value in folder_paths.folder_names_and_paths.items()
                     if category not in NOT_INSTALL_FOLDERS for path in value[0]]
-        _application = Application(entries, host_kind="comfyui", install_folders=install_folders, comfy_dir=folder_paths.base_path)
+        _application = Application(entries, host_kind="comfyui", install_folders=install_folders,
+                                   comfy_dir=[folder_paths.base_path, os.path.dirname(os.path.abspath(folder_paths.__file__))])
         _application.scan()
     return _application
 

@@ -1,8 +1,11 @@
 """Read explicit ComfyUI extra-model-path configuration without loading ComfyUI."""
 import os
 from pathlib import Path
+import re
 
 MAX_CONFIG_BYTES = 1024 * 1024
+NOT_INSTALL_FOLDERS = {"custom_nodes", "configs", "datasets", "diffusers"}
+LOG_SEARCH_PATH = re.compile(r"Adding extra search path (\S+) (.+?)\s*$")
 
 # Snapshot of common ComfyUI model categories. It is not a live host registry.
 STANDARD_MODEL_DIRS = {
@@ -35,6 +38,32 @@ def standard_model_paths(models_dir):
     return {"schema_version": "1.0", "kind": "comfy_standard_model_paths", "source": str(root),
             "entries": entries, "limitations": ["Categories are a static compatibility snapshot, not the live ComfyUI registry.",
             "The caller supplies the actual model root; custom and runtime-added paths are not discovered."]}
+
+
+def comfy_folder_paths(comfy_dir):
+    """Folders a ComfyUI install uses: its extra paths first, as they hold the shared models, then its own."""
+    root = Path(comfy_dir).resolve()
+    entries = []
+    config = root / "extra_model_paths.yaml"
+    if config.is_file():
+        try:
+            entries.extend(read_extra_paths(config)["entries"])
+        except (RuntimeError, ValueError, OSError):
+            pass  # ComfyUI's own folders below still work
+    # Comfy Desktop passes its shared folders at launch, so only its log records them.
+    try:
+        with open(root.parent / "logs" / "comfyui.log", encoding="utf-8", errors="replace") as stream:
+            lines = stream.read(MAX_CONFIG_BYTES).splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        found = LOG_SEARCH_PATH.search(line)
+        if found and os.path.isdir(found[2]):
+            entries.append({"section": "log", "category": found[1], "path": os.path.normpath(found[2]), "exists": True, "default": False})
+    if (root / "models").is_dir():
+        entries.extend(standard_model_paths(root / "models")["entries"])
+    return {"schema_version": "1.0", "source": str(root), "kind": "comfy_folder_paths", "entries": entries,
+            "limitations": ["Categories added by custom nodes are not discovered.", "The log shows the folders of ComfyUI's last launch."]}
 
 
 def read_extra_paths(path):

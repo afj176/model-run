@@ -3,6 +3,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
+import os
 from pathlib import Path
 import secrets
 import socket
@@ -134,17 +135,20 @@ def main():
     parser = argparse.ArgumentParser(description="Model Run local observatory")
     parser.add_argument("--models-dir", help="ComfyUI models root")
     parser.add_argument("--extra-paths", action="append", default=[])
-    parser.add_argument("--comfy-dir", help="ComfyUI folder, to read the model lists it ships")
+    parser.add_argument("--comfy-dir", help="ComfyUI folder, for its model lists and model folders")
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
-    from .comfy_paths import standard_model_paths, read_extra_paths
+    from .comfy_paths import NOT_INSTALL_FOLDERS, comfy_folder_paths, standard_model_paths, read_extra_paths
     entries = []
     if args.models_dir:
         entries.extend(standard_model_paths(args.models_dir)["entries"])
     for config in args.extra_paths:
         entries.extend(read_extra_paths(config)["entries"])
+    if args.comfy_dir:
+        entries.extend(comfy_folder_paths(args.comfy_dir)["entries"])
+    entries = list({(entry["category"], os.path.normcase(entry["path"])): entry for entry in reversed(entries)}.values())[::-1]
     # A folder that does not exist yet can still be installed into.
-    folders = list(entries)
+    folders = [entry for entry in entries if entry["category"] not in NOT_INSTALL_FOLDERS]
     entries = [entry for entry in entries if entry.get("exists", True)]
     comfy_dir = args.comfy_dir or (str(Path(args.models_dir).resolve().parent) if args.models_dir else None)
     app = Application(entries, install_folders=folders, comfy_dir=comfy_dir)

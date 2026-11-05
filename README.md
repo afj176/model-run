@@ -29,7 +29,9 @@ discarded. The HTTP server binds exclusively to loopback.
 **Get models** searches the lists ComfyUI ships (its workflow templates and ComfyUI Manager's list)
 and, only when asked, Hugging Face, then installs into ComfyUI's folders. **By workflow** installs
 everything a template is missing. Standalone finds those lists through `--models-dir` or
-`--comfy-dir`; without either it has Hugging Face search only.
+`--comfy-dir`; without either it has Hugging Face search only. `--comfy-dir` also adds that ComfyUI's
+folders: its `extra_model_paths.yaml`, the shared folders in Comfy Desktop's last log, and its own
+`models` folder. Folders added by custom nodes are only known inside ComfyUI.
 
 - Nothing downloads without a click. The confirmation shows size, source, destination and free space.
 - Only `https` files from Hugging Face in `.safetensors` or `.sft` form can be installed. Formats that

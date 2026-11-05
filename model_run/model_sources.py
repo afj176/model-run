@@ -67,6 +67,13 @@ def _read(path):
         return json.load(stream)
 
 
+def _roots(comfy_dir):
+    """One ComfyUI folder, or several: --base-directory keeps user data away from the code."""
+    if not comfy_dir:
+        return []
+    return [comfy_dir] if isinstance(comfy_dir, (str, os.PathLike)) else list(dict.fromkeys(comfy_dir))
+
+
 def _package_dirs(package, comfy_dir):
     found = []
     try:
@@ -75,8 +82,7 @@ def _package_dirs(package, comfy_dir):
         spec = None
     if spec is not None and spec.submodule_search_locations:
         found.extend(spec.submodule_search_locations)
-    if comfy_dir:
-        root = Path(comfy_dir)
+    for root in map(Path, _roots(comfy_dir)):
         for pattern in (".venv/Lib/site-packages", ".venv/lib/python*/site-packages", "../standalone-env/Lib/site-packages", "../standalone-env/lib/python*/site-packages"):
             found.extend(glob.glob(str(root / pattern / package)))
     return list(dict.fromkeys(os.path.normpath(p) for p in found if os.path.isdir(p)))
@@ -122,9 +128,9 @@ def read_templates(comfy_dir, notes):
 
 def read_manager(comfy_dir, notes):
     paths = [os.path.join(p, "model-list.json") for p in _package_dirs("comfyui_manager", comfy_dir)]
-    if comfy_dir:
-        paths += glob.glob(str(Path(comfy_dir) / "user" / "__manager" / "cache" / "*model-list.json"))
-        paths += glob.glob(str(Path(comfy_dir) / "custom_nodes" / "*" / "model-list.json"))
+    for root in map(Path, _roots(comfy_dir)):
+        paths += glob.glob(str(root / "user" / "__manager" / "cache" / "*model-list.json"))
+        paths += glob.glob(str(root / "custom_nodes" / "*" / "model-list.json"))
     models = []
     for path in dict.fromkeys(paths):
         try:

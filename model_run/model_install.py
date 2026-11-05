@@ -262,7 +262,10 @@ class ModelInstaller:
         result["free_bytes"] = shutil.disk_usage(anchor).free
         part = target.with_name(target.name + PART_SUFFIX)
         result["resume_bytes"] = part.stat().st_size if part.exists() else 0
-        problem = remote.get("reason") or ("This file is already installed" if target.exists() else None)
+        # ComfyUI finds a model in any of a type's folders, so a copy in another one is still installed.
+        relative = Path((request.get("subfolder") or "").replace("\\", "/")) / request["filename"]
+        places = [target] if request.get("folder") is not None else [target, *(Path(f) / relative for f in folders)]
+        problem = remote.get("reason") or ("This file is already installed" if any(p.exists() for p in places) else None)
         size = remote.get("size_bytes")
         if not problem and size is None:
             problem = "Hugging Face did not report a size for this file"
