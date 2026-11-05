@@ -78,6 +78,70 @@ class ComfyBridgeTests(unittest.TestCase):
         self.assertEqual(len(patcher.model.diffusion_model.layer._forward_hooks), 0)
 
 
+class AllLayerPlanTests(unittest.TestCase):
+    def test_every_top_level_block_then_the_output(self):
+        from model_run.comfy_bridge import all_layer_paths
+        class Inner(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList([torch.nn.Identity()])
+        class Dit(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.double_blocks = torch.nn.ModuleList([Inner(), Inner()])
+                self.single_blocks = torch.nn.ModuleList([torch.nn.Identity()])
+                self.proj = torch.nn.ModuleList([torch.nn.Identity()])
+        self.assertEqual(all_layer_paths(Dit()), ["double_blocks.0", "double_blocks.1", "single_blocks.0", ""])
+        self.assertEqual(all_layer_paths(torch.nn.Linear(1, 1)), [""])
+
+    def test_large_models_are_sampled_and_stay_inside_the_store_limits(self):
+        from model_run.comfy_bridge import all_layer_paths, all_layer_plan, MAX_LAYER_PATHS
+        class Big(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.blocks = torch.nn.ModuleList([torch.nn.Identity() for _ in range(200)])
+        paths = all_layer_paths(Big())
+        self.assertEqual(len(paths), MAX_LAYER_PATHS)
+        self.assertEqual((paths[0], paths[-2], paths[-1]), ("blocks.0", "blocks.199", ""))
+        plan = all_layer_plan(paths, 32, 1024)
+        self.assertLessEqual(len(paths) * plan["max_calls"], 1024)
+        self.assertLessEqual(len(paths) * plan["max_calls"] * plan["elements"], 262144)
+
+    def test_per_event_share_keeps_every_layer_recorded(self):
+        from model_run.tensor_slices import SliceRecorder, validate_slices
+        recorder = SliceRecorder(max_values=524288, per_event=524288 // 200)
+        latent = [1, 16, 1, 16, 16]
+        for _ in range(200):
+            record = recorder.record(torch.ones(1, 256, 3072), latent)
+            self.assertNotIn("unavailable", record)
+            validate_slices(record)
+        self.assertGreaterEqual(len(record["axes"][0]["indices"]), 2)
+        video = SliceRecorder(per_event=1337).record(torch.ones(1, 128, 40, 64, 64), [1, 128, 40, 64, 64])
+        validate_slices(video)
+        self.assertGreaterEqual(len(video["axes"][1]["indices"]), 8)
+        self.assertLessEqual((len(video["values"]) + len(video["aggregate"])), 1337 + 64)
+
+    def test_text_streams_get_a_map_unless_the_count_also_fits_the_image(self):
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3)
+        plan = observer._token_sequence([1, 16, 16, 16], 15)
+        self.assertEqual(plan(15)[1], "text token")
+        self.assertIsNone(plan(77))
+        self.assertIsNone(observer._token_sequence([1, 16, 16, 16], 16)(16))  # a 4 x 4 grid at factor 4
+
+    def test_mixed_blocks_drop_text_tokens_only_when_the_count_fits(self):
+        from model_run.tensor_slices import SliceRecorder
+        recorder = SliceRecorder()
+        recorder.text_tokens = 2
+        tokens = torch.zeros(1, 2 + 16, 3)
+        tokens[0, :2] = 99  # text must not reach the map
+        record = recorder.record(tokens, [1, 16, 4, 4])
+        self.assertEqual(record["layout"], "packed_tokens")
+        self.assertIn("Text is assumed to come first", record["assumption"])
+        self.assertEqual(max(record["values"]), 0.0)
+        self.assertIsNone(recorder.record(torch.zeros(1, 2 + 15, 3), [1, 16, 4, 4]))
+
+
 if __name__ == "__main__": unittest.main()
 
 

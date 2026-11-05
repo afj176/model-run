@@ -16,6 +16,7 @@ SEQUENCE_COLS = 64
 MAX_SEQUENCE_BATCH = 8
 TRACE_VALUES = 262144
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
+JOINT_ASSUMPTION = "This block carries text and image tokens together. Text is assumed to come first and is not shown; the count matches, and ComfyUI's Flux code uses this order."
 PACKED_ASSUMPTION = "Tokens are assumed to be packed in frame, row, column order, the same assumption the attention maps use."
 
 
@@ -26,22 +27,22 @@ def _spaced(size, count):
     return sorted({int(i * size / count) for i in range(count)})
 
 
-def _plan_counts(sizes, names):
+def _plan_counts(sizes, names, max_slices=MAX_SLICES, max_frames=MAX_FRAMES):
     """How many indices each axis keeps. Frames are kept first; other axes share what is left."""
     counts = list(sizes)
     frame = names.index("frame") if "frame" in names else None
     if frame is not None:
-        counts[frame] = min(counts[frame], MAX_FRAMES)
-    while math.prod(counts) > MAX_SLICES:
+        counts[frame] = min(counts[frame], max_frames)
+    while math.prod(counts) > max_slices:
         others = [i for i in range(len(counts)) if i != frame and counts[i] > 1]
         pool = others or [i for i in range(len(counts)) if counts[i] > 1]
         widest = max(pool, key=lambda i: counts[i])
-        over = math.prod(counts) / MAX_SLICES
+        over = math.prod(counts) / max_slices
         counts[widest] = max(1, min(counts[widest] - 1, math.floor(counts[widest] / over)))
     return counts
 
 
-def _layout(tensor, latent_shape, token_grid=None):
+def _layout(tensor, latent_shape, token_grid=None, text_tokens=None):
     """Return (view, names, layout, assumption), or None when no navigation applies."""
     shape = list(tensor.shape)
     if token_grid is not None and len(shape) == 3:
@@ -59,6 +60,13 @@ def _layout(tensor, latent_shape, token_grid=None):
             rows, cols, _, frames = grid
             view = tensor.reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
             return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", PACKED_ASSUMPTION
+        if text_tokens and shape[1] > text_tokens:
+            # Single-stream blocks carry text and image together, with text first.
+            grid = image_grid(shape[1] - text_tokens, latent_shape)
+            if grid is not None and grid[0] * grid[1] > 1:
+                rows, cols, _, frames = grid
+                view = tensor[:, text_tokens:].reshape(shape[0], frames, rows, cols, shape[2]).permute(0, 4, 1, 2, 3)
+                return view, ["batch", "feature", "frame", "row", "column"], "packed_tokens", JOINT_ASSUMPTION
     if len(shape) >= 4:
         return tensor, [None] * len(shape), "axes", None
     return None
@@ -71,9 +79,12 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None):
         self.remaining = max_values
         self.token_grid = token_grid
+        self.text_tokens = None
+        # When many layers are recorded, each event's share, so the last layer gets as much as the first.
+        self.per_event = per_event
         # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
         self.sequence = sequence
 
@@ -114,7 +125,7 @@ class SliceRecorder:
             plan = self.sequence(int(tensor.shape[1]))
             if plan is not None:
                 return self._sequence_record(tensor, *plan)
-        placed = _layout(tensor, latent_shape, self.token_grid)
+        placed = _layout(tensor, latent_shape, self.token_grid, self.text_tokens)
         if placed is None:
             return None
         view, names, layout, assumption = placed
@@ -125,7 +136,16 @@ class SliceRecorder:
             return None
         rows, cols = min(height, SIDE), min(width, SIDE)
         axis_names = [names[dim] for dim in navigable]
-        counts = _plan_counts([leading[dim] for dim in navigable], axis_names)
+        limits = {}
+        if self.per_event is not None:
+            frames = leading[navigable[axis_names.index("frame")]] if "frame" in axis_names else 1
+            if frames > max(1, self.per_event // (rows * cols)) // 2:
+                # Many frames: a coarser grid keeps more of them.
+                rows, cols = min(rows, SIDE // 2), min(cols, SIDE // 2)
+            maps = max(2, self.per_event // (rows * cols))
+            kept_frames = min(frames, MAX_FRAMES, max(1, maps // 2))
+            limits = {"max_frames": kept_frames, "max_slices": max(kept_frames, kept_frames * (maps // kept_frames - 1))}
+        counts = _plan_counts([leading[dim] for dim in navigable], axis_names, **limits)
         kept = [_spaced(leading[dim], count) for dim, count in zip(navigable, counts)]
         aggregate = next((i for i, name in enumerate(axis_names) if name in ("channel", "feature")), 0)
         slice_count = math.prod(len(indices) for indices in kept)

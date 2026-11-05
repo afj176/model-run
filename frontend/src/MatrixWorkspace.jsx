@@ -20,7 +20,9 @@ import {
   attentionHeadProfile,
   callDeltas,
   describeActivation,
+  eventForLayer,
   layerCaptured,
+  stopSeries,
   layerOf,
   layerStops,
   moduleInStop,
@@ -204,6 +206,7 @@ export default function MatrixWorkspace({
     trace?.kind === "attention_capture"
       ? trace.layer
       : layerOf(event?.module ?? events[eventIndex]?.module);
+  const series = useMemo(() => layerSeries(trace, events), [trace, events]);
   const allStops = useMemo(
     () => layerStops(layers.map((n) => n.path)),
     [layers],
@@ -218,6 +221,10 @@ export default function MatrixWorkspace({
     [allStops, onDemand, events],
   );
   const partial = stops.length < allStops.length;
+  const timelineSeries = useMemo(
+    () => (stops[0]?.repeated ? stopSeries(stops, events) : series),
+    [stops, events, series],
+  );
   const stopPositions = stops.map((_, i) => i);
   const stepTotal = stops.length;
   const eventModule = event?.module ?? events[eventIndex]?.module;
@@ -246,9 +253,18 @@ export default function MatrixWorkspace({
       return;
     }
     setLayer(stop.number);
-    let at = events.findIndex((e) => moduleInStop(e.module, stop));
+    const current = events[eventIndex];
+    let at = eventForLayer(
+      events,
+      (e) => moduleInStop(e.module, stop),
+      current,
+    );
     if (at < 0 && !stop.repeated)
-      at = events.findIndex((e) => layerOf(e.module) === stop.number);
+      at = eventForLayer(
+        events,
+        (e) => layerOf(e.module) === stop.number,
+        current,
+      );
     if (at >= 0 && trace?.kind !== "attention_capture") onPickEvent?.(at);
   }
   const neighborhood = useMemo(() => {
@@ -340,7 +356,6 @@ export default function MatrixWorkspace({
     const key = event.module ?? "step";
     return deltas.filter((d) => (d.module ?? "step") === key);
   }, [deltas, event]);
-  const series = useMemo(() => layerSeries(trace, events), [trace, events]);
   return (
     <div className="matrix-workspace">
       <section
@@ -683,8 +698,11 @@ export default function MatrixWorkspace({
             />
           </span>
           <div className="matrix-track">
-            {series && series.points.length > 1 && !stops[0]?.repeated && (
-              <Sparkline series={series} activeLayer={currentLayer} />
+            {timelineSeries && timelineSeries.points.length > 1 && (
+              <Sparkline
+                series={timelineSeries}
+                activeLayer={stops[0]?.repeated ? stepIndex : currentLayer}
+              />
             )}
             <div className="matrix-track-dots">
               <span className="matrix-track-line" />

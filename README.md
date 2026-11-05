@@ -307,7 +307,8 @@ sample, not zero. Missing captures are never colored as observed zero values.
 
 The timeline replays recorded events; it does not claim real-time kernel timings
 or reverse model execution. The timeline and layer select offer only layers the run recorded; in ComfyUI an empty
-modules field records the whole denoiser, and the hint says how to record more. Each view
+modules field records every block and the final output, up to 65 modules evenly spaced, with each event's
+share of values set by the model's size; listing modules records only those, and the hint says how to record more. Each view
 also has its own error boundary, so a malformed capture blanks one panel, not the app.
 Capture history keeps at most 16 runs, 64 traces or 256 MiB in memory.
 The parts of one Run (layer outputs, response, attention) count as one run, leave

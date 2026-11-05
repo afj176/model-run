@@ -1050,3 +1050,28 @@ export function attentionPastAudio(layers) {
 /** Whether this run recorded a layer at all, so views never offer one with nothing to show. */
 export const layerCaptured = (path, events) =>
   (events || []).some((e) => moduleInStop(e.module, { path }));
+
+/** A metric per timeline stop, for models whose layer numbers repeat across stacks. */
+export function stopSeries(stops, events) {
+  const points = [];
+  stops.forEach((stop, position) => {
+    const event = (events || []).find((e) => moduleInStop(e.module, stop));
+    const stats = event ? activationStats(event.values) : null;
+    if (stats) points.push({ layer: position, value: stats.rms });
+  });
+  return points.length
+    ? { label: "Activation RMS (captured prefix)", points }
+    : null;
+}
+
+/** The event for a layer, staying on the same denoiser call or step when this run recorded it there. */
+export function eventForLayer(events, matches, current) {
+  const list = events || [];
+  const same = list.findIndex(
+    (e) =>
+      matches(e) &&
+      e.denoiser_call === current?.denoiser_call &&
+      e.step === current?.step,
+  );
+  return same >= 0 ? same : list.findIndex(matches);
+}

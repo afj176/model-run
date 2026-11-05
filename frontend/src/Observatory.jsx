@@ -34,6 +34,7 @@ import CrossAttention from "./CrossAttention";
 import Response from "./Response";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import {
+  eventForLayer,
   layerCaptured,
   layerLabels,
   layerNodePath,
@@ -397,7 +398,11 @@ export function App() {
   }
   function choose(path) {
     setSelected(path);
-    const index = events.findIndex((e) => eventPath(e) === path);
+    const index = eventForLayer(
+      events,
+      (e) => eventPath(e) === path,
+      events[eventIndex],
+    );
     if (index >= 0) setEventIndex(index);
   }
   /** Reopening a run from history brings back its other parts: outputs, response and attention. */

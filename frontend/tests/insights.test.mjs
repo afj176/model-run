@@ -1,3 +1,4 @@
+import { eventForLayer, stopSeries } from "../src/insights.js";
 import { layerCaptured } from "../src/insights.js";
 import { attentionPastAudio } from "../src/insights.js";
 import { runParts, validIndex } from "../src/insights.js";
@@ -752,4 +753,39 @@ test("layerCaptured only accepts layers this run recorded", () => {
   assert.equal(layerCaptured("model.encoder.layers.1", events), true);
   assert.equal(layerCaptured("x", [{ step: 1 }]), false);
   assert.equal(layerCaptured("x", null), false);
+});
+
+test("moving between layers stays on the same denoiser call", () => {
+  const events = [
+    { module: "a", denoiser_call: 0 },
+    { module: "b", denoiser_call: 0 },
+    { module: "a", denoiser_call: 1 },
+    { module: "b", denoiser_call: 1 },
+  ];
+  const isB = (e) => e.module === "b";
+  assert.equal(eventForLayer(events, isB, events[2]), 3);
+  assert.equal(eventForLayer(events, isB, { denoiser_call: 9 }), 1);
+  assert.equal(
+    eventForLayer(events, (e) => e.module === "z", events[2]),
+    -1,
+  );
+});
+
+test("stopSeries plots by timeline position, not repeated layer numbers", () => {
+  const stops = [
+    { path: "double_blocks.0" },
+    { path: "single_blocks.0" },
+    { path: "single_blocks.1" },
+  ];
+  const events = [
+    { module: "double_blocks.0", values: [3, 4] },
+    { module: "single_blocks.0", values: [1, 1] },
+  ];
+  const series = stopSeries(stops, events);
+  assert.deepEqual(
+    series.points.map((p) => p.layer),
+    [0, 1],
+  );
+  assert.ok(Math.abs(series.points[1].value - 1) < 1e-9);
+  assert.equal(stopSeries(stops, []), null);
 });

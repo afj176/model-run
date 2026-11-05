@@ -1,4 +1,5 @@
 """Opt-in native MODEL observation. Never loads, clones weights, or changes sampling."""
+import re
 import base64
 import io
 import logging
@@ -12,11 +13,38 @@ from .cross_attention import measure, block_record, new_section, key_mask, text_
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
+BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
+MAX_LAYER_PATHS = 65
+MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
+ALL_LAYER_PREFIX_VALUES = 65536
+ALL_LAYER_SLICE_VALUES = 524288
+
+
+def all_layer_paths(core):
+    """Every top-level block of a denoiser, then its final output; just the output if it has no blocks."""
+    import torch
+    containers = []
+    for name, module in core.named_modules():
+        if (isinstance(module, torch.nn.ModuleList) and len(module) > 0 and BLOCK_CONTAINER.search(name)
+                and not any(name.startswith(parent + ".") for parent in containers)):
+            containers.append(name)
+    paths = [f"{name}.{i}" for name in containers for i in range(len(core.get_submodule(name)))]
+    if len(paths) > MAX_LAYER_PATHS - 1:
+        paths = [paths[round(i * (len(paths) - 1) / (MAX_LAYER_PATHS - 2))] for i in range(MAX_LAYER_PATHS - 1)]
+    return [*paths, ""]
+
+
+def all_layer_plan(paths, max_calls, elements):
+    """Fit a whole-model capture inside the trace bound, whatever the model's size."""
+    calls = max(1, min(max_calls, MAX_LAYER_EVENTS // len(paths)))
+    events = len(paths) * calls
+    return {"max_calls": calls, "elements": max(16, min(elements, ALL_LAYER_PREFIX_VALUES // events)),
+            "slice_values": ALL_LAYER_SLICE_VALUES, "slice_per_event": ALL_LAYER_SLICE_VALUES // events}
 
 
 class DenoiserObserver:
     def __init__(self, patcher, module_paths, *, max_calls=8, elements=1024, publish=None, output_selectors=None,
-                 attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None):
+                 attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None, slice_values=None, slice_per_event=None):
         from .application import bounded_int
         self.max_calls = bounded_int(max_calls, 1, 32, "max_calls")
         self.elements = bounded_int(elements, 1, 4096, "elements")
@@ -37,8 +65,8 @@ class DenoiserObserver:
         self.core = patcher.model.diffusion_model
         self.base_model = patcher.model
         names = dict(self.core.named_modules())
-        if not module_paths or len(module_paths) > 16 or any(p not in names for p in module_paths):
-            raise ValueError("Select 1 to 16 valid diffusion module paths; an empty line selects the whole denoiser")
+        if not module_paths or len(module_paths) > MAX_LAYER_PATHS or any(p not in names for p in module_paths):
+            raise ValueError(f"Select 1 to {MAX_LAYER_PATHS} valid diffusion module paths; an empty line selects the whole denoiser")
         self.paths = list(module_paths)
         if len(self.paths) * self.max_calls * self.elements > 262144:
             raise ValueError("Capture exceeds the aggregate budget of 262,144 values. Reduce modules, calls, or elements.")
@@ -50,7 +78,7 @@ class DenoiserObserver:
             raise ValueError("This MODEL already has a Model Run observer")
         self.publish = publish
         self._lock = Lock()
-        self._slices = SliceRecorder()
+        self._slices = SliceRecorder(**({"max_values": slice_values} if slice_values else {}), per_event=slice_per_event)
         self.calls = 0
         self.trace = None
         self.tree = inspect_module_tree(self.core)
@@ -85,7 +113,8 @@ class DenoiserObserver:
             self._current = self._attention_context(call, arguments)
             try:
                 latent_shape = self._latent_shape(arguments)
-                self._slices.sequence = self._audio_sequence()
+                self._slices.text_tokens = self._text_token_count(arguments)
+                self._slices.sequence = self._token_sequence(latent_shape, self._slices.text_tokens)
                 output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
                     max_tensor_elements=self.elements, max_events=len(self.paths),
                     output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()},
@@ -109,13 +138,26 @@ class DenoiserObserver:
         shape = getattr(arguments.get("input"), "shape", None)
         return list(shape) if shape is not None else None
 
-    def _audio_sequence(self):
-        """How to read an audio+video model's audio stream: its tokens run along the audio latent's time axis."""
+    @staticmethod
+    def _text_token_count(arguments):
+        conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
+        context = conditioning.get("c_crossattn", conditioning.get("context"))
+        shape = getattr(context, "shape", None)
+        return int(shape[1]) if shape is not None and len(shape) == 3 else None
+
+    def _token_sequence(self, latent_shape, text_tokens):
+        """How to read a [B, T, D] stream that is not the image: audio along time, or text by token."""
+        from .cross_attention import image_grid
         packed = getattr(self.base_model, "latent_shapes", None)
-        if not isinstance(packed, (list, tuple)) or len(packed) < 2 or len(packed[1]) < 3:
+        steps = int(packed[1][2]) if isinstance(packed, (list, tuple)) and len(packed) > 1 and len(packed[1]) > 2 else None
+        def plan(length):
+            if length == steps:
+                return (length, "time", "Tokens are assumed to follow the audio latent's time axis, because their count matches it.")
+            # A count that also fits the image grid is ambiguous, so the image reading is kept.
+            if length == text_tokens and image_grid(length, latent_shape) is None:
+                return (length, "text token", "This stream is taken to be the text tokens, because its count matches the prompt's.")
             return None
-        steps = int(packed[1][2])
-        return lambda length: (length, "time", "Tokens are assumed to follow the audio latent's time axis, because their count matches it.") if length == steps else None
+        return plan
 
     def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""
@@ -392,7 +434,7 @@ class ModelRunObserve:
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"model": ("MODEL",), "modules": ("STRING", {"default": "", "multiline": True}),
+        return {"required": {"model": ("MODEL",), "modules": ("STRING", {"default": "", "multiline": True, "tooltip": "One module path per line. Leave empty to record every layer and the final output; on large models each event then keeps fewer values."}),
                 "max_calls": ("INT", {"default": 8, "min": 1, "max": 32}),
                 "elements": ("INT", {"default": 1024, "min": 1, "max": 4096})},
                 "optional": {"output_selectors": ("STRING", {"default": "{}", "multiline": True,
@@ -428,8 +470,13 @@ class ModelRunObserve:
             last_id[0] = result["id"]
             if trace.get("native_rerun"):
                 app.remember_workflow(result["id"], workflow_graph, unique_id)
-        observer = DenoiserObserver(model, [s.strip() for s in modules.splitlines()] or [""],
-                                    max_calls=max_calls, elements=elements, publish=publish, output_selectors=selectors,
+        chosen = [s.strip() for s in modules.splitlines() if s.strip()]
+        plan = {"max_calls": max_calls, "elements": elements}
+        if not chosen:
+            chosen = all_layer_paths(model.model.diffusion_model)
+            plan = all_layer_plan(chosen, max_calls, elements)
+        observer = DenoiserObserver(model, chosen, publish=publish, **plan,
+                                     output_selectors=selectors,
                                     attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)
         clone.set_model_unet_function_wrapper(observer)
         if block or ablated:
