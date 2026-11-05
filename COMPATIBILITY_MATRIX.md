@@ -93,6 +93,8 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 
 Where a map exists, the check also changes only the text and confirms the map reads text where the keys really changed; a mismatch prints `WRONG`. Word labels are a separate check that needs real weights, and the app says when a family's have not been checked.
 
+How much is still unchecked, including which models people use most, is in [the coverage baseline](reports/model-family-baseline-2026-11-05.md).
+
 Not in this table:
 
 - LTX 2.5 with audio, HiDream-O1 and SeedVR2 are checked on real weights below instead.
@@ -115,4 +117,6 @@ Not in this table:
 | Text Encode, VAE Decode and Observe's sampler steps: SD 1.5, SDXL, Flux2 Klein, LTX 2.5 | All recorded, and output pixel-identical to plain nodes. VAE Encode checked on SD 1.5 |
 | VAE Decode and sampler steps: Qwen-Image 2.1 | Recorded, output pixel-identical. It uses its own text node, so Text Encode does not apply |
 | Sampler steps: HiDream-O1 | Recorded, output pixel-identical. Its VAE and text encoder have no layers to record |
+| PixArt Sigma: 512, guidance 4.5, 10 steps | Layers and sampler steps recorded, output pixel-identical. Maps through the attention slot. Masking only "red" removed the red and masking only "wooden" kept it, so labels are marked checked on this one prompt and seed |
+| Stable Audio Open: 6 seconds, guidance 6 | Layers and sampler steps recorded, output files byte-identical. Time-strip maps with labels; the last two tokens are its seconds numbers, placed from its source code. Masking tokens changed the output, but word positions were not tested by listening, so labels stay marked unchecked |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

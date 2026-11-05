@@ -293,6 +293,13 @@ def align_labels(labels, text_tokens):
     return None
 
 
+def stable_audio_labels(labels, text_tokens):
+    """Stable Audio adds two number embeddings after the prompt's tokens, or None if the counts say otherwise."""
+    if not labels or len(labels) + 2 != text_tokens:
+        return None
+    return [*labels, "<seconds start>", "<seconds total>"]
+
+
 def key_mask(ablated, key_count, *, start=0, existing=None, device=None, dtype=None):
     """Additive attention mask of shape [1, 1, 1, key_count] that removes the ablated text keys.
 

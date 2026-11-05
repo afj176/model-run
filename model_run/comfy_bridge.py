@@ -14,7 +14,7 @@ from .comfy_paths import NOT_INSTALL_FOLDERS
 from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import stable_audio_labels, collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -31,7 +31,7 @@ TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
+LABELS_CHECKED = {"PixArtMS", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -416,6 +416,8 @@ class DenoiserObserver:
             connector = getattr(self.core, "video_embeddings_connector", None)
             self._registers = bool(getattr(connector, "num_learnable_registers", None))
             aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
+            if aligned is None and type(self.core).__name__ == "AudioDiffusionTransformer":
+                aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
             self._labels_dropped = aligned is None
             self.token_labels = aligned
         if self.trace is None:
@@ -702,7 +704,8 @@ def token_labels(clip, prompt):
         tokenizer = getattr(clip, "tokenizer", None)
         if hasattr(tokenizer, "decode"):
             # Per-token decode turns byte-level BPE pieces into readable text.
-            return collapse_padding([str(tokenizer.decode([p[0]], skip_special_tokens=False)) for p in best][:1024])
+            # T5 has a token that is only a space, which decodes to nothing.
+            return collapse_padding([str(tokenizer.decode([p[0]], skip_special_tokens=False)) or "\u2581" for p in best][:1024])
         if hasattr(tokenizer, "untokenize"):
             words = tokenizer.untokenize([(p[0], p[1]) for p in best])
             return collapse_padding([str(word).replace("</w>", "") for _, word in words][:1024])

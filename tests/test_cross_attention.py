@@ -5,7 +5,7 @@ try:
 except ImportError:
     torch = None
 
-from model_run.cross_attention import image_grid, pooled_grid, measure, text_key_range, MAX_MAP_VALUES
+from model_run.cross_attention import image_grid, pooled_grid, measure, stable_audio_labels, text_key_range, MAX_MAP_VALUES
 
 
 class GridTests(unittest.TestCase):
@@ -127,6 +127,10 @@ class MeasureTests(unittest.TestCase):
         cascade = measure(torch.zeros(1, 2, 16, 8), keys, heads=2, text_tokens=5, latent_shape=[1, 4, 8, 8], image_first=True)
         self.assertEqual(cascade["source_grid"], [4, 4])
         self.assertAlmostEqual(sum(cascade["token_mass"]), 5 / 24, places=4)
+
+    def test_stable_audio_labels_name_its_two_number_embeddings(self):
+        self.assertEqual(stable_audio_labels(["a", "</s>"], 4), ["a", "</s>", "<seconds start>", "<seconds total>"])
+        self.assertIsNone(stable_audio_labels(["a", "</s>"], 3))
 
     def test_audio_queries_end_with_time_steps(self):
         # ACE-Step: 8 time steps, keys are a speaker token, 5 words and 2 lyric tokens.
