@@ -273,6 +273,18 @@ ComfyUI, lighting up wherever the trace carries the data.
   so these loaders are standalone only; their traces open the same way in ComfyUI.
   Reading images needs Pillow, and audio needs soundfile and scipy. Without
   torchvision, images use Transformers' PIL processor where the model has one.
+- **Are the word labels right?** Checked on Flux2 Klein, Qwen-Image 2.1, HiDream-O1 and
+  LTX 2.5 by swapping one word and finding where the model's real text input changes. On the
+  first three, all four swapped words first changed exactly the labelled position. LTX's
+  connector lets positions see each other, so there each word's own position was among the
+  three largest changes. Labels also held on prompts with accents, emoji, Japanese and very
+  long words; an emoji can appear as broken characters because it spans several tokens.
+  Masks read differently by model (two prompts, two seeds): masking the
+  subject on Klein moved the output 9 to 15% against 1 to 3% for unrelated tokens. On
+  Qwen-Image (1 to 4% against 3 to 5%) and HiDream (1 to 4% against 3 to 4%) masking a
+  subject did no more than masking unrelated tokens, though masking every text token
+  erases the prompt on Qwen, and destroys the image on HiDream. With all prompt words masked,
+  Qwen still drew the cube, dog and man, so its text tokens hold the prompt redundantly.
 - **Attention maps by model.** HiDream-O1 maps use `double:N`; its queries are the
   last text token plus the image, and its text tokens read each other first. In one
   test (one prompt, 4 steps), masking "red" and "cube" kept the cube (1% of full scale),

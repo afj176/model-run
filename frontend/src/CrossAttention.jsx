@@ -215,7 +215,7 @@ export default function CrossAttention({ trace }) {
             the grid. Attention shows where text is read, not what caused{" "}
             {audioStream ? "a sound" : "a pixel"}.{" "}
             {section.limitations?.find((l) =>
-              /attend to each other|learned registers/.test(l),
+              /carry a word's meaning|learned registers/.test(l),
             )}{" "}
             {!preview &&
             !audioStream &&

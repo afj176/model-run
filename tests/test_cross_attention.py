@@ -86,9 +86,17 @@ class MeasureTests(unittest.TestCase):
         k = torch.randn(1, 2, 5 + 16, 8)
         result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
         self.assertEqual((result["attention_kind"], result["image_tokens"]), ("joint", 16))
-        self.assertEqual(result["text_queries"], 1)
+        self.assertTrue(result["text_spreads"])
         expected = torch.softmax((q[0, :, 1:] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, :5].transpose(0, 1)
         torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
+
+    def test_only_block_causal_layouts_warn_that_meaning_spreads(self):
+        torch.manual_seed(8)
+        joint = measure(torch.randn(1, 2, 5 + 16, 8), torch.randn(1, 2, 5 + 16, 8), heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertEqual(joint["attention_kind"], "joint")
+        self.assertNotIn("text_spreads", joint)
+        qwen = measure(torch.randn(1, 2, 16, 8), torch.randn(1, 2, 5 + 16, 8), heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertTrue(qwen["text_spreads"])
 
     def test_an_audio_stream_is_a_strip_over_time(self):
         torch.manual_seed(7)

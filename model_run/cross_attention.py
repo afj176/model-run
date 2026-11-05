@@ -142,7 +142,7 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         maps = maps.reshape(text_tokens, kept * out_rows * out_cols)
         text_mass = maps.sum(0)
         token_mass = maps.mean(1)
-    return {**({"stream": stream} if stream else {}), **({"text_queries": first_image_query} if kind == "joint" and key_count != query_count and first_image_query else {}),
+    return {**({"stream": stream} if stream else {}), **({"text_spreads": True} if kind == "joint" and key_count != query_count else {}),
             "attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
             "source_grid": [rows, cols], "grid_factor": factor, "grid": [out_rows, out_cols], "scale": scale,
             "frames": kept, "frame_indices": frame_indices, "source_frames": frames,
@@ -165,7 +165,7 @@ def new_section(selection, source, *, token_labels=None, max_grid=32):
     return section
 
 
-TEXT_MIXING_LIMITATION = ("In this model text tokens attend to each other before the image reads them, so later tokens can carry a word's meaning. "
+TEXT_MIXING_LIMITATION = ("In this model a prompt's meaning spreads across its text tokens, so other tokens can carry a word's meaning. "
                           "A low value on a word's map does not mean the word had no effect, and masking one word may not remove it.")
 MASK_BIAS = -10000.0
 ABLATION_LIMITATIONS = ["A small effect may only be sensitivity, because any change can shift the result. Compare it with masking an unrelated token.",

@@ -253,7 +253,7 @@ class DenoiserObserver:
                     elif measurement["attention_kind"] == "joint" and not allow_joint:
                         current["reason"] = "Self-attention in this block has no text keys"
                     else:
-                        self._mixes_text = self._mixes_text or bool(measurement.get("text_queries"))
+                        self._mixes_text = self._mixes_text or bool(measurement.get("text_spreads"))
                         current["record"] = block_record(self.attention_block, denoiser_call=current["call"], batch_label=current["batch_label"],
                                                          measurement=measurement, block_label=audio_label or label)
             except Exception as exc:  # measurement must never break sampling
