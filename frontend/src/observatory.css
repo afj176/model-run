@@ -2830,3 +2830,118 @@ main {
   flex: 1;
   min-width: 0;
 }
+
+/* Audio view. */
+.audio-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.audio-view-head h2 small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.audio-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+.audio-grid {
+  display: grid;
+  grid-template-columns: minmax(70px, 110px) minmax(0, 1fr);
+  gap: 4px 8px;
+  margin-top: 12px;
+}
+.audio-row-label {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.audio-plot {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.audio-plot canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+.audio-plot canvas.audio-mel {
+  height: 110px;
+}
+.audio-map {
+  cursor: crosshair;
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+.audio-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--coral, #f57d78);
+  pointer-events: none;
+}
+.audio-row-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 15px;
+  outline: 2px solid var(--coral, #f57d78);
+  outline-offset: -2px;
+  pointer-events: none;
+}
+.audio-tokens {
+  display: flex;
+  flex-direction: column;
+}
+.audio-tokens button {
+  height: 15px;
+  min-height: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: right;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.audio-tokens button:hover {
+  background: var(--lilac);
+}
+.audio-tokens button.selected {
+  background: var(--indigo);
+  color: #fff;
+}
+.audio-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.audio-unavailable {
+  grid-column: 1 / -1;
+}
+.audio-readout {
+  margin-top: 10px;
+}
+.audio-readout .text-button {
+  margin-top: 4px;
+}

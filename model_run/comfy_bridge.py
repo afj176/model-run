@@ -85,6 +85,7 @@ class DenoiserObserver:
             self._current = self._attention_context(call, arguments)
             try:
                 latent_shape = self._latent_shape(arguments)
+                self._slices.sequence = self._audio_sequence()
                 output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
                     max_tensor_elements=self.elements, max_events=len(self.paths),
                     output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()},
@@ -107,6 +108,14 @@ class DenoiserObserver:
             return list(packed[0])
         shape = getattr(arguments.get("input"), "shape", None)
         return list(shape) if shape is not None else None
+
+    def _audio_sequence(self):
+        """How to read an audio+video model's audio stream: its tokens run along the audio latent's time axis."""
+        packed = getattr(self.base_model, "latent_shapes", None)
+        if not isinstance(packed, (list, tuple)) or len(packed) < 2 or len(packed[1]) < 3:
+            return None
+        steps = int(packed[1][2])
+        return lambda length: (length, "time", "Tokens are assumed to follow the audio latent's time axis, because their count matches it.") if length == steps else None
 
     def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""

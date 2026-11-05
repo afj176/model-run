@@ -1004,3 +1004,15 @@ export const moduleInStop = (module, stop) =>
   (module === stop.path ||
     module.startsWith(`${stop.path}.`) ||
     stop.path.endsWith(`.${module}`));
+
+/** Where one written token read in the audio: the strongest time slice and what fell past the audio's end. */
+export function speechTokenStory(map, outside, seconds) {
+  const values = (map || []).map((v) => (Number.isFinite(v) ? v : 0));
+  if (!values.length) return { peak: 0, peakSeconds: 0, outside: outside ?? 0 };
+  const peak = Math.max(...values);
+  return {
+    peak,
+    peakSeconds: ((values.indexOf(peak) + 0.5) / values.length) * seconds,
+    outside: outside ?? 0,
+  };
+}

@@ -242,19 +242,18 @@ ComfyUI, lighting up wherever the trace carries the data.
   restored to frames only when their count fits the latent grid, assuming frame,
   row, column order. Tensor Volume still folds a slice into a cube, so its layout
   is not spatial. Traces recorded before this feature have no slices.
-- **Audio.** LTX 2.5's audio stream is captured with an output selector such as
-  `{"transformer_blocks.0": [1]}`, and token ablation reaches its text
-  cross-attention. There is no audio-specific view or attention map yet, and
-  no audio-only model has been run.
-- **ComfyUI output and reruns.** Add Model Run · Attach Output after VAE Decode,
-  wired to the MODEL from Model Run · Observe, to pin the decoded image to that
-  run's trace; a video batch also keeps up to 16 frames at 256px. Attention maps
-  then draw over the result. In Compare, pick tokens and "Run without" queues the
-  same workflow in ComfyUI with those tokens masked and pairs it as B, with both
-  images, a pixel difference and per-call divergence. Both only compare the first
-  frame of a video. The workflow stays in memory for retained traces and is never
-  written to a trace or an export; a seed set to randomize still reruns with the
-  seed it actually used.
+- **Audio.** A Whisper run shows what it heard: the log-mel spectrogram it received,
+  playback of those samples, and a map of each written token against audio time for
+  each decoder layer, from measured cross-attention averaged over heads. Layer
+  outputs appear as a feature-by-time map in the Table and Run View, covering only
+  the frames with audio. Checked on one synthetic spoken clip: splicing 3 s of
+  silence after "dog" left no token peaking inside the gap and moved "Model" from
+  3.70 s to 6.69 s. These maps show where a layer read, not word timings. The trace
+  holds the audio, so exports contain the speech. LTX 2.5's audio stream is captured
+  with an output selector such as `{"transformer_blocks.0": [1]}` and gets the same
+  feature-by-time view in ComfyUI, and token ablation reaches its text cross-attention.
+  There is no text-to-audio attention map for LTX, and the Whisper view does not
+  appear on native ComfyUI runs, because ComfyUI does not load Whisper through this node.
 - **Image and speech models in the standalone app.** Local image classifiers and
   Whisper now load and run on a file you choose, which stays on this computer.
   Verified on `google/vit-base-patch16-224` and `openai/whisper-tiny`. An image model
@@ -263,7 +262,7 @@ ComfyUI, lighting up wherever the trace carries the data.
   Attention shows where a layer looked, not why it decided. Whisper shows the
   transcript with a confidence for each token, and encoder and decoder layer outputs.
   It uses the first 30 seconds, and its probabilities are taken after Whisper's own
-  token rules. There is no audio view or attention map for Whisper yet. Ablation,
+  token rules. Ablation,
   patching and attention probes remain text-only. ComfyUI owns its own model loading,
   so these loaders are standalone only; their traces open the same way in ComfyUI.
   Reading images needs Pillow, and audio needs soundfile and scipy. Without

@@ -72,6 +72,22 @@ class DecodeTests(unittest.TestCase):
             decode_audio(media(b"not audio"))
 
 
+class SequenceTests(unittest.TestCase):
+    def test_a_long_sequence_keeps_only_the_kept_steps_and_stays_bounded(self):
+        recorder = SliceRecorder(sequence=lambda length: (100, "time", "note") if length == 1500 else None)
+        tensor = torch.zeros(1, 1500, 384)
+        tensor[0, :100] = 1
+        record = recorder.record(tensor)
+        self.assertEqual((record["layout"], record["rows"], record["cols"], record["source_cols"], record["pooled"]), ("sequence", 16, 64, 100, True))
+        self.assertEqual(set(record["values"]), {1.0})  # the padding beyond step 100 is not averaged in
+        from model_run.tensor_slices import validate_slices
+        validate_slices(record)
+        self.assertIsNone(recorder.record(torch.zeros(1, 77, 8)))
+        record["values"].pop()
+        with self.assertRaises(ValueError):
+            validate_slices(record)
+
+
 class ImageAdapterTests(unittest.TestCase):
     def test_classify_measures_labels_attention_and_patch_slices(self):
         adapter = ImageClassifierAdapter(tiny_vit())
@@ -120,14 +136,33 @@ class SpeechAdapterTests(unittest.TestCase):
     def test_transcribe_records_steps_that_match_the_sequence(self):
         model, processor = load_local_media_model(WHISPER, "audio")
         features = processor(torch.zeros(16000).numpy(), sampling_rate=16000, return_tensors="pt")["input_features"]
-        output, trace = SpeechAdapter(model).transcribe({"input_features": features}, ["model.encoder.layers.0", "model.decoder.layers.0"], max_new_tokens=8, max_tensor_elements=8)
+        output, trace = SpeechAdapter(model).transcribe({"input_features": features}, ["model.encoder.layers.0", "model.decoder.layers.0"], max_new_tokens=8, max_tensor_elements=8,
+            audio_info={"used_seconds": 1.0, "hop_length": 160, "rate": 16000})
         generation = trace.pop("transcript_generation")
         self.assertEqual([e["module"] for e in trace["events"]], ["model.encoder.layers.0", "model.decoder.layers.0"])
         self.assertEqual(trace["events"][0]["shape"], [1, 1500, 384])
         self.assertGreaterEqual(generation["input"]["token_count"], 1)
         self.assertEqual(generation["steps"][0]["position"], generation["input"]["token_count"])
         encode_trace(generation)
+        view = trace["audio_view"]
+        steps = generation["steps"]
+        self.assertEqual(len(view["tokens"]), len(steps))
+        self.assertEqual(view["mel"]["bins"], 80)
+        self.assertEqual(view["encoder_length"], 1500)
+        # One second of audio covers 50 encoder frames.
+        self.assertEqual(view["encoder_frames"], 50)
+        layer = view["layers"][-1]
+        self.assertEqual(layer["layer"], 3)
+        expected = output.cross_attentions[3][0].mean(0)[steps[0]["position"] - 1]
+        self.assertAlmostEqual(sum(layer["maps"][0]), float(expected[:50].sum()), places=2)
+        self.assertAlmostEqual(layer["outside"][0], float(expected[50:].sum()), places=3)
+        self.assertEqual(trace["events"][0]["slices"]["layout"], "sequence")
+        self.assertEqual((trace["events"][0]["slices"]["col_axis"], trace["events"][0]["slices"]["cols"]), ("time", 50))
+        self.assertEqual(trace["events"][1]["slices"]["col_axis"], "token")
         encode_trace(trace)
+        view["layers"][-1]["maps"][0].pop()
+        with self.assertRaises(ValueError):
+            encode_trace(trace)
 
 
 if __name__ == "__main__":

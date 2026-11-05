@@ -23,6 +23,10 @@ SPEECH_RATE = 16000
 MAX_SPEECH_SECONDS = 30
 MAX_TRANSCRIPT_TOKENS = 128
 CLS_METHOD = "class_token_attention_row"
+AUDIO_METHOD = "whisper_cross_attention"
+MEL_COLS = 300
+TIME_BINS = 150
+MAX_AUDIO_MAP_VALUES = 200000
 
 
 def task_for_config(config):
@@ -159,6 +163,47 @@ def _patch_grid(config):
     return height // patch_h, width // patch_w
 
 
+def _audio_view(features, output, steps, info, used_mel, used_frames, encoder_length):
+    """The spectrogram the model received and, per written token, where in the audio each decoder layer read.
+
+    A decoder position predicts the next token, so a token's map is the attention row of the position before it.
+    """
+    import torch
+    mel = features[0, :, :used_mel].detach().to(device="cpu", dtype=torch.float32)
+    mel_cols = min(MEL_COLS, used_mel)
+    if mel_cols != used_mel:
+        mel = torch.nn.functional.adaptive_avg_pool1d(mel.unsqueeze(0), mel_cols)[0]
+    bins = min(TIME_BINS, used_frames)
+    edges = [round(i * used_frames / bins) for i in range(bins + 1)]
+    view = {"method": AUDIO_METHOD, "seconds": info["used_seconds"], "time_bins": bins, "encoder_frames": used_frames, "encoder_length": encoder_length,
+            "mel": {"bins": int(mel.shape[0]), "cols": mel_cols, "values": _clean(mel.reshape(-1).tolist())},
+            "tokens": [{"step": s["index"], "token_id": s["token_id"], "probability": s["probability"]} for s in steps], "layers": [],
+            "limitations": ["Each map is that decoder layer's measured cross-attention, averaged over heads, for the position that predicted the token. It shows where the layer read, not a word timing.",
+                            "Whisper's window always covers 30 seconds. Attention landing past the end of the audio is reported as outside the audio."]}
+    attentions = getattr(output, "cross_attentions", None)
+    if not attentions or not steps:
+        view["attention_unavailable"] = "The model returned no cross-attention for this input."
+        return view
+    keep = max(1, min(len(attentions), MAX_AUDIO_MAP_VALUES // max(1, len(steps) * bins)))
+    chosen = sorted({round(i * (len(attentions) - 1) / max(1, keep - 1)) for i in range(keep)}) if keep > 1 else [len(attentions) - 1]
+    for layer in chosen:
+        weights = attentions[layer]
+        if not isinstance(weights, torch.Tensor) or weights.ndim != 4 or int(weights.shape[-1]) != encoder_length:
+            view["attention_unavailable"] = "This model's cross-attention does not line up with its encoder frames."
+            view["layers"] = []
+            return view
+        mean = weights[0].mean(dim=0).detach().to(device="cpu", dtype=torch.float32)
+        maps, outside = [], []
+        for step in steps:
+            row = mean[step["position"] - 1]
+            total = row[:used_frames].cumsum(0)
+            at = lambda frame: float(total[frame - 1]) if frame > 0 else 0.0
+            maps.append(_clean([at(edges[i + 1]) - at(edges[i]) for i in range(bins)]))
+            outside.append(_clean([max(0.0, float(row[used_frames:].sum()))])[0])
+        view["layers"].append({"layer": layer, "maps": maps, "outside": outside})
+    return view
+
+
 class ImageClassifierAdapter(TorchModuleAdapter):
     adapter_id = "transformers.image_classification"
 
@@ -206,12 +251,19 @@ class ImageClassifierAdapter(TorchModuleAdapter):
 class SpeechAdapter(TorchModuleAdapter):
     adapter_id = "transformers.speech_recognition"
 
-    def transcribe(self, inputs, module_paths, *, top_k=5, max_tensor_elements=1024, max_new_tokens=MAX_TRANSCRIPT_TOKENS, control=None):
-        """Greedy transcript with per-token scores, then one forward pass recording layer outputs."""
+    def transcribe(self, inputs, module_paths, *, audio_info=None, top_k=5, max_tensor_elements=1024, max_new_tokens=MAX_TRANSCRIPT_TOKENS, control=None):
+        """Greedy transcript with per-token scores, then one forward pass recording layer outputs and cross-attention."""
         import torch
         from transformers import StoppingCriteria, StoppingCriteriaList
         self._require("module_outputs")
         features = inputs["input_features"]
+        info = audio_info or {"used_seconds": features.shape[-1] * 160 / SPEECH_RATE, "hop_length": 160, "rate": SPEECH_RATE}
+        mel_per_second = info["rate"] / info["hop_length"]
+        used_mel = max(1, min(int(features.shape[-1]), math.ceil(info["used_seconds"] * mel_per_second)))
+        encoder_length = int(features.shape[-1]) // 2
+        used_frames = max(1, min(encoder_length, math.ceil(used_mel / 2)))
+        note = f"Shows the {used_frames} encoder frames that cover the audio. The rest of Whisper's fixed window encodes padding and is not shown."
+        recorder = SliceRecorder(sequence=lambda length: (used_frames, "time", note) if length == encoder_length else (length, "token", None))
         class Cancellable(StoppingCriteria):
             def __call__(self, input_ids, scores, **kwargs):
                 if control is not None:
@@ -222,8 +274,8 @@ class SpeechAdapter(TorchModuleAdapter):
                 generated = self.model.generate(features, task="transcribe", do_sample=False, num_beams=1, max_new_tokens=max_new_tokens,
                                                 return_dict_in_generate=True, output_scores=True, stopping_criteria=StoppingCriteriaList([Cancellable()]))
             sequence = generated.sequences
-            output, trace = capture_forward(self.model, {"input_features": features, "decoder_input_ids": sequence}, module_paths, control=control,
-                                            max_tensor_elements=max_tensor_elements)
+            output, trace = capture_forward(self.model, {"input_features": features, "decoder_input_ids": sequence, "output_attentions": True}, module_paths, control=control,
+                                            max_tensor_elements=max_tensor_elements, slices=recorder)
             return generated, sequence, output, trace
         generated, sequence, output, trace = self._run(forward)
         ids = sequence[0].tolist()
@@ -240,6 +292,7 @@ class SpeechAdapter(TorchModuleAdapter):
             steps.append({"index": index, "position": prefix + index, "token_id": token, "probability": float(probabilities[token]),
                           "entropy_bits": _entropy_bits(probabilities),
                           "top_tokens": [{"token_id": int(i), "probability": float(p)} for p, i in zip(values.tolist(), indices.tolist())]})
+        trace["audio_view"] = _audio_view(features, output, steps, info, used_mel, used_frames, encoder_length)
         trace["transcript_generation"] = {
             "schema_version": "1.0", "kind": "generation_capture", "status": "completed", "decoding": "greedy", "provenance": False,
             "stopped": "eos" if ids[-1] == eos else "max_new_tokens", "input": {"token_count": prefix}, "steps": steps,
@@ -249,6 +302,39 @@ class SpeechAdapter(TorchModuleAdapter):
                             "Only the first 30 seconds of audio are used."]}
         trace["adapter_id"] = self.adapter_id
         return output, trace
+
+
+def validate_audio_view(view):
+    """Raise ValueError unless ``view`` is a consistent audio section."""
+    def numbers(values, low=None, high=None):
+        return isinstance(values, list) and all(v is None or (type(v) in (int, float) and math.isfinite(v) and (low is None or low <= v) and (high is None or v <= high)) for v in values)
+    if not isinstance(view, dict) or view.get("method") != AUDIO_METHOD or type(view.get("seconds")) not in (int, float) or not 0 < view["seconds"] <= MAX_SPEECH_SECONDS + 1:
+        raise ValueError("Invalid audio view")
+    mel, bins, tokens, layers = view.get("mel"), view.get("time_bins"), view.get("tokens"), view.get("layers")
+    if (not isinstance(mel, dict) or type(mel.get("bins")) is not int or type(mel.get("cols")) is not int or not 1 <= mel["bins"] <= 256 or not 1 <= mel["cols"] <= MEL_COLS
+            or not numbers(mel.get("values")) or len(mel["values"]) != mel["bins"] * mel["cols"]):
+        raise ValueError("Invalid spectrogram")
+    if type(bins) is not int or not 1 <= bins <= TIME_BINS or not isinstance(tokens, list) or len(tokens) > 512 or not isinstance(layers, list) or len(layers) > 64:
+        raise ValueError("Invalid audio view")
+    for token in tokens:
+        if not isinstance(token, dict) or type(token.get("token_id")) is not int or type(token.get("probability")) not in (int, float) or not 0 <= token["probability"] <= 1:
+            raise ValueError("Invalid audio token")
+    for layer in layers:
+        maps, outside = (layer.get("maps"), layer.get("outside")) if isinstance(layer, dict) else (None, None)
+        if (type(layer.get("layer") if isinstance(layer, dict) else None) is not int or not isinstance(maps, list) or len(maps) != len(tokens)
+                or not numbers(outside, 0, 1.001) or len(outside) != len(tokens) or any(not numbers(row, -0.001, 1.001) or len(row) != bins for row in maps)):
+            raise ValueError("Invalid audio attention layer")
+    audio = view.get("audio")
+    if audio is not None and (not isinstance(audio, dict) or audio.get("mime") != "audio/wav" or not isinstance(audio.get("base64"), str) or len(audio["base64"]) > 2 * 1024 * 1024):
+        raise ValueError("Invalid audio clip")
+
+
+def encode_wav(samples, rate):
+    """16-bit WAV of the exact samples the model received, for playback."""
+    import soundfile
+    buffer = io.BytesIO()
+    soundfile.write(buffer, samples, rate, format="WAV", subtype="PCM_16")
+    return {"mime": "audio/wav", "base64": base64.b64encode(buffer.getvalue()).decode()}
 
 
 def validate_image_classification(record):

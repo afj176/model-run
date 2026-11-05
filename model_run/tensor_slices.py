@@ -12,6 +12,7 @@ import math
 MAX_SLICES = 64
 MAX_FRAMES = 16
 SIDE = 16
+SEQUENCE_COLS = 64
 TRACE_VALUES = 262144
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 PACKED_ASSUMPTION = "Tokens are assumed to be packed in frame, row, column order, the same assumption the attention maps use."
@@ -69,9 +70,11 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES, token_grid=None):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None):
         self.remaining = max_values
         self.token_grid = token_grid
+        # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
+        self.sequence = sequence
 
     def record(self, tensor, latent_shape=None):
         """A slice record; None when the tensor has nothing to navigate; ``unavailable`` on failure."""
@@ -80,8 +83,29 @@ class SliceRecorder:
         except Exception as exc:  # Observation must never break the model being observed.
             return {"unavailable": f"Slices could not be recorded: {type(exc).__name__}"}
 
+    def _sequence_record(self, tensor, kept, name, note):
+        """One feature-by-time map of a [1, T, D] tensor, so all of its length can be seen."""
+        import torch
+        depth = int(tensor.shape[2])
+        rows, cols = min(depth, SIDE), min(kept, SEQUENCE_COLS)
+        if rows * cols > self.remaining:
+            return {"unavailable": "This trace's slice budget was already spent on earlier events."}
+        self.remaining -= rows * cols
+        view = tensor.detach()[0, :kept].to(dtype=torch.float32).transpose(0, 1).unsqueeze(0).unsqueeze(0)
+        pooled = (rows, cols) != (depth, kept)
+        if pooled:
+            view = torch.nn.functional.adaptive_avg_pool2d(view, (rows, cols))
+        return {"layout": "sequence", "source_shape": list(tensor.shape), "axes": [], "row_axis": "feature", "col_axis": name,
+                "rows": rows, "cols": cols, "source_rows": depth, "source_cols": kept, "pooled": pooled, "assumption": note,
+                "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
+                "aggregate_measure": None, "aggregate": []}
+
     def _record(self, tensor, latent_shape):
         import torch
+        if self.sequence is not None and tensor.ndim == 3 and tensor.shape[0] == 1:
+            plan = self.sequence(int(tensor.shape[1]))
+            if plan is not None:
+                return self._sequence_record(tensor, *plan)
         placed = _layout(tensor, latent_shape, self.token_grid)
         if placed is None:
             return None
@@ -145,6 +169,15 @@ def validate_slices(record):
             raise ValueError("Invalid slice record")
         return
     axes, rows, cols = record.get("axes"), record.get("rows"), record.get("cols")
+    if record.get("layout") == "sequence":
+        values = record.get("values")
+        if (axes != [] or type(rows) is not int or type(cols) is not int or not 1 <= rows <= SIDE or not 1 <= cols <= SEQUENCE_COLS
+                or not isinstance(values, list) or len(values) != rows * cols or record.get("aggregate") != []):
+            raise ValueError("Invalid sequence record")
+        for value in values:
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                raise ValueError("Invalid slice value")
+        return
     if not isinstance(axes, list) or not 1 <= len(axes) <= 16 or type(rows) is not int or type(cols) is not int or not 1 <= rows <= SIDE or not 1 <= cols <= SIDE:
         raise ValueError("Invalid slice record")
     for axis in axes:

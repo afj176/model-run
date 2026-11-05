@@ -177,6 +177,9 @@ def _validate(trace):
     if "tokens" in trace:
         if not isinstance(trace["tokens"], list) or len(trace["tokens"]) > 4096 or any(not isinstance(t, dict) or type(t.get("id")) is not int or not isinstance(t.get("text"), str) for t in trace["tokens"]):
             raise ValueError("Invalid decoded tokens")
+    if "audio_view" in trace:
+        from .media_models import validate_audio_view
+        validate_audio_view(trace["audio_view"])
     if "image_classification" in trace:
         from .media_models import validate_image_classification
         validate_image_classification(trace["image_classification"])

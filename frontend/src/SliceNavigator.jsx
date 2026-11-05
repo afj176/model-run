@@ -94,7 +94,7 @@ export default function SliceNavigator({ event, wanted, onChange }) {
   }, [playing, frame, framePosition, onChange]);
   if (slices?.unavailable)
     return <p className="slice-nav slice-note">{slices.unavailable}</p>;
-  if (!usable) return null;
+  if (!usable || !axes.length) return null;
   return (
     <div className="slice-nav" aria-label="Tensor slices">
       {frame && frame.indices.length > 1 && (

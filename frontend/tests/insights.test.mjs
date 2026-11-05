@@ -1,3 +1,4 @@
+import { speechTokenStory } from "../src/insights.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -697,4 +698,12 @@ test("layer stops tell encoder and decoder apart", () => {
     }),
     true,
   );
+});
+
+test("speechTokenStory places the strongest slice in seconds", () => {
+  const story = speechTokenStory([0.1, null, 0.4, 0.1], 0.2, 8);
+  assert.equal(story.peak, 0.4);
+  assert.equal(story.peakSeconds, 5);
+  assert.equal(story.outside, 0.2);
+  assert.equal(speechTokenStory([], null, 8).peak, 0);
 });

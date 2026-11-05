@@ -14,7 +14,7 @@ from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
 from .inventory import inspect_file, inspect_index
-from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image,
+from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
 from .trace_store import encode_trace
 
@@ -371,7 +371,9 @@ class Application:
                     samples, audio = decode_audio(request.get("media"))
                     features = processor(samples, sampling_rate=audio["rate"], return_tensors="pt")["input_features"]
                     inputs = {"input_features": features.to(device=item["device"], dtype=torch.float32)}
-                    operation, options = "transcribe", {"max_tensor_elements": elements, "top_k": 5}
+                    extractor = processor.feature_extractor
+                    operation, options = "transcribe", {"max_tensor_elements": elements, "top_k": 5,
+                        "audio_info": {"used_seconds": audio["used_seconds"], "hop_length": int(extractor.hop_length), "rate": audio["rate"]}}
                     def decorate(output, trace):
                         text = processor.tokenizer
                         transcript = trace["transcript_generation"]
@@ -382,6 +384,11 @@ class Application:
                                 token["text"] = text.decode([token["token_id"]])
                         transcript["response"] = text.decode([s["token_id"] for s in transcript["steps"]], skip_special_tokens=True)
                         trace["input_media"] = {**audio, "name": prompt[:160]}
+                        view = trace["audio_view"]
+                        for token in view["tokens"]:
+                            token["text"] = text.decode([token["token_id"]])
+                        view["audio"] = encode_wav(samples, audio["rate"])
+                        trace["limitations"].append("This application trace includes the input audio; exported traces may contain private speech.")
             else:
                 if ablate:
                     raise ValueError("Head ablation needs a loaded text model")

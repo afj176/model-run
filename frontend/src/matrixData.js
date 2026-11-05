@@ -183,13 +183,15 @@ export function sliceEvent(event, wanted = {}) {
   });
   const size = slices.rows * slices.cols;
   const source = all ? slices.aggregate : slices.values;
-  const label = slices.axes
-    .map((axis, i) =>
-      positions[i] === null
-        ? `all ${axisLabel(axis)}s`
-        : `${axisLabel(axis)} ${axis.indices[positions[i]]}`,
-    )
-    .join(" · ");
+  const label = !slices.axes.length
+    ? `${slices.row_axis} by ${slices.col_axis}`
+    : slices.axes
+        .map((axis, i) =>
+          positions[i] === null
+            ? `all ${axisLabel(axis)}s`
+            : `${axisLabel(axis)} ${axis.indices[positions[i]]}`,
+        )
+        .join(" · ");
   const notes = [];
   if (all)
     notes.push(

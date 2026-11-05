@@ -189,3 +189,34 @@ test("sliceEvent leaves events without usable slices alone", () => {
   const skipped = { module: "m", slices: { unavailable: "budget" } };
   assert.equal(sliceEvent(skipped), skipped);
 });
+
+test("sliceEvent shows a whole sequence as one feature-by-time map", () => {
+  const event = {
+    module: "encoder",
+    shape: [1, 1500, 384],
+    values: [1],
+    slices: {
+      layout: "sequence",
+      axes: [],
+      row_axis: "feature",
+      col_axis: "time",
+      rows: 2,
+      cols: 3,
+      source_rows: 384,
+      source_cols: 50,
+      pooled: true,
+      assumption: "Only the audio is shown.",
+      values: [1, 2, 3, 4, 5, 6],
+      aggregate_axis: null,
+      aggregate: [],
+    },
+  };
+  const seen = sliceEvent(event);
+  assert.deepEqual(seen.values, [1, 2, 3, 4, 5, 6]);
+  assert.equal(seen.slice_label, "feature by time");
+  assert.equal(seen.magnitude, false);
+  assert.equal(seen.grid_cols, 3);
+  assert.match(seen.slice_note, /Averaged from 384 × 50 to 2 × 3/);
+  assert.match(seen.slice_note, /Only the audio is shown/);
+  assert.deepEqual(extractMatrix({}, seen).axes, ["feature", "time"]);
+});

@@ -36,6 +36,7 @@ import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import { layerLabels, layerNodePath, layerOf } from "./insights";
 import SliceNavigator from "./SliceNavigator";
 import ImageClassification from "./ImageClassification";
+import AudioView from "./AudioView";
 import { sliceEvent } from "./matrixData";
 import Compare from "./Compare";
 import { buildReport } from "./report";
@@ -1705,6 +1706,13 @@ export function App() {
                   ? companions.generation
                   : null;
             const panels = [];
+            const audioTrace = trace?.audio_view
+              ? trace
+              : inSession && companions.module?.audio_view
+                ? companions.module
+                : null;
+            if (audioTrace)
+              panels.push(<AudioView key="audio" trace={audioTrace} />);
             if (trace?.image_classification)
               panels.push(<ImageClassification key="image" trace={trace} />);
             if (predictionTrace)
