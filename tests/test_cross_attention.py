@@ -79,6 +79,27 @@ class MeasureTests(unittest.TestCase):
         expected = torch.softmax((q[0] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, :5].transpose(0, 1)
         torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
 
+    def test_queries_with_a_text_token_before_the_image(self):
+        # HiDream-O1: 16 causal text tokens run apart, so queries are the last text token and the image.
+        torch.manual_seed(6)
+        q = torch.randn(1, 2, 1 + 16, 8)
+        k = torch.randn(1, 2, 5 + 16, 8)
+        result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 4, 4])
+        self.assertEqual((result["attention_kind"], result["image_tokens"]), ("joint", 16))
+        self.assertEqual(result["text_queries"], 1)
+        expected = torch.softmax((q[0, :, 1:] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0)[:, :5].transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
+
+    def test_an_audio_stream_is_a_strip_over_time(self):
+        torch.manual_seed(7)
+        q = torch.randn(1, 2, 9, 8)
+        k = torch.randn(1, 2, 5, 8)
+        result = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 2, 8, 8], stream="audio")
+        self.assertEqual((result["stream"], result["grid"], result["frames"], result["attention_kind"]), ("audio", [1, 9], 1, "cross"))
+        expected = torch.softmax((q[0] @ k[0].transpose(1, 2)) * 8 ** -0.5, dim=-1).mean(0).transpose(0, 1)
+        torch.testing.assert_close(torch.tensor(result["maps"]), expected, atol=1e-4, rtol=0)
+        self.assertIn("unavailable", measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 2, 8, 8]))
+
     def test_unsupported_geometry_is_reported(self):
         q = torch.randn(1, 2, 17, 8)
         k = torch.randn(1, 2, 5, 8)

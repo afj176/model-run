@@ -30,11 +30,15 @@ export default function CrossAttention({ trace }) {
     decoded?.length && frameCount > 1
       ? decoded[Math.round((frame / (frameCount - 1)) * (decoded.length - 1))]
       : decoded?.[0];
-  const preview = frameImage
-    ? `data:image/png;base64,${frameImage}`
-    : trace?.preview?.mime === "image/png"
-      ? `data:image/png;base64,${trace.preview.base64}`
-      : null;
+  const audioStream = event?.stream === "audio";
+  // An audio strip has no place on an image.
+  const preview = audioStream
+    ? null
+    : frameImage
+      ? `data:image/png;base64,${frameImage}`
+      : trace?.preview?.mime === "image/png"
+        ? `data:image/png;base64,${trace.preview.base64}`
+        : null;
   const label = (i) => (labels?.[i] ? `“${tokenText(labels[i])}”` : `#${i}`);
   const frames = event?.frames ?? 1;
   const cells = event ? event.grid[0] * event.grid[1] : 0;
@@ -59,7 +63,9 @@ export default function CrossAttention({ trace }) {
     <div className="xattn">
       <div className="xattn-head">
         <h2>
-          Where the prompt is read
+          {audioStream
+            ? "Where the audio reads the prompt"
+            : "Where the prompt is read"}
           <small>
             {section.selection} · measured attention probabilities ·{" "}
             {event ? `${event.heads} heads averaged` : "no maps recorded"}
@@ -123,9 +129,9 @@ export default function CrossAttention({ trace }) {
               <div className="xattn-map-caption">
                 <b>{label(picked)}</b>
                 <span>
-                  peak {pctFine(focus.peak)} at row {focus.peakCell[0] + 1}, col{" "}
-                  {focus.peakCell[1] + 1} · {event.grid[0]}×{event.grid[1]} grid
-                  from {event.source_grid[0]}×{event.source_grid[1]} tokens
+                  {audioStream
+                    ? `peak ${pctFine(focus.peak)} at step ${focus.peakCell[1] + 1} of ${event.grid[1]} · time runs left to right, from ${event.source_grid[1]} audio tokens`
+                    : `peak ${pctFine(focus.peak)} at row ${focus.peakCell[0] + 1}, col ${focus.peakCell[1] + 1} · ${event.grid[0]}×${event.grid[1]} grid from ${event.source_grid[0]}×${event.source_grid[1]} tokens`}
                 </span>
                 {preview && (
                   <label className="xattn-toggle">
@@ -158,8 +164,8 @@ export default function CrossAttention({ trace }) {
             </div>
             <div className="xattn-tokens">
               <p className="xattn-sub">
-                Tokens by how much the image reads them{" "}
-                <small>({event.batch})</small>
+                Tokens by how much the {audioStream ? "audio" : "image"} reads
+                them <small>({event.batch})</small>
               </p>
               <div className="xattn-strip" role="list">
                 {event.token_mass.map((mass, i) =>
@@ -205,9 +211,14 @@ export default function CrossAttention({ trace }) {
           <p className="micro">
             Probabilities are computed from the exact query and key tensors the
             attention kernel received, averaged over heads and area-pooled to
-            the grid. Attention shows where text is read, not what caused a
-            pixel.{" "}
-            {!preview && trace?.source === "comfyui_native_denoiser"
+            the grid. Attention shows where text is read, not what caused{" "}
+            {audioStream ? "a sound" : "a pixel"}.{" "}
+            {section.limitations?.find((l) =>
+              l.includes("attend to each other"),
+            )}{" "}
+            {!preview &&
+            !audioStream &&
+            trace?.source === "comfyui_native_denoiser"
               ? "Add Model Run · Attach Output after your VAE Decode to draw these maps over the result. "
               : ""}
             {section.skipped?.length

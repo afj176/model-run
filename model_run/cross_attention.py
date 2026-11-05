@@ -45,7 +45,7 @@ def pooled_grid(rows, cols, text_tokens, max_grid):
         scale += 1
 
 
-def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32):
+def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, batch_index=0, max_grid=32, stream=None):
     """Return a bounded map record, or ``{"unavailable": reason}`` when the geometry is not understood.
 
     ``q`` and ``k`` are either ``[B, heads, L, D]`` or ``[B, L, heads*D]``. Text keys occupy
@@ -82,13 +82,15 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         kind, first_image_query = "cross", 0
     elif key_count == query_count and key_count > text_tokens:
         kind, first_image_query = "joint", text_tokens
-    elif key_count == query_count + text_tokens:
-        # Image queries over [text, image] keys, as in block-causal attention.
-        kind, first_image_query = "joint", 0
+    elif key_count > text_tokens and query_count >= key_count - text_tokens:
+        # Keys are [text, image]; queries end with the image, after any text tokens that attend this way too.
+        # Qwen-Image's queries are image only; HiDream-O1's also start with the last text token.
+        kind, first_image_query = "joint", query_count - (key_count - text_tokens)
     else:
         return {"unavailable": f"Sequence lengths (queries {query_count}, keys {key_count}, text {text_tokens}) do not form cross or joint attention"}
     image_tokens = query_count - first_image_query
-    grid = image_grid(image_tokens, latent_shape)
+    # An audio stream runs along one axis, so its map is a strip over time.
+    grid = (1, image_tokens, 1, 1) if stream == "audio" else image_grid(image_tokens, latent_shape)
     if grid is None:
         return {"unavailable": f"{image_tokens} image tokens do not map onto the latent grid {list(latent_shape)}"}
     rows, cols, factor, frames = grid
@@ -139,7 +141,8 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
         maps = maps.reshape(text_tokens, kept * out_rows * out_cols)
         text_mass = maps.sum(0)
         token_mass = maps.mean(1)
-    return {"attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
+    return {**({"stream": stream} if stream else {}), **({"text_queries": first_image_query} if kind == "joint" and key_count != query_count and first_image_query else {}),
+            "attention_kind": kind, "heads": heads, "head_dim": dim, "text_tokens": text_tokens, "image_tokens": image_tokens,
             "source_grid": [rows, cols], "grid_factor": factor, "grid": [out_rows, out_cols], "scale": scale,
             "frames": kept, "frame_indices": frame_indices, "source_frames": frames,
             "mask_applied": row_mask is not None,
@@ -161,6 +164,8 @@ def new_section(selection, source, *, token_labels=None, max_grid=32):
     return section
 
 
+TEXT_MIXING_LIMITATION = ("In this model text tokens attend to each other before the image reads them, so later tokens can carry a word's meaning. "
+                          "A low value on a word's map does not mean the word had no effect, and masking one word may not remove it.")
 MASK_BIAS = -10000.0
 ABLATION_LIMITATIONS = ["Ablated text tokens are masked out of every attention call that reads text keys for the whole run; remaining attention renormalises over the other keys.",
                         "Masking a token's keys is an intervention on attention only; the token still passed through the text encoder and may influence other tokens' embeddings.",
@@ -192,9 +197,7 @@ def text_key_range(query_count, key_count, text_tokens, allow_joint=False):
     """
     if key_count == text_tokens and query_count != text_tokens:
         return 0, text_tokens
-    if allow_joint and key_count == query_count and key_count > text_tokens:
-        return 0, text_tokens
-    if allow_joint and key_count == query_count + text_tokens:
+    if allow_joint and key_count > text_tokens and query_count >= key_count - text_tokens:
         return 0, text_tokens
     return None
 

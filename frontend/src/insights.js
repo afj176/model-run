@@ -453,17 +453,27 @@ export function crossAttentionStory(event, labels, token = null, frame = 0) {
     vertical === "middle" && horizontal === "centre"
       ? "centre"
       : `${vertical} ${horizontal}`;
-  const text =
-    `${name} is read most at the ${where} (${pctFine(peak)} of that region's attention) and ` +
-    (spread >= 0.5
-      ? `broadly across ${pct(spread)}${of}`
-      : `in a focused area covering ${pct(spread)}${of}`) +
-    (rank > 0
-      ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
-      : ".") +
-    (paddingShare >= 0.05
-      ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
-      : "");
+  const audio = event.stream === "audio";
+  const text = audio
+    ? (peak < mean * 1.5
+        ? `${name} is read about evenly across the audio (at most ${pctFine(peak)} of a moment's attention)`
+        : `${name} is read most ${pct((col + 0.5) / cols)} of the way through the audio (${pctFine(peak)} of that moment's attention)`) +
+      (rank > 0
+        ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
+        : ".") +
+      (paddingShare >= 0.05
+        ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
+        : "")
+    : `${name} is read most at the ${where} (${pctFine(peak)} of that region's attention) and ` +
+      (spread >= 0.5
+        ? `broadly across ${pct(spread)}${of}`
+        : `in a focused area covering ${pct(spread)}${of}`) +
+      (rank > 0
+        ? `; it ranks ${rank} of ${ranked.length} tokens by mean attention (${pctFine(mean)}).`
+        : ".") +
+      (paddingShare >= 0.05
+        ? ` ${pct(paddingShare)} of this block's attention to text lands on padding positions, not on words of the prompt.`
+        : "");
   const textShare =
     Array.isArray(event.text_mass) && event.text_mass.length
       ? event.text_mass.reduce((a, b) => a + b, 0) / event.text_mass.length

@@ -273,10 +273,19 @@ ComfyUI, lighting up wherever the trace carries the data.
   so these loaders are standalone only; their traces open the same way in ComfyUI.
   Reading images needs Pillow, and audio needs soundfile and scipy. Without
   torchvision, images use Transformers' PIL processor where the model has one.
-- **Attention maps that are not available.** SeedVR2's attention never passes
-  `transformer_options`, so ComfyUI's override hook cannot see it. HiDream-O1's
-  layout (257 queries, 273 keys, 17 text tokens) is not understood. Both report
-  the reason in the trace; their module captures work.
+- **Attention maps by model.** HiDream-O1 maps use `double:N`; its queries are the
+  last text token plus the image, and its text tokens read each other first. In one
+  test (one prompt, 4 steps), masking "red" and "cube" kept the cube (1% of full scale),
+  masking the two blank trailing tokens that hold 35% of the attention changed it most
+  for any small set (18%), and masking every text token destroyed the image (35%). A low
+  value on a word's map therefore does not mean the word had no effect. `audio:N` maps
+  LTX 2.5's audio stream to text as a strip over time; on the 0.36 s clip tested it was
+  nearly flat, so this says little about timing yet. On LTX, 99% of attention to text
+  lands on padding, and masking 17 padding tokens changed the output more (7.8%) than
+  masking "red" and "cube" (3.3%); two unmasked runs were pixel-identical, so that is not
+  noise. Why padding matters this much is not established. SeedVR2 has no map because its
+  windowed attention bypasses ComfyUI's override and it conditions on fixed built-in
+  embeddings, so a map would not show how a prompt is read.
 - **Head gallery.** An attention probe now returns every head of the selected
   layer (rounded to 5 decimals, within a 262,144-value bound) so heads can be
   browsed without another forward pass, plus per-layer head-averaged summaries

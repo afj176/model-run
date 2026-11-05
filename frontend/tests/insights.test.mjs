@@ -852,3 +852,30 @@ test("compare wording says nothing it cannot support", () => {
     /\u201c<pad>\u201d \u00d7 2, \u201c.?red\u201d/,
   );
 });
+
+test("an audio map is described over time, not as an image region", () => {
+  const story = crossAttentionStory(
+    {
+      stream: "audio",
+      grid: [1, 4],
+      token_mass: [0.2, 0.1],
+      maps: [
+        [0.1, 0.1, 0.4, 0.2],
+        [0, 0, 0, 0.1],
+      ],
+    },
+    [" cat", " sat"],
+  );
+  assert.match(story.text, /63% of the way through the audio/);
+  assert.doesNotMatch(story.text, /top|bottom|centre/);
+  const flat = crossAttentionStory(
+    {
+      stream: "audio",
+      grid: [1, 3],
+      token_mass: [0.1],
+      maps: [[0.1, 0.11, 0.1]],
+    },
+    [" cat"],
+  );
+  assert.match(flat.text, /about evenly across the audio/);
+});

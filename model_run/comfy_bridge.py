@@ -9,7 +9,7 @@ import time
 from .capture import capture_forward
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import TEXT_MIXING_LIMITATION, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -56,6 +56,7 @@ class DenoiserObserver:
             raise ValueError("token_labels must be a bounded list")
         self.token_labels = token_labels
         self._labels_checked = False
+        self._mixes_text = False
         self._labels_dropped = False
         self.ablate_tokens = parse_token_list(ablate_tokens)
         self._ablation_applied = 0
@@ -184,7 +185,8 @@ class DenoiserObserver:
         # records the real shapes on the model, and maps cover the first (video) stream.
         packed = getattr(self.base_model, "latent_shapes", None)
         latent_shape = list(packed[0]) if isinstance(packed, (list, tuple)) and len(packed) > 1 else list(latent.shape)
-        return {"call": call, "latent_shape": latent_shape, "text_tokens": int(context.shape[1]),
+        audio_steps = int(packed[1][2]) if isinstance(packed, (list, tuple)) and len(packed) > 1 and len(packed[1]) > 2 else None
+        return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "text_tokens": int(context.shape[1]),
                 "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
@@ -227,21 +229,32 @@ class DenoiserObserver:
                     ordinal = current.get("ordinal", 0)
                     current["ordinal"] = ordinal + 1
                     label, allow_joint = f"call:{ordinal}", False
+                is_audio = (current.get("audio_steps") is not None and int(q.shape[-2] if q.ndim == 4 else q.shape[1]) == current["audio_steps"]
+                            and int(k.shape[-2] if k.ndim == 4 else k.shape[1]) == current["text_tokens"])
+                audio_label = None
+                if is_audio:
+                    # Named by what it is, so the choice does not depend on how many other calls each block makes.
+                    audio_label = f"audio:{current.get('audio_ordinal', 0)}"
+                    current["audio_ordinal"] = current.get("audio_ordinal", 0) + 1
+                    seen = current.setdefault("seen", [])
+                    if len(seen) < 64:
+                        seen.append(audio_label)
                 if label is not None:
                     seen = current.setdefault("seen", [])
                     if label not in seen and len(seen) < 64:
                         seen.append(label)
-                if label == self.attention_block:
+                if self.attention_block in (label, audio_label):
                     mask = kwargs.get("mask", args[0] if args else None)
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid)
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
                     elif measurement["attention_kind"] == "joint" and not allow_joint:
                         current["reason"] = "Self-attention in this block has no text keys"
                     else:
+                        self._mixes_text = self._mixes_text or bool(measurement.get("text_queries"))
                         current["record"] = block_record(self.attention_block, denoiser_call=current["call"], batch_label=current["batch_label"],
-                                                         measurement=measurement, block_label=label)
+                                                         measurement=measurement, block_label=audio_label or label)
             except Exception as exc:  # measurement must never break sampling
                 current["reason"] = f"{type(exc).__name__}: {exc}"
         if self.previous_attention is not None:
@@ -315,6 +328,8 @@ class DenoiserObserver:
                     hint = f"; blocks seen: {seen[0]} … {seen[-1]} ({len(seen)})" if seen else "; no labelled attention calls were seen"
                     self._skip(call, f"No attention call matched block {self.attention_block}{hint}")
             current["record"] = None
+        if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(TEXT_MIXING_LIMITATION)
         if "cross_attention" in self.trace and self._skipped:
             self.trace["cross_attention"]["skipped"] = list(self._skipped)
         if self.publish is not None:
@@ -439,7 +454,7 @@ class ModelRunObserve:
                 "elements": ("INT", {"default": 1024, "min": 1, "max": 4096})},
                 "optional": {"output_selectors": ("STRING", {"default": "{}", "multiline": True,
                     "tooltip": "JSON mapping from module path to output tensor path, e.g. {\"transformer_blocks.0\": [1]} selects the audio tensor in an LTX block tuple."}),
-                    "attention_block": ("STRING", {"default": "", "tooltip": "Measure image-to-text attention in one block: double:0 or single:3 for DiT models, input:4 / middle:0 / output:1 for UNets. Empty disables."}),
+                    "attention_block": ("STRING", {"default": "", "tooltip": "Measure attention to text in one block: audio:0 for the audio stream of an audio+video model, double:0 or single:3 for DiT models, input:4 / middle:0 / output:1 for UNets. Empty disables."}),
                     "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
                     "clip": ("CLIP", {"tooltip": "Optional: with prompt, labels text tokens in the attention maps."}),
                     "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."}),
