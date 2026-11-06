@@ -108,8 +108,10 @@ With ComfyUI-WanVideoWrapper, put **Model Run · Observe (WanVideoWrapper)** bet
 transformer instead of going through ComfyUI's model wrapper, so the plain Observe node
 records nothing there. This node rides in the model's `transformer_options`, which the
 pack passes into every transformer call, and records each call's blocks and output the
-same way. The pack uses its own attention kernels, so it has no attention maps or token
-ablation yet.
+same way. Its attention is routed through Observe's hook for the call, so set
+`attention_block` (`double:N`, as ComfyUI's own Wan names blocks) and `prompt` for maps
+labelled with the pack's own T5 tokenizer. `ablate_tokens` masks words when the pack's
+attention mode is `sdpa`; its other kernels take no mask, and the trace says so.
 
 Use **Model Run · Generate Text** in place of **Generate Text** to watch a language
 model loaded through **Load CLIP**, such as Gemma or Qwen. It runs Generate Text's own

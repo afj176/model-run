@@ -211,7 +211,7 @@ ComfyUI-WanVideoWrapper's sampler calls its transformer directly, so ComfyUI's M
 
 | Setup | Result |
 |---|---|
-| Kijai's Wan 2.1 T2V 1.3B `bf16` through WanVideo Model Loader and WanVideo Sampler, SDPA attention, 480x320, 9 frames, 10 steps | Frame pixel-identical with every block recorded (124 events over 4 calls) and with two chosen blocks; a plain run afterwards still matched. Token-grid and frame views work. No attention maps: the pack uses its own attention kernels |
+| Kijai's Wan 2.1 T2V 1.3B `bf16` through WanVideo Model Loader and WanVideo Sampler, SDPA attention, 480x320, 9 frames, 10 steps | Frame pixel-identical with every block recorded (124 events over 4 calls) and with two chosen blocks; a plain run afterwards still matched. Token-grid and frame views work. Its attention is routed through Observe's hook: maps on `double:2` and `double:15` stayed pixel-identical in `sdpa` and `comfy` modes, labels from the pack's T5 tokenizer matched its 8 text tokens, and masking "red" gave a white cube while "wooden" removed the table |
 
 ## Language models in ComfyUI
 
