@@ -41,7 +41,18 @@ def task_for_config(config):
         return "image"
     if config.get("model_type") == "whisper":
         return "audio"
+    # Gemma 3 and 4 ship as image-and-text models that Transformers also loads as causal language models.
+    if any(a.endswith("ForConditionalGeneration") for a in names) and not config.get("is_encoder_decoder") and config.get("model_type") in _causal_lm_types():
+        return "text"
     return "inventory"
+
+
+def _causal_lm_types():
+    try:
+        from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+    except Exception:  # noqa: BLE001 - without Transformers nothing loads as text anyway
+        return frozenset()
+    return frozenset(MODEL_FOR_CAUSAL_LM_MAPPING_NAMES)
 
 
 def declared_name(config, fallback):

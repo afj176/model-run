@@ -68,3 +68,23 @@ test("layers are the outermost stack, not blocks nested inside it", async () => 
     ["model.encoder.layers.2", "model.decoder.layers.0"],
   );
 });
+
+test("a multimodal model lists its language layers, not its image tower", async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = { location: { href: "http://127.0.0.1:8766/" } };
+  const { displayNodes } = await import("../src/api.js");
+  globalThis.window = originalWindow;
+  const nodes = [
+    "model.vision_tower.encoder.layers.0",
+    "model.vision_tower.encoder.layers.1",
+    "model.language_model.layers.0",
+    "model.language_model.layers.1",
+  ].map((path) => ({ path }));
+  const paths = (tree) => displayNodes(tree).map((n) => n.path);
+  assert.deepEqual(paths({ nodes, primary_prefix: "model.language_model" }), [
+    "model.language_model.layers.0",
+    "model.language_model.layers.1",
+  ]);
+  assert.equal(paths({ nodes }).length, 4);
+});
+

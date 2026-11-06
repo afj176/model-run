@@ -32,6 +32,10 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(task_for_config({"architectures": ["ViTForImageClassification"]}), "image")
         self.assertEqual(task_for_config({"model_type": "whisper", "architectures": ["WhisperForConditionalGeneration"]}), "audio")
         self.assertEqual(task_for_config({"architectures": ["SomethingElse"]}), "inventory")
+        # Image-and-text models load as causal language models when Transformers maps their type that way.
+        self.assertEqual(task_for_config({"model_type": "gemma3", "architectures": ["Gemma3ForConditionalGeneration"]}), "text")
+        self.assertEqual(task_for_config({"model_type": "t5", "architectures": ["T5ForConditionalGeneration"]}), "inventory")
+        self.assertEqual(task_for_config({"model_type": "bart", "is_encoder_decoder": True, "architectures": ["BartForConditionalGeneration"]}), "inventory")
         self.assertEqual(task_for_config(None), "inventory")
 
     def test_names_come_from_the_config_only_when_published(self):

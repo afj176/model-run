@@ -254,6 +254,8 @@ def _validate(trace):
             raise ValueError("Invalid runtime structure")
         if "name" in structure and not isinstance(structure["name"], str):
             raise ValueError("Invalid structure name")
+        if "primary_prefix" in structure and (not isinstance(structure["primary_prefix"], str) or len(structure["primary_prefix"]) > 512):
+            raise ValueError("Invalid structure prefix")
         for node in structure["nodes"]:
             if not isinstance(node, dict) or not isinstance(node.get("path"), str) or not isinstance(node.get("type"), str):
                 raise ValueError("Invalid runtime component")
@@ -277,6 +279,9 @@ def _validate(trace):
     if "image_classification" in trace:
         from .media_models import validate_image_classification
         validate_image_classification(trace["image_classification"])
+    if "embedding" in trace:
+        from .embedding_models import validate_embedding
+        validate_embedding(trace["embedding"])
     if "output" in trace:
         output = trace["output"]
         if not isinstance(output, dict) or not isinstance(output.get("top_tokens"), list) or len(output["top_tokens"]) > 100:

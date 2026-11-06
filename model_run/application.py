@@ -13,6 +13,7 @@ from uuid import uuid4
 from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
+from .embedding_models import EmbeddingAdapter, is_embedding_package, load_local_embedding_model
 from .inventory import inspect_file, inspect_index
 from .model_install import ModelInstaller
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
@@ -84,7 +85,7 @@ class Application:
             except RuntimeError:
                 self.installer.request_rescan()  # another job is running; pick it up on a later poll
         with self._lock:
-            loaded = None if self._loaded is None else {k: self._loaded[k] for k in ("id", "name", "task", "device")}
+            loaded = None if self._loaded is None else {k: self._loaded.get(k) for k in ("id", "name", "task", "device", "dtype")}
             if loaded is not None:
                 loaded["chat_template"] = bool(getattr(self._loaded.get("tokenizer"), "chat_template", None))
             return {"host": self.host_kind, "job": deepcopy(self._state), "loaded": loaded,
@@ -120,6 +121,8 @@ class Application:
             for directory in dirs:
                 if any((parent / "model_index.json").is_file() for parent in directory.parents if parent in dirs):
                     continue  # Pipeline components are not standalone causal models.
+                if any(is_embedding_package(parent) for parent in directory.parents if parent in dirs):
+                    continue  # An embedding package's dense layers are steps of that package.
                 display = directory.name
                 if (directory / "model_index.json").is_file():
                     task = "diffusion"
@@ -132,6 +135,8 @@ class Application:
                     except (ValueError, UnicodeError):
                         continue
                     task = task_for_config(config)
+                    if task == "inventory" and is_embedding_package(directory):
+                        task = "embedding"
                     display = declared_name(config, directory.name) if task in ("image", "audio") else directory.name
                 else:
                     continue
@@ -227,20 +232,26 @@ class Application:
                 from .structure import inspect_module_tree
                 core = getattr(pipeline, "transformer", None) or getattr(pipeline, "unet", None)
                 tree = inspect_module_tree(core) if core is not None else {"nodes": [], "limitations": ["Pipeline has no exposed torch denoiser"]}
-                release = lambda: pipeline.to("cpu")
+                release = lambda: discard(pipeline)
+            elif is_embedding_package(path) and task_for_config(read_config(path)) == "inventory":
+                model, tokenizer, head = load_local_embedding_model(path, device=device)
+                adapter, task = EmbeddingAdapter(model, head), "embedding"
+                tree, release = adapter.structure(), lambda: discard(model)
             elif task_for_config(read_config(path)) in ("image", "audio"):
                 config = read_config(path)
                 task = task_for_config(config)
                 model, processor = load_local_media_model(path, task, device=device)
                 adapter = ImageClassifierAdapter(model) if task == "image" else SpeechAdapter(model)
                 tokenizer = processor
-                tree, release = adapter.structure(), lambda: model.to("cpu")
+                tree, release = adapter.structure(), lambda: discard(model)
                 display = declared_name(config, path.name)
             else:
                 from .local_text import load_local_text_model
                 model, tokenizer = load_local_text_model(path, device=device, attention_implementation="eager")
                 adapter, task = CausalLMAdapter(model), "text"
-                tree, release = adapter.structure(), lambda: model.to("cpu")
+                tree, release = adapter.structure(), lambda: discard(model)
+                if decoder_prefix(model):
+                    tree["primary_prefix"] = decoder_prefix(model)  # the stack a text prompt runs, ahead of image or audio towers
             with self._lock:
                 cancelled = self._cancelled
             if cancelled:
@@ -248,7 +259,7 @@ class Application:
                 return
             self.host.register(identifier, adapter, release=release)
             with self._lock:
-                self._loaded = {"id": identifier, "name": display, "device": device, "task": task,
+                self._loaded = {"id": identifier, "name": display, "device": device, "task": task, "dtype": loaded_dtype(adapter),
                                 "adapter": adapter, "tokenizer": tokenizer}
                 self._tree = tree
         return self._start("load", load)
@@ -306,6 +317,8 @@ class Application:
                 else:
                     prompt_text = prompt
                 ids = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
+                if mode == "raw":
+                    ids = with_start_token(tokenizer, ids)
                 if not 1 <= ids.shape[1] <= 128:
                     raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
                 inputs = {"input_ids": ids.to(item["device"])}
@@ -314,6 +327,8 @@ class Application:
                 if patching:
                     source_text = tokenizer.apply_chat_template([{"role": "user", "content": source_prompt}], tokenize=False, add_generation_prompt=True) if mode == "chat" else source_prompt
                     source_ids = tokenizer(source_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
+                    if mode == "raw":
+                        source_ids = with_start_token(tokenizer, source_ids)
                     if not 1 <= source_ids.shape[1] <= 128:
                         raise ValueError("Use a source prompt of 1 to 128 tokens")
                     inputs["source_ids"] = source_ids.to(item["device"])
@@ -335,7 +350,7 @@ class Application:
                     options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
                                "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
                 if not paths and not attention and not ablate and not patching and generate is None:
-                    paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
+                    paths.extend(text_layer_paths(item["adapter"].model, self._tree) or [""])
                 def decorate(output, trace):
                     trace["input_mode"] = mode
                     trace["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in ids[0].tolist()]
@@ -362,6 +377,24 @@ class Application:
                                 token["text"] = tokenizer.decode([token["token_id"]])
                         trace["source_run"]["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in inputs["source_ids"][0].tolist()]
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
+                    if item.get("dtype") not in (None, "float32"):
+                        trace["limitations"].append(f"The model ran in {item['dtype']}, its checkpoint's own precision, because it would not fit the GPU in float32; values differ slightly from a float32 run.")
+            elif item["task"] == "embedding":
+                if ablate or patching or generate is not None or request.get("attention") or request.get("ablate_tokens") is not None or request.get("cross_attention") is not None:
+                    raise ValueError("An embedding model has no next token, response or attention probe; running it records its layers and the sentence vector")
+                tokenizer = item["tokenizer"]
+                encoded = tokenizer(prompt, return_tensors="pt")
+                if not 1 <= encoded["input_ids"].shape[1] <= 128:
+                    raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
+                if not paths:
+                    paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
+                inputs = {"input_ids": encoded["input_ids"].to(item["device"]), "attention_mask": encoded["attention_mask"].to(item["device"])}
+                operation, options = "embed", {"max_tensor_elements": elements}
+                def decorate(output, trace):
+                    trace["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in encoded["input_ids"][0].tolist()]
+                    trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
+                    if item.get("dtype") not in (None, "float32"):
+                        trace["limitations"].append(f"The model ran in {item['dtype']}, its checkpoint's own precision, because it would not fit the GPU in float32; values differ slightly from a float32 run.")
             elif item["task"] in ("image", "audio"):
                 if ablate or patching or generate is not None or request.get("attention") or request.get("ablate_tokens") is not None or request.get("cross_attention") is not None:
                     raise ValueError("Ablation, patching and attention probes apply to text models; running this model records its layers and output")
@@ -638,3 +671,52 @@ class Application:
         self.cancel()
         self._executor.shutdown(wait=True)
         return self.host.close()
+
+
+def discard(target):
+    """Free a model's weights where they are, without copying them to the CPU first."""
+    modules = [target] if hasattr(target, "parameters") else [c for c in getattr(target, "components", {}).values() if hasattr(c, "parameters")]
+    for module in modules:
+        try:
+            module.to("meta")
+        except Exception:  # noqa: BLE001 - dropping the references still frees it
+            pass
+
+
+def loaded_dtype(adapter):
+    model = getattr(adapter, "model", None) or getattr(adapter, "pipeline", None)
+    try:
+        return str(next(model.parameters()).dtype).replace("torch.", "")
+    except Exception:  # noqa: BLE001 - pipelines expose no single dtype
+        return None
+
+
+def with_start_token(tokenizer, ids):
+    """Prepend the start-of-text token when the tokenizer defines one but left it off, as Gemma 4's does.
+
+    A start token that is also the end token (GPT-2) is not one the model expects, so it is left alone.
+    """
+    import torch
+    start = getattr(tokenizer, "bos_token_id", None)
+    ends = getattr(tokenizer, "eos_token_id", None)
+    ends = set(ends) if isinstance(ends, (list, tuple)) else {ends}
+    if not isinstance(start, int) or start in ends or (ids.shape[1] and int(ids[0, 0]) == start):
+        return ids
+    return torch.cat([torch.tensor([[start]], dtype=ids.dtype), ids], dim=1)
+
+
+def text_layer_paths(model, tree, limit=32):
+    """The language model's numbered layers first, since image and audio towers do not run on a text prompt."""
+    numbered = [n["path"] for n in tree["nodes"] if n["path"].split(".")[-1].isdigit()]
+    prefix = decoder_prefix(model)
+    inside = [path for path in numbered if not prefix or path.startswith(prefix + ".")]
+    return (inside or numbered)[:limit]
+
+
+def decoder_prefix(model):
+    """Where the language model's decoder sits in the module tree, or "" when it is the root or unknown."""
+    try:
+        decoder = model.get_decoder()
+        return next(name for name, module in model.named_modules() if module is decoder)
+    except Exception:  # noqa: BLE001 - not every model names its decoder
+        return ""

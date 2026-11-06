@@ -52,7 +52,21 @@ folders: its `extra_model_paths.yaml`, the shared folders in Comfy Desktop's las
   loading another first unloads the previous one. This is not a VRAM reservation.
 - Causal models use local safetensors and remote code disabled. Text captures are
   one forward pass, at most 128 input tokens, with raw next-token softmax results.
-  Raw prompt and tokenizer chat-template input modes are explicit.
+  Raw prompt and tokenizer chat-template input modes are explicit. A raw prompt gets
+  the tokenizer's start token when the tokenizer leaves it off (Gemma 4 does).
+- Image-and-text packages that Transformers also loads as causal language models,
+  such as Gemma 3 and Gemma 4, load as text models; captures default to the language
+  model's layers, since a text prompt never runs the image or audio towers.
+- Models load in float32. On CUDA, a 16-bit checkpoint that would not fit the GPU in
+  float32 loads in its own bfloat16 or float16 instead; the model bar and every trace
+  say so. A model larger than the GPU still runs, slowly, in shared memory.
+- Sentence Transformers packages (a `modules.json`, as EmbeddingGemma and Qwen3
+  Embedding ship) load as embedding models. Run records the encoder's layers and the
+  sentence vector made by the package's own pooling, dense and normalise steps, read
+  from the package without that library; it matches the library's vector. There is no
+  next token, response or attention probe for these.
+- Put a Transformers folder in ComfyUI's `text_encoders` folder (or `clip`) so the
+  catalog finds it.
 - Diffusers capture requires a pipeline declaring the latent callback interface
   and prompt/output inputs. The app supports bounded text-to-image inputs and a
   decoded PNG preview where returned. Other tasks use native ComfyUI execution or

@@ -39,6 +39,12 @@ export function displayNodes(tree, trace) {
     const match = stack.exec(n.path);
     return match && match.index + match[0].length === n.path.length;
   });
+  // A text prompt runs the language model's stack, so it comes before any image or audio tower.
+  const primary = tree?.primary_prefix;
+  const own = primary
+    ? blocks.filter((n) => n.path.startsWith(`${primary}.`))
+    : [];
+  if (own.length) return own.slice(0, 64);
   if (blocks.length) return blocks.slice(0, 64);
   if (nodes.length) {
     const roots = nodes.filter((n) => n.path && n.path.split(".").length <= 2);

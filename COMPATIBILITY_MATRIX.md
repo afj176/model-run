@@ -171,3 +171,17 @@ Not in this table:
 | TripoSplat `fp16` (VAST-AI), DINOv3-H: one masked image, 20 steps | Its latent is a nested tensor that cannot be saved, so the decoded splat (`.ply`) was compared: byte-identical with the nodes on, layers recorded. No map: its condition has more tokens than a map allows |
 | Trellis 2 `int8`, DINOv3-L: one image, structure stage, 12 steps | The 16x16x16 structure latent is bit-identical with the nodes on. Maps on its cross-attention calls (odd `call:N`) show each voxel slice reading the 1,029 image-feature tokens; there are no words to label |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |
+
+## Language and embedding models in the standalone app
+
+Transformers folders from Hugging Face, put in ComfyUI's `text_encoders` folder and loaded with Load on CUDA (RTX 5090 laptop, 24 GB). Each ran a layer capture, an attention probe and a 12-token response.
+
+| Model | What ran | Result |
+|---|---|---|
+| Qwen3-8B | bfloat16, since float32 would not fit the GPU | Next token " Paris", 32 layers recorded, attention probe, response in 2 s (57 s in float32, spilling into shared memory) |
+| Qwen3-14B | bfloat16; 27.5 GB still spills past the GPU | Next token " Paris", response in 56 s. Unloading used to copy the model to the CPU first and could exhaust RAM; it now frees the weights in place |
+| Gemma 3 4B it | float32, as `Gemma3ForConditionalGeneration` loaded as a causal language model | Next token " Paris", the first 32 of its 34 language layers recorded; the image tower is not run by a text prompt and is no longer picked by default |
+| Gemma 4 E4B it | bfloat16, as `Gemma4ForConditionalGeneration` | Its tokenizer leaves off `<bos>`, without which the model answers " France" and repeats itself; raw prompts now get it, giving " Paris". The model bar and Layer list show its 42 language layers, not the audio and vision towers |
+| EmbeddingGemma 300M | Sentence Transformers package, new embedding task | 24 layers and a 768-value vector from its own mean pooling, two dense layers and normalisation. The vector matches the Sentence Transformers library's to within 5e-7; a paraphrase scores 0.73 cosine against 0.23 for an unrelated sentence |
+
+Recursive's Flint was not run: its Transformers modelling code is not published, and the GGUF builds need a GGUF runtime this app does not have.

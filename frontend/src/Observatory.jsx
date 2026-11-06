@@ -48,6 +48,7 @@ import SliceNavigator from "./SliceNavigator";
 import ErrorBoundary from "./ErrorBoundary";
 import ImageClassification from "./ImageClassification";
 import AudioView from "./AudioView";
+import EmbeddingView from "./EmbeddingView";
 import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
 import ModelInstall from "./ModelInstall";
@@ -336,17 +337,23 @@ export function App() {
     [nodes],
   );
   const mlpUnits = useMemo(() => {
-    const unit = allNodes.find((n) =>
-      /\.mlp\.(?:up_proj|gate_proj|fc1|w1|c_fc)$/.test(n.path),
+    const primary = tree?.primary_prefix;
+    const unit = allNodes.find(
+      (n) =>
+        /\.mlp\.(?:up_proj|gate_proj|fc1|w1|c_fc)$/.test(n.path) &&
+        (!primary || n.path.startsWith(`${primary}.`)),
     );
     const shape = unit?.parameters?.[0]?.shape;
     return Array.isArray(shape) && shape.length ? Math.max(...shape) : null;
-  }, [allNodes]);
+  }, [allNodes, tree]);
   const modelFacts = state?.loaded
     ? [
         state.loaded.name,
         layerIndices.length ? `${layerIndices.length} layers` : null,
         mlpUnits ? `${mlpUnits.toLocaleString()} MLP units/layer` : null,
+        state.loaded.dtype && state.loaded.dtype !== "float32"
+          ? `${state.loaded.dtype} to fit the GPU`
+          : null,
       ]
         .filter(Boolean)
         .join(" · ")
@@ -1780,6 +1787,8 @@ export function App() {
               panels.push(<AudioView key="audio" trace={audioTrace} />);
             if (trace?.image_classification)
               panels.push(<ImageClassification key="image" trace={trace} />);
+            if (trace?.embedding)
+              panels.push(<EmbeddingView key="embedding" trace={trace} />);
             if (predictionTrace)
               panels.push(
                 <Prediction key="prediction" trace={predictionTrace} />,

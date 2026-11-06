@@ -2831,6 +2831,35 @@ main {
   min-width: 0;
 }
 
+/* Embedding model results. */
+.embedding-values {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  height: 96px;
+  margin: 12px 0 4px;
+  background: linear-gradient(var(--line, #ddd6ea), var(--line, #ddd6ea)) center / 100% 1px no-repeat;
+}
+.embedding-values i {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: flex-end;
+  margin-bottom: 48px;
+  background: var(--indigo);
+}
+.embedding-values i.negative {
+  align-self: flex-start;
+  margin: 48px 0 0;
+  background: var(--coral, #f57d78);
+}
+.embedding-view h3 {
+  margin: 16px 0 8px;
+  font-size: 14px;
+}
+.embedding-tokens i.negative {
+  background: var(--coral, #f57d78);
+}
+
 /* Audio view. */
 .audio-view-head {
   display: flex;
