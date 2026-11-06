@@ -103,6 +103,14 @@ Connect **Model Run · Observe** between a MODEL-producing node and its sampler.
   ComfyUI's attention kernel without the options that carry Observe's hook, so for each
   observed call Observe routes that module's kernel through its hook and puts it back.
 
+With ComfyUI-WanVideoWrapper, put **Model Run · Observe (WanVideoWrapper)** between
+**WanVideo Model Loader** and **WanVideo Sampler**. That pack's sampler calls its own
+transformer instead of going through ComfyUI's model wrapper, so the plain Observe node
+records nothing there. This node rides in the model's `transformer_options`, which the
+pack passes into every transformer call, and records each call's blocks and output the
+same way. The pack uses its own attention kernels, so it has no attention maps or token
+ablation yet.
+
 Use **Model Run · Generate Text** in place of **Generate Text** to watch a language
 model loaded through **Load CLIP**, such as Gemma or Qwen. It runs Generate Text's own
 code with the same settings, so the text is the same, and records the prompt's pass

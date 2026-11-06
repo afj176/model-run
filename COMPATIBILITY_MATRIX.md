@@ -205,6 +205,14 @@ Loaded with city96's ComfyUI-GGUF loaders, which dequantize GGUF weights on the 
 | Qwen-Image `Q4_K_S` | Pixel-identical on `double:0` and `double:30`. Masking "red" gave a white cube, "wooden" a plain table |
 | Wan 2.2 TI2V 5B `Q8_0` | Frame pixel-identical on `double:0` and `double:15`, with maps |
 
+## Wrapper packs
+
+ComfyUI-WanVideoWrapper's sampler calls its transformer directly, so ComfyUI's MODEL wrapper, and with it Model Run · Observe, never runs. Model Run · Observe (WanVideoWrapper) rides in the pack's model `transformer_options`, which its sampler passes into every transformer call.
+
+| Setup | Result |
+|---|---|
+| Kijai's Wan 2.1 T2V 1.3B `bf16` through WanVideo Model Loader and WanVideo Sampler, SDPA attention, 480x320, 9 frames, 10 steps | Frame pixel-identical with every block recorded (124 events over 4 calls) and with two chosen blocks; a plain run afterwards still matched. Token-grid and frame views work. No attention maps: the pack uses its own attention kernels |
+
 ## Language models in ComfyUI
 
 Single-file models from ComfyUI's own templates, loaded with Load CLIP and run by Generate Text and by Model Run · Generate Text with the same greedy settings and a 32-token limit. The prompt asked for France's capital in one short sentence.
