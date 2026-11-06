@@ -195,6 +195,16 @@ Each with Model Run · Observe on two blocks; the control was a canny edge image
 | Z-Image Turbo with the Fun Union ControlNet | A model patch (`QwenImageDiffsynthControlnet`) | Pixel-identical with Observe before or after the patch; masking "red" gave a grey cube |
 | SD 1.5 with IP-Adapter and IP-Adapter Plus (ComfyUI_IPAdapter_plus) | Replaces each block's cross-attention | Pixel-identical with Observe before or after it. Its replacement calls ComfyUI's kernel without the options that carry Model Run's hook, so maps were missing; such replacements are now routed through the hook for each observed call, and maps, labels and word masks work |
 
+## GGUF models (ComfyUI-GGUF)
+
+Loaded with city96's ComfyUI-GGUF loaders, which dequantize GGUF weights on the fly inside a normal ComfyUI model. Model Run · Observe on two blocks matched the plain run pixel for pixel in each.
+
+| Model | Result |
+|---|---|
+| Flux.1-dev `Q4_K_S` with a T5 `Q5_K_M` GGUF text encoder | Pixel-identical on `double:0` and `single:10`; Text Encode recorded the GGUF T5. Masking "red" gave a wooden cube, "wooden" a red floor |
+| Qwen-Image `Q4_K_S` | Pixel-identical on `double:0` and `double:30`. Masking "red" gave a white cube, "wooden" a plain table |
+| Wan 2.2 TI2V 5B `Q8_0` | Frame pixel-identical on `double:0` and `double:15`, with maps |
+
 ## Language models in ComfyUI
 
 Single-file models from ComfyUI's own templates, loaded with Load CLIP and run by Generate Text and by Model Run · Generate Text with the same greedy settings and a 32-token limit. The prompt asked for France's capital in one short sentence.

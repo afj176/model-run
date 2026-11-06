@@ -431,5 +431,7 @@ raw stdin. Fingerprinting is explicit and reads complete selected files.
 This release does not execute GGUF/ONNX, infer operation graphs from weights,
 train models, intervene on activations, or implement generic media preprocessing.
 Image/video/audio native models are observed through their ComfyUI execution.
+GGUF diffusion models and text encoders loaded in ComfyUI with ComfyUI-GGUF are
+observed like any other model; the standalone app does not load GGUF itself.
 The renderer deliberately avoids the mockup's invented operation wiring and
 illustrative activations.
