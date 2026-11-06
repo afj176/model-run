@@ -188,3 +188,31 @@ class LogitsAndCache(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerationTrace(unittest.TestCase):
+    class Clip:
+        cond_stage_model = torch.nn.Linear(1, 1)
+        def decode(self, ids, skip_special_tokens=True):
+            return "".join(f"<{i}>" for i in ids)
+
+    def test_each_written_token_gets_its_step_distribution(self):
+        from model_run.comfy_components import generation_trace
+        from model_run.trace_store import encode_trace
+        logits = [torch.tensor([0.0, 3.0, 1.0, 0.0]), torch.tensor([2.0, 0.0, 0.0, 1.0]), torch.tensor([0.0, 0.0, 0.0, 9.0])]
+        seen = {"tokens": {"qwen3": [[(7, 1.0), (8, 1.0)]]}, "ids": [1, 0, 3]}
+        trace = generation_trace(self.Clip(), seen, logits, max_length=3)
+        self.assertEqual([s["token_id"] for s in trace["steps"]], [1, 0, 3])
+        self.assertAlmostEqual(trace["steps"][0]["probability"], float(torch.softmax(logits[0], -1)[1]), places=6)
+        self.assertEqual(trace["steps"][0]["top_tokens"][0]["token_id"], 1)
+        self.assertEqual((trace["decoding"], trace["stopped"], trace["input"]["token_count"], trace["response"]), ("greedy", "max_new_tokens", 2, "<1><0><3>"))
+        self.assertEqual([t["id"] for t in trace["tokens"]], [7, 8])
+        encode_trace({**trace, "model_name": "test"})
+        sampled = generation_trace(self.Clip(), seen, logits + [torch.zeros(4)], max_length=8, sampling={"temperature": 0.7, "seed": 3})
+        self.assertEqual((sampled["decoding"], sampled["stopped"], sampled["sampling"]["seed"]), ("sampled", "eos", 3))
+        encode_trace(sampled)
+
+    def test_steps_that_cannot_be_paired_give_no_trace(self):
+        from model_run.comfy_components import generation_trace
+        self.assertIsNone(generation_trace(self.Clip(), {"ids": [1, 2]}, [torch.zeros(4)], max_length=8))
+        self.assertIsNone(generation_trace(self.Clip(), {"ids": []}, [], max_length=8))

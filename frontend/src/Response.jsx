@@ -9,7 +9,7 @@ import {
 } from "./insights";
 import { CacheGrowth } from "./TextPanels";
 
-/** The model's greedy response and, for each token it wrote, where that token came from. */
+/** The model's response and, for each token it wrote, where that token came from. */
 export default function Response({ trace, doubtful = false }) {
   const steps = trace?.steps || [];
   const [picked, setPicked] = useState(null);
@@ -59,7 +59,10 @@ export default function Response({ trace, doubtful = false }) {
         <h2>
           What it wrote
           <small>
-            greedy · {steps.length} token{steps.length === 1 ? "" : "s"} ·
+            {trace.decoding === "sampled"
+              ? `sampled${trace.sampling?.temperature !== undefined ? ` at temperature ${trace.sampling.temperature}` : ""}`
+              : "greedy"}{" "}
+            · {steps.length} token{steps.length === 1 ? "" : "s"} ·
             stopped:{" "}
             {trace.stopped === "eos"
               ? "end of text"

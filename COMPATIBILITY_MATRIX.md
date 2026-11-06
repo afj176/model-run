@@ -184,4 +184,19 @@ Transformers folders from Hugging Face, put in ComfyUI's `text_encoders` folder 
 | Gemma 4 E4B it | bfloat16, as `Gemma4ForConditionalGeneration` | Its tokenizer leaves off `<bos>`, without which the model answers " France" and repeats itself; raw prompts now get it, giving " Paris". The model bar and Layer list show its 42 language layers, not the audio and vision towers |
 | EmbeddingGemma 300M | Sentence Transformers package, new embedding task | 24 layers and a 768-value vector from its own mean pooling, two dense layers and normalisation. The vector matches the Sentence Transformers library's to within 5e-7; a paraphrase scores 0.73 cosine against 0.23 for an unrelated sentence |
 
+## Language models in ComfyUI
+
+Single-file models from ComfyUI's own templates, loaded with Load CLIP and run by Generate Text and by Model Run · Generate Text with the same greedy settings and a 32-token limit. The prompt asked for France's capital in one short sentence.
+
+| Model | Generate Text vs Model Run · Generate Text | Recorded |
+|---|---|---|
+| Gemma 4 E4B `fp8` | Identical text | 22 prompt tokens through its layers; 8 tokens written, the greedy pick the top recorded token at every step |
+| Gemma 3 4B `bf16` | Identical text | 32 prompt tokens; 8 tokens, top token at every step |
+| Qwen3 4B | Identical text | 25 prompt tokens; 8 tokens, top token at every step |
+| Qwen3.5 4B `bf16` | Identical text | 25 prompt tokens; 8 tokens, top token at every step |
+| Qwen3.5 9B `int8` | Identical text | 25 prompt tokens; 8 tokens, top token at every step |
+| Qwen3.8 27B `w4a8` | Identical text | 25 prompt tokens; 8 tokens, top token at every step |
+
+EmbeddingGemma has no ComfyUI node to run it, and ComfyUI does not load sharded Transformers folders.
+
 Recursive's Flint was not run: its Transformers modelling code is not published, and the GGUF builds need a GGUF runtime this app does not have.

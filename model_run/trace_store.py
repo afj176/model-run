@@ -143,7 +143,7 @@ def _validate_generation(trace):
         return (isinstance(tokens, list) and 1 <= len(tokens) <= 100
                 and all(isinstance(t, dict) and type(t.get("token_id")) is int and type(t.get("probability")) in (int, float) and 0 <= t["probability"] <= 1 for t in tokens))
     steps = trace.get("steps")
-    if (trace.get("decoding") != "greedy" or trace.get("stopped") not in ("max_new_tokens", "eos", "context_limit")
+    if (trace.get("decoding") not in ("greedy", "sampled") or trace.get("stopped") not in ("max_new_tokens", "eos", "context_limit")
             or not isinstance(trace.get("input"), dict) or type(trace["input"].get("token_count")) is not int
             or not isinstance(steps, list) or not 1 <= len(steps) <= 256 or type(trace.get("provenance")) is not bool):
         raise ValueError("Invalid generation capture")
@@ -164,6 +164,10 @@ def _validate_generation(trace):
     tokens = trace.get("tokens")
     if tokens is not None and (not isinstance(tokens, list) or len(tokens) != trace["input"]["token_count"]):
         raise ValueError("Invalid generation prompt tokens")
+    sampling = trace.get("sampling")
+    if sampling is not None and (trace["decoding"] != "sampled" or not isinstance(sampling, dict) or len(sampling) > 8
+                                 or any(not isinstance(k, str) or type(v) not in (int, float) for k, v in sampling.items())):
+        raise ValueError("Invalid generation sampling")
 
 
 def _validate_patching(block):

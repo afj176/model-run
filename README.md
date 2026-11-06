@@ -99,6 +99,13 @@ Connect **Model Run · Observe** between a MODEL-producing node and its sampler.
 - ComfyUI retains ownership of loading, conditioning, sampling, cancellation,
   outputs and memory management. There is no second model load in the extension.
 
+Use **Model Run · Generate Text** in place of **Generate Text** to watch a language
+model loaded through **Load CLIP**, such as Gemma or Qwen. It runs Generate Text's own
+code with the same settings, so the text is the same, and records the prompt's pass
+through the model's layers and, for every token it wrote, its probability and the
+tokens it nearly wrote. Speculative decoding is off so each step makes one token.
+Probabilities are the model's own, before temperature and the sampling filters.
+
 The extension exposes captures on the ComfyUI server's existing network boundary.
 Keep that host local or apply your normal ComfyUI authentication/access controls.
 The standalone app rejects cross-origin requests and requires a session token.
