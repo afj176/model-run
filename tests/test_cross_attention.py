@@ -162,6 +162,12 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(text_key_range(24, 24, 5, allow_joint=True, text_start=3), (3, 8))
         self.assertEqual(text_key_range(21, 21, 5, allow_joint=True), (0, 5))
 
+    def test_reference_and_pose_queries_around_the_video_are_not_mapped(self):
+        # SCAIL: 4 reference tokens, a 4x4 video, then 6 pose tokens; keys are padded text.
+        q, k = torch.randn(1, 2, 4 + 16 + 6, 8), torch.randn(1, 2, 12, 8)
+        found = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 1, 8, 8], known_image_tokens=16, query_lead=4)
+        self.assertEqual((found["attention_kind"], found["source_grid"], found["image_tokens"]), ("cross", [4, 4], 16))
+
     def test_geometry_identifies_joint_attention_but_not_self_attention(self):
         from model_run.cross_attention import joint_by_geometry
         self.assertTrue(joint_by_geometry(16 + 5, 16 + 5, 5, [1, 4, 4, 4]))

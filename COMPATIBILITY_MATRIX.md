@@ -74,7 +74,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | Wan SCAIL | 2 | yes | yes | text only (cross-attention) |
 | Wan SCAIL 2 | 2 | yes | yes | text only (cross-attention) |
 | Wan Dancer | 2 | yes | yes | not reached |
-| Cosmos Video | 6 | yes | yes | after 112 other tokens |
+| Cosmos Video | 6 | yes | yes | text only (cross-attention) |
 | Z-Image pixel space | 3 | yes | yes | first |
 | PiD | 4 | yes | yes | first |
 | Chroma Radiance | 7 | yes | yes | first |
@@ -147,4 +147,11 @@ Not in this table:
 | JoyImage Edit `int8`: edit a 768 image, guidance 4, 20 steps | Pixel-identical, and it did the edit. The reference image's tokens sit in the text keys after the user header, and labels mark them as image. Masking "blue" kept the cube red, and masking "marble" kept the wooden table |
 | Fibo 2 Edit Turbo `int8`: edit a 768 image, 4 steps | Pixel-identical, and it did the edit. Maps on its single blocks; its text keys hold the image inside a structured caption, so tokens are numbered |
 | PiD (Flux 1 latents to pixels): 512 to 2048, 4 steps | Pixel-identical, with maps. It runs on an empty prompt, so there are no words to label |
+| Wan 2.2 S2V `fp8`: 480x320, 9 frames, reference image and a test beat through wav2vec2 | Frame pixel-identical, with maps and labels. Masking "red" gave a dark green cube, and masking "wooden" gave a white table |
+| HuMo 17B `fp8`: 480x320, 9 frames, reference image and a test beat through Whisper | Frame pixel-identical. Masking "red" changed the cube's color; masking "wooden" barely changed the frame |
+| Wan 2.1 Fun Camera 1.3B: start image, zoom-in camera path | Frame pixel-identical, with maps and labels. The start image sets the frame, so the word test says nothing |
+| Causal Forcing (Wan 2.1, frame by frame): 4 steps | Frame pixel-identical. Its frame-by-frame path passes no options to attention, so maps come through each module's attention slot, named `call:N` |
+| SCAIL-Preview (Kijai's ComfyUI conversion) and SCAIL-2 `int8`: reference image and pose | Frames pixel-identical. Queries run the reference frame, the video, then pose tokens, and maps now cover the video alone. The reference image sets the frame, so the word test says nothing |
+| Wan 2.2 Animate 14B: reference image and pose, Move mode | Frame pixel-identical, with maps and labels. The reference sets the frame, so the word test says nothing |
+| Wan Dancer global 14B `fp8`: reference image and a test beat | Frame pixel-identical, with maps and labels. Without its LoRA at this short test the frames are noisy, so the word test says nothing |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

@@ -100,6 +100,9 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     elif known_image_tokens and not image_first and query_count == known_image_tokens and key_count not in (text_tokens, query_count):
         # Queries are the image alone and keys hold more than this prompt, as Hunyuan DiT's second encoder.
         kind, first_image_query = "cross", 0
+    elif known_image_tokens and query_lead and not image_first and query_count >= query_lead + known_image_tokens and key_count not in (text_tokens, query_count):
+        # Queries run other tokens, the image, then possibly more, as SCAIL's reference, video and pose.
+        kind, first_image_query = "cross", query_lead
     elif image_first and key_count >= (known_image_tokens or query_count) + text_tokens:
         kind, first_image_query = "joint", 0
     elif key_count == text_tokens and query_count != text_tokens:

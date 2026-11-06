@@ -23,7 +23,7 @@ TEXT_LAST_MODELS = {"AceStepConditionGenerationModel", "AsymmDiTJoint", "ErnieIm
 # Measured the same way: keys run image, text, then other conditioning, so the text is neither first nor last.
 IMAGE_FIRST_MODELS = {"HiDreamImageTransformer2DModel", "StageC"}
 # These call ComfyUI's attention without transformer_options, so its override never reaches them.
-BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "ErnieImageModel", "HunYuanDiT", "HunYuanDiTPlain", "PixArtMS"}
+BYPASS_ATTENTION_MODELS = {"AceStepConditionGenerationModel", "CausalWanModel", "ErnieImageModel", "HunYuanDiT", "HunYuanDiTPlain", "PixArtMS"}
 # Their latent runs along time, so a map is a strip, not an image.
 AUDIO_MODELS = {"AceStepConditionGenerationModel", "ACEStepTransformer2DModel", "AudioDiffusionTransformer"}
 TAIL_TEXT_MODELS = {"LensTransformer2DModel", "MageFlowTransformer2DModel", "SingleStreamDiT"}  # these drop their template openings
@@ -32,6 +32,7 @@ TEXT_LEADS = {"ACEStepTransformer2DModel": 1}  # one speaker token comes first
 ZERO_PADDED_MODELS = {"Anima", "AnimateWanModel", "CameraWanModel", "CausalWanModel", "HumoWanModel", "SCAIL2WanModel", "SCAILWanModel", "VaceWanModel",
                       "WanAnimate2Model", "WanDancerModel", "WanModel", "WanModel_S2V"}
 EXTRA_KEY_MODELS = {"HunYuanDiT"} | ZERO_PADDED_MODELS
+SCAIL_MODELS = {"SCAIL2WanModel", "SCAILWanModel"}
 # These make 3D shapes from a picture, so a map's "text" is image features and its "frames" are depth.
 SECOND_TEXT_LIMITATION = ("This model reads its prompt three times over: T5 tokens, then the same Llama tokens twice, from Llama's last layer "
                           "and from the layer this block uses. A word appears once in each, and its share is split between them.")
@@ -40,7 +41,7 @@ REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm a
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -318,8 +319,14 @@ class DenoiserObserver:
             # They pad the prompt to a fixed length with zeros, which are not tokens of the prompt.
             filled = context[batch_index].abs().sum(-1).nonzero()
             text_tokens = int(filled.max()) + 1 if len(filled) else text_tokens
+        reference = conditioning.get("reference_latent")
+        # SCAIL puts its reference frames before the video in the query sequence.
+        scail_lead = 0
+        if type(self.core).__name__ in SCAIL_MODELS and isinstance(reference, torch.Tensor) and reference.ndim == 5:
+            patch = self.core.patch_size
+            scail_lead = (int(reference.shape[-3]) // patch[0]) * (int(reference.shape[-2]) // patch[1]) * (int(reference.shape[-1]) // patch[2])
         return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": text_tokens,
-                "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
+                "scail_lead": scail_lead, "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
     def _skip(self, call, reason):
@@ -343,6 +350,11 @@ class DenoiserObserver:
             # Queries run summary tokens, the image, then any reference images.
             gist = sys.modules[type(self.core).__module__].gist_count(text_tokens, self.core.max_gist_tokens)
             return int(latent_shape[-2]) * int(latent_shape[-1]), gist
+        if name in SCAIL_MODELS and len(latent_shape) == 5:
+            # Queries run the reference frames, the video, then pose tokens; only the video gets a map.
+            patch = self.core.patch_size
+            video = (int(latent_shape[-3]) // patch[0]) * (int(latent_shape[-2]) // patch[1]) * (int(latent_shape[-1]) // patch[2])
+            return video, int((self._current or {}).get("scail_lead") or 0)
         return None, 0
 
     def attention_override(self, func, q, k, v, heads, *args, **kwargs):
@@ -414,7 +426,7 @@ class DenoiserObserver:
                     if self._audio_only and is_audio:
                         known = current["audio_steps"]
                     elif type(self.core).__name__ in EXTRA_KEY_MODELS and key_count != query_count:
-                        known = query_count
+                        known = known or query_count
                     # Z-Image pads its text to a multiple, so the image starts where the queries' length says.
                     image_at = query_count - known if known and type(self.core).__name__ in ("NextDiT", "NextDiTPixelSpace") else None
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
