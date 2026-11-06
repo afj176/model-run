@@ -154,4 +154,9 @@ Not in this table:
 | SCAIL-Preview (Kijai's ComfyUI conversion) and SCAIL-2 `int8`: reference image and pose | Frames pixel-identical. Queries run the reference frame, the video, then pose tokens, and maps now cover the video alone. The reference image sets the frame, so the word test says nothing |
 | Wan 2.2 Animate 14B: reference image and pose, Move mode | Frame pixel-identical, with maps and labels. The reference sets the frame, so the word test says nothing |
 | Wan Dancer global 14B `fp8`: reference image and a test beat | Frame pixel-identical, with maps and labels. Without its LoRA at this short test the frames are noisy, so the word test says nothing |
+| AuraFlow 0.3 (fal): 768, guidance 3.5, 20 steps | Pixel-identical. Its blocks are named `call:N`. Masking "wooden" gave a white table; masking "red" broke the image into streaks |
+| Cosmos Predict 2 2B text to image: 768, guidance 4, 20 steps | Pixel-identical; maps on its cross-attention calls. Masking "red" gave a black cube, and masking "wooden" gave a white table |
+| Flux 3 Klein `int8`, Qwen3-VL 4B `int8`: 768, 16 steps | Pixel-identical, maps on its single blocks with labels. Masking "red" or "wooden" barely changed the image, so labels stay unchecked |
+| Stable Cascade stages C and B: 768, 20 and 10 steps | Pixel-identical with the nodes on either stage. Stage C receives its prompt as `clip_text`, which is now read, and maps work; masking words barely changed the image, so labels stay unchecked. Stage B conditions on a pooled summary, so it has no word map |
+| SenseNova U1.5 (t8star's ComfyUI conversion): 512, 16 steps | Pixel-identical, layers recorded. Its text is token IDs inside the model, so there is no word map |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

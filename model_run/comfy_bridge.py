@@ -41,7 +41,7 @@ REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm a
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "MMDiT", "MiniTrainDIT", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -251,7 +251,7 @@ class DenoiserObserver:
     @staticmethod
     def _text_token_count(arguments):
         conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
-        context = conditioning.get("c_crossattn", conditioning.get("context"))
+        context = conditioning.get("c_crossattn", conditioning.get("context", conditioning.get("clip_text")))  # Stable Cascade C: clip_text
         shape = getattr(context, "shape", None)
         return int(shape[1]) if shape is not None and len(shape) == 3 else None
 
@@ -283,7 +283,7 @@ class DenoiserObserver:
             return None
         import torch
         conditioning = arguments.get("c") if isinstance(arguments.get("c"), dict) else {}
-        context = conditioning.get("c_crossattn", conditioning.get("context"))
+        context = conditioning.get("c_crossattn", conditioning.get("context", conditioning.get("clip_text")))  # Stable Cascade C: clip_text
         latent = arguments.get("input")
         if not isinstance(context, torch.Tensor) or context.ndim != 3:
             self._skip(call, "Denoiser call has no text context tensor")
