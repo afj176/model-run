@@ -339,3 +339,41 @@ class AttachOutputTests(unittest.TestCase):
         from model_run.comfy_bridge import ModelRunAttachOutput
         image = torch.rand(1, 8, 8, 3)
         self.assertIs(ModelRunAttachOutput().attach(Patcher(), image)[0], image)
+
+
+class ReplacedAttentionTests(unittest.TestCase):
+    def test_a_patch_that_bypasses_the_override_is_routed_through_it_for_one_call(self):
+        import sys
+        import types
+        from model_run.comfy_bridge import reach_replaced_attention
+        calls = []
+        def optimized_attention(q, k, v, heads, *args, **kwargs):
+            calls.append(("kernel", "transformer_options" in kwargs, kwargs.get("mask")))
+            return q
+        attention = types.ModuleType("comfy.ldm.modules.attention"); attention.optimized_attention = optimized_attention
+        plugin = types.ModuleType("fake_ipadapter"); plugin.optimized_attention = optimized_attention
+        def patch(q, k, v, extra_options):
+            return plugin.optimized_attention(q, k, v, extra_options["n_heads"])
+        patch.__module__ = "fake_ipadapter"
+        stubs = {"comfy": types.ModuleType("comfy"), "comfy.ldm": types.ModuleType("comfy.ldm"),
+                 "comfy.ldm.modules": types.ModuleType("comfy.ldm.modules"), "comfy.ldm.modules.attention": attention, "fake_ipadapter": plugin}
+        saved = {name: sys.modules.get(name) for name in stubs}
+        sys.modules.update(stubs)
+        try:
+            def override(func, q, k, v, heads, *args, **kwargs):
+                calls.append(("override", kwargs["transformer_options"]["block"]))
+                return func(q, k, v, heads, *args, mask="masked")
+            options = {"patches_replace": {"attn2": {("output", 4, 0): patch}}}
+            with reach_replaced_attention(options, override) as routed:
+                routed["patches_replace"]["attn2"][("output", 4, 0)](torch.ones(1), None, None, {"n_heads": 2, "block": ("output", 4)})
+                self.assertIs(options["patches_replace"]["attn2"][("output", 4, 0)], patch)  # the caller's options are not changed
+            self.assertEqual(calls, [("override", ("output", 4)), ("kernel", False, "masked")])
+            self.assertIs(plugin.optimized_attention, optimized_attention)
+            with reach_replaced_attention({}, override) as untouched:
+                self.assertEqual(untouched, {})
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module

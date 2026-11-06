@@ -107,6 +107,54 @@ def reach_attention(core, override):
             module.function = previous
 
 
+@contextmanager
+def reach_replaced_attention(options, override):
+    """Send attention replacement patches' kernel calls through ``override`` for one call; the options to use.
+
+    A replacement for a block's cross-attention, as IP-Adapter's, calls ComfyUI's kernel without
+    transformer_options, so ComfyUI's override never sees it. For one call, its module's reference to
+    the kernel is routed through ``override`` with that patch's options, then put back.
+    """
+    import inspect
+    replaced = options.get("patches_replace") if isinstance(options.get("patches_replace"), dict) else {}
+    patches = replaced.get("attn2") if isinstance(replaced.get("attn2"), dict) else {}
+    if not patches:
+        yield options
+        return
+    from comfy.ldm.modules.attention import optimized_attention
+    modules = []
+    for patch in patches.values():
+        module = sys.modules.get(patch.__module__ if inspect.isfunction(patch) else type(patch).__module__)
+        if module is not None and getattr(module, "optimized_attention", None) is optimized_attention and module not in modules:
+            modules.append(module)
+    if not modules:
+        yield options
+        return
+    current = []
+    def wrap(patch):
+        def run(q, k, v, extra_options):
+            current.append(extra_options)
+            try:
+                return patch(q, k, v, extra_options)
+            finally:
+                current.pop()
+        return run
+    def routed(q, k, v, heads, *args, **kwargs):
+        if not current or "transformer_options" in kwargs:
+            return optimized_attention(q, k, v, heads, *args, **kwargs)
+        def kernel(_q, _k, _v, _heads, *inner, **settings):
+            settings.pop("transformer_options", None)  # the override already ran; do not run it twice
+            return optimized_attention(q, k, v, heads, *inner, **settings)
+        return override(kernel, q, k, v, heads, *args, transformer_options=current[-1], **kwargs)
+    for module in modules:
+        module.optimized_attention = routed
+    try:
+        yield {**options, "patches_replace": {**replaced, "attn2": {key: wrap(patch) for key, patch in patches.items()}}}
+    finally:
+        for module in modules:
+            module.optimized_attention = optimized_attention
+
+
 class DenoiserObserver:
     def __init__(self, patcher, module_paths, *, max_calls=8, elements=1024, publish=None, output_selectors=None,
                  attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None, slice_values=None, slice_per_event=None):
@@ -468,11 +516,12 @@ class DenoiserObserver:
             options.pop("optimized_attention_override", None)
         else:
             options["optimized_attention_override"] = self.attention_override
-        args = {**args, "c": {**conditioning, "transformer_options": options}}
-        if own_kernel or type(self.core).__name__ in BYPASS_ATTENTION_MODELS:
-            with reach_attention(self.core, self.attention_override):
-                return self._invoke_reached(function, args)
-        return self._invoke_reached(function, args)
+        with reach_replaced_attention(options, self.attention_override) as options:
+            args = {**args, "c": {**conditioning, "transformer_options": options}}
+            if own_kernel or type(self.core).__name__ in BYPASS_ATTENTION_MODELS:
+                with reach_attention(self.core, self.attention_override):
+                    return self._invoke_reached(function, args)
+            return self._invoke_reached(function, args)
 
     def _invoke_reached(self, function, args):
         if self.previous is not None:

@@ -184,6 +184,17 @@ Transformers folders from Hugging Face, put in ComfyUI's `text_encoders` folder 
 | Gemma 4 E4B it | bfloat16, as `Gemma4ForConditionalGeneration` | Its tokenizer leaves off `<bos>`, without which the model answers " France" and repeats itself; raw prompts now get it, giving " Paris". The model bar and Layer list show its 42 language layers, not the audio and vision towers |
 | EmbeddingGemma 300M | Sentence Transformers package, new embedding task | 24 layers and a 768-value vector from its own mean pooling, two dense layers and normalisation. The vector matches the Sentence Transformers library's to within 5e-7; a paraphrase scores 0.73 cosine against 0.23 for an unrelated sentence |
 
+## ControlNet and IP-Adapter
+
+Each with Model Run · Observe on two blocks; the control was a canny edge image of a cube off to the left, the IP-Adapter reference a blue ball on grass. Every setup changed the image against the same run without it, and every Observe run matched its plain run pixel for pixel.
+
+| Setup | How it reaches the model | Result |
+|---|---|---|
+| SD 1.5 with ControlNet v1.1 canny | Residuals from a separate network added to the UNet | Pixel-identical on `output:4` and `input:8`, maps and labels; masking "red" or "wooden" still works with the control on |
+| SD3.5 Large with its canny ControlNet | Residuals into the DiT blocks | Pixel-identical on `call:0` and `call:20`; masking "red" gave a white cube and "wooden" a white table |
+| Z-Image Turbo with the Fun Union ControlNet | A model patch (`QwenImageDiffsynthControlnet`) | Pixel-identical with Observe before or after the patch; masking "red" gave a grey cube |
+| SD 1.5 with IP-Adapter and IP-Adapter Plus (ComfyUI_IPAdapter_plus) | Replaces each block's cross-attention | Pixel-identical with Observe before or after it. Its replacement calls ComfyUI's kernel without the options that carry Model Run's hook, so maps were missing; such replacements are now routed through the hook for each observed call, and maps, labels and word masks work |
+
 ## Language models in ComfyUI
 
 Single-file models from ComfyUI's own templates, loaded with Load CLIP and run by Generate Text and by Model Run · Generate Text with the same greedy settings and a 32-token limit. The prompt asked for France's capital in one short sentence.

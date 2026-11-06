@@ -153,6 +153,21 @@ class Install(Base):
         self.assertEqual([r[0] for r in hub.requests], ["HEAD"])
         self.assertFalse(self.vae.exists())
 
+    def test_a_renamed_repository_still_gives_the_published_hash(self):
+        # Comfy-Org renames repositories (hunyuan3D_2.0_repackaged became Hunyuan-3D-2.0); old links answer 307.
+        data = safetensors()
+        class Renamed(FakeHub):
+            def open(self, url, **kwargs):
+                if kwargs.get("method") == "HEAD" and url == URL:
+                    self.requests.append(("HEAD", url, {}))
+                    return Response(307, headers={"Location": "/org/repo-renamed/resolve/main/a.safetensors"})
+                return super().open(url, **kwargs)
+        hub = Renamed(data)
+        item = self.installer(hub).plan([self.request(len(data))])["items"][0]
+        self.assertTrue(item["ok"])
+        self.assertEqual(item["sha256"], sha256(data).hexdigest())
+        self.assertEqual([r[1] for r in hub.requests], [URL, "https://huggingface.co/org/repo-renamed/resolve/main/a.safetensors"])
+
     def test_a_copy_in_another_folder_of_the_type_counts_as_installed(self):
         data = safetensors()
         other = self.root / "shared" / "vae"

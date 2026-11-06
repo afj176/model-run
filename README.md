@@ -98,6 +98,10 @@ Connect **Model Run · Observe** between a MODEL-producing node and its sampler.
   A new queued execution resets the observation budget.
 - ComfyUI retains ownership of loading, conditioning, sampling, cancellation,
   outputs and memory management. There is no second model load in the extension.
+- ControlNets (classic, DiT and model-patch) and IP-Adapter work with Observe placed
+  before or after them. A cross-attention replacement such as IP-Adapter's calls
+  ComfyUI's attention kernel without the options that carry Observe's hook, so for each
+  observed call Observe routes that module's kernel through its hook and puts it back.
 
 Use **Model Run · Generate Text** in place of **Generate Text** to watch a language
 model loaded through **Load CLIP**, such as Gemma or Qwen. It runs Generate Text's own
