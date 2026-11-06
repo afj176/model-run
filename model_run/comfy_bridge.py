@@ -41,7 +41,7 @@ REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm a
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
-LABELS_CHECKED = {"Anima", "MMDiT", "MiniTrainDIT", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
+LABELS_CHECKED = {"Anima", "AsymmDiTJoint", "GeneralDIT", "Kandinsky5", "CogVideoXTransformer3DModel", "LTXVModel", "MMDiT", "MiniTrainDIT", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
@@ -319,6 +319,9 @@ class DenoiserObserver:
             # They pad the prompt to a fixed length with zeros, which are not tokens of the prompt.
             filled = context[batch_index].abs().sum(-1).nonzero()
             text_tokens = int(filled.max()) + 1 if len(filled) else text_tokens
+        if type(self.core).__name__ == "AsymmDiTJoint" and isinstance(conditioning.get("num_tokens"), (int, float)):
+            # Mochi drops its prompt's padding before attention, keeping only these tokens.
+            text_tokens = min(text_tokens, max(1, int(conditioning["num_tokens"])))
         reference = conditioning.get("reference_latent")
         # SCAIL puts its reference frames before the video in the query sequence.
         scail_lead = 0
@@ -488,7 +491,8 @@ class DenoiserObserver:
             aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ == "AudioDiffusionTransformer":
                 aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
-            if aligned is None and type(self.core).__name__ in ZERO_PADDED_MODELS and len(self.token_labels) > current["text_tokens"]:
+            if aligned is None and type(self.core).__name__ in ZERO_PADDED_MODELS | {"AsymmDiTJoint"} and len(self.token_labels) > current["text_tokens"]:
+                # Mochi keeps the front of its padded prompt, as the zero-padded models do.
                 aligned = list(self.token_labels[:current["text_tokens"]])
             if aligned is None:
                 aligned = labels_from_encoders(type(self.core).__name__, self.token_label_sets, current["text_tokens"])

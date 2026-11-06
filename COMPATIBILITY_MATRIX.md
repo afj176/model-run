@@ -65,7 +65,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | Hunyuan Image 2.1 | 6 | yes | yes | first |
 | PixelDiT | 3 | yes | yes | first |
 | Wan causal AR | 2 | yes | yes | text only (cross-attention) |
-| Wan VACE | 3 | yes | yes | text only (cross-attention) |
+| Wan VACE | 3 | yes | yes | first |
 | Wan Camera | 3 | yes | yes | text only (cross-attention) |
 | Wan HuMo | 2 | yes | yes | text only (cross-attention) |
 | Wan Animate | 2 | yes | yes | text only (cross-attention) |
@@ -159,4 +159,9 @@ Not in this table:
 | Flux 3 Klein `int8`, Qwen3-VL 4B `int8`: 768, 16 steps | Pixel-identical, maps on its single blocks with labels. Masking "red" or "wooden" barely changed the image, so labels stay unchecked |
 | Stable Cascade stages C and B: 768, 20 and 10 steps | Pixel-identical with the nodes on either stage. Stage C receives its prompt as `clip_text`, which is now read, and maps work; masking words barely changed the image, so labels stay unchecked. Stage B conditions on a pooled summary, so it has no word map |
 | SenseNova U1.5 (t8star's ComfyUI conversion): 512, 16 steps | Pixel-identical, layers recorded. Its text is token IDs inside the model, so there is no word map |
+| LTX Video 2B 0.9.5: 480x320, 9 frames, 20 steps | Frame pixel-identical, maps on its cross-attention calls. Masking "red" gave purple cubes on the wooden table; masking "wooden" kept the red cube on a table without wood |
+| Mochi preview `fp8`: 480x320, 7 frames, 20 steps | Frame pixel-identical. It drops its prompt's padding before attention, so the bridge counts the tokens it keeps (`num_tokens`). Masking "red" gave cream cubes; masking "wooden" changed little |
+| Cosmos 1 7B Text2World: 1280x704, 33 frames, 20 steps | Frame pixel-identical, maps on its cross-attention calls (odd `call:N`). At 704x448 and 9 frames it draws noise even without the nodes, so it was run at its native size. Masking "wooden" gave a grey table with the red cubes kept; masking "red" broke up the scene |
+| Kandinsky 5 Lite text to video: 480x320, 9 frames, 20 steps | Frame pixel-identical. Its encoder drops the template up to the user header, now recognised for labels. Masking "red" turned one face of the cube orange; masking "wooden" changed little |
+| CogVideoX through VOID pass 1 (Netflix, Comfy-Org template): 480x320, 9 frames, a mask over a figure | Frame pixel-identical, maps on its joint attention. The prompt describes the scene after removal; masking "table" removed the table it painted in, while masking "wooden" changed little |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |

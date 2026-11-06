@@ -242,6 +242,12 @@ class LabelAlignmentTests(unittest.TestCase):
         self.assertEqual(align_labels(["a", "b"], 2), ["a", "b"])
         template = ["<|im_start|>", "system", "x", "<|im_end|>", "<|im_start|>", "user", "cat"]
         self.assertEqual(align_labels(template, 3), ["<|im_start|>", "user", "cat"])
+        # Kandinsky 5 also drops the user header and its line break.
+        header_cut = ["<|im_start|>", "system", "x", "<|im_end|>", "\n", "<|im_start|>", "user", "\n", "a", "cat", "<|im_end|>"]
+        self.assertEqual(align_labels(header_cut, 3), ["a", "cat", "<|im_end|>"])
+        self.assertIsNone(align_labels(header_cut, 4))
+        shown = [label.replace("\n", "⏎") for label in header_cut]  # how readable_piece shows line breaks
+        self.assertEqual(align_labels(shown, 3), ["a", "cat", "<|im_end|>"])
         self.assertIsNone(align_labels(["a", "b", "c"], 2))
         self.assertIsNone(align_labels(["a"], 2))
         self.assertIsNone(align_labels(None, 2))

@@ -245,6 +245,21 @@ class PublishSafetyTests(unittest.TestCase):
         observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3)
         self.assertEqual(observer._text_start, -1)
 
+    def test_mochi_counts_only_the_prompt_tokens_it_keeps(self):
+        class AsymmDiTJoint(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer = torch.nn.Linear(4, 4)
+            def forward(self, value):
+                return self.layer(value)
+        patcher = Patcher()
+        patcher.model.diffusion_model = AsymmDiTJoint().eval()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="call:0")
+        arguments = {"input": torch.zeros(1, 12, 2, 4, 4), "c": {"c_crossattn": torch.zeros(1, 256, 8), "num_tokens": 11}}
+        self.assertEqual(observer._attention_context(0, arguments)["text_tokens"], 11)
+        del arguments["c"]["num_tokens"]
+        self.assertEqual(observer._attention_context(0, arguments)["text_tokens"], 256)
+
     def test_publish_failure_never_breaks_sampling(self):
         patcher = Patcher()
         attempts = []

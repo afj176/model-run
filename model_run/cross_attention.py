@@ -298,6 +298,10 @@ def align_labels(labels, text_tokens):
         return list(labels)
     if len(labels) > text_tokens and labels[-text_tokens] == "<|im_start|>":
         return list(labels[-text_tokens:])
+    # Others, as Kandinsky 5, also drop the user header and its line break.
+    header = [label.strip(" ").replace("⏎", "\n") for label in labels[-text_tokens - 3:-text_tokens]] if len(labels) >= text_tokens + 3 else None
+    if header == ["<|im_start|>", "user", "\n"]:
+        return list(labels[-text_tokens:])
     return None
 
 
