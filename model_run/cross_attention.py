@@ -133,6 +133,9 @@ def measure(q, k, *, heads, text_tokens, latent_shape, scale=None, mask=None, ba
     # An audio stream runs along one axis, so its map is a strip over time.
     grid = (1, image_tokens, 1, 1) if stream == "audio" else image_grid(image_tokens, latent_shape)
     if grid is None:
+        if kind == "joint" and key_count == query_count and image_grid(query_count, latent_shape) is not None:
+            # Every query and key is the image, so this is a block's self-attention (Cosmos, Trellis 2).
+            return {"unavailable": "Self-attention in this block has no text keys"}
         return {"unavailable": f"{image_tokens} image tokens do not map onto the latent grid {list(latent_shape)}"}
     rows, cols, factor, frames = grid
     scale = float(scale) if scale is not None else dim ** -0.5

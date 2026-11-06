@@ -168,6 +168,12 @@ class MeasureTests(unittest.TestCase):
         found = measure(q, k, heads=2, text_tokens=5, latent_shape=[1, 4, 1, 8, 8], known_image_tokens=16, query_lead=4)
         self.assertEqual((found["attention_kind"], found["source_grid"], found["image_tokens"]), ("cross", [4, 4], 16))
 
+    def test_self_attention_on_the_whole_image_says_so(self):
+        # Trellis 2: 4x4x4 voxels attend to each other; the keys hold none of the 6 conditioning tokens.
+        q = torch.randn(1, 2, 64, 8)
+        found = measure(q, q.clone(), heads=2, text_tokens=6, latent_shape=[1, 4, 4, 4, 4])
+        self.assertEqual(found["unavailable"], "Self-attention in this block has no text keys")
+
     def test_geometry_identifies_joint_attention_but_not_self_attention(self):
         from model_run.cross_attention import joint_by_geometry
         self.assertTrue(joint_by_geometry(16 + 5, 16 + 5, 5, [1, 4, 4, 4]))

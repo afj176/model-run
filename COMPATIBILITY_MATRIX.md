@@ -65,7 +65,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 | Hunyuan Image 2.1 | 6 | yes | yes | first |
 | PixelDiT | 3 | yes | yes | first |
 | Wan causal AR | 2 | yes | yes | text only (cross-attention) |
-| Wan VACE | 3 | yes | yes | first |
+| Wan VACE | 3 | yes | yes | text only (cross-attention) |
 | Wan Camera | 3 | yes | yes | text only (cross-attention) |
 | Wan HuMo | 2 | yes | yes | text only (cross-attention) |
 | Wan Animate | 2 | yes | yes | text only (cross-attention) |
@@ -167,4 +167,7 @@ Not in this table:
 | ACE-Step 1 3.5B: 8 seconds, instrumental tags, 20 steps | The denoiser's output latent is bit-identical with the nodes on. In one node run of three, the decoded audio differed from the plain runs in 4 of 704,512 samples (at most 64 of 32,768); the latent did not, so that comes from ComfyUI's audio decode. Maps with labels on the tags. Masking "guitar" or "piano" changes almost every sample, but whether the right instrument went has not been checked by ear, so labels stay unchecked |
 | MiniMax Music 3 `fp16`, its pruned `int8` encoder: 8 seconds, 20 steps | Decoded audio identical with the nodes on, layers recorded. Its attention bypasses ComfyUI's override, so there is no map |
 | YuE 2 3B `int8`: 8 seconds without a score, 32 steps | Decoded audio identical with the nodes on, layers recorded. Its attention bypasses ComfyUI's override, so there is no map |
+| Hunyuan3D 2 `fp16` and 2.1: one reference image, 3,072 and 4,096 shape tokens, 20 steps | The sampler's latent is bit-identical with the nodes on, layers recorded. Shape tokens are not an image, so there is no map |
+| TripoSplat `fp16` (VAST-AI), DINOv3-H: one masked image, 20 steps | Its latent is a nested tensor that cannot be saved, so the decoded splat (`.ply`) was compared: byte-identical with the nodes on, layers recorded. No map: its condition has more tokens than a map allows |
+| Trellis 2 `int8`, DINOv3-L: one image, structure stage, 12 steps | The 16x16x16 structure latent is bit-identical with the nodes on. Maps on its cross-attention calls (odd `call:N`) show each voxel slice reading the 1,029 image-feature tokens; there are no words to label |
 | SeedVR2 | Layers recorded; no map, because it bypasses the hook and conditions on fixed embeddings |
