@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import struct
 from pathlib import Path
 
@@ -33,6 +34,26 @@ def _json(data):
         return json.loads(data, object_pairs_hook=_pairs, parse_constant=lambda x: (_ for _ in ()).throw(InventoryError(f"Invalid constant: {x}")))
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise InventoryError(f"Invalid JSON: {exc}") from exc
+
+
+BLOCK_STACK = re.compile(r"(?:^|\.)([A-Za-z_]*(?:blocks|layers))\.(\d+)\.")
+
+
+def summarize(report: dict) -> dict:
+    """What a safetensors header says at a glance: parameter count, bytes per dtype and repeated block stacks.
+
+    Only recorded names and shapes are read; nothing about the model's family is guessed from them.
+    """
+    parameters, dtypes, stacks = 0, {}, {}
+    for tensor in report.get("tensors") or []:
+        count = math.prod(tensor.get("shape") or [])
+        parameters += count
+        dtype = tensor.get("dtype")
+        dtypes[dtype] = dtypes.get(dtype, 0) + count * DTYPE_BYTES.get(dtype, 0)
+        for stack, number in BLOCK_STACK.findall(tensor.get("name", "")):
+            stacks[stack] = max(stacks.get(stack, 0), int(number) + 1)
+    return {"parameters": parameters, "bytes_by_dtype": dict(sorted(dtypes.items(), key=lambda item: -item[1])),
+            "block_stacks": dict(sorted(stacks.items(), key=lambda item: -item[1])[:8])}
 
 
 MAX_GGUF_COUNT = 1_000_000  # far above any real model's tensors or metadata entries

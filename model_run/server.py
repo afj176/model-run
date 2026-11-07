@@ -45,10 +45,12 @@ def dispatch(app, method, route, body=None):
         if route.startswith("inspect/"): return app.inspect(route[8:])
         if route.startswith("traces/"): return app.trace(route[7:])
         if route.startswith("native-workflow/"): return app.native_workflow(route[16:])
+        if route.startswith("install/thumbnail/"): return {"thumbnail": app.installer.thumbnail(route[18:])}
     if method == "POST":
         if route == "scan": return app.scan()
         if route == "install/search": return app.installer.search(body.get("query", ""), category=body.get("category"), source=body.get("source"), missing_only=bool(body.get("missing_only")), names=app.installed_names())
-        if route == "install/workflows": return app.installer.workflows(body.get("query", ""), names=app.installed_names())
+        if route == "install/workflows": return app.installer.workflows(body.get("query", ""), kind=body.get("kind") or None, names=app.installed_names())
+        if route == "install/clear": return app.installer.clear_finished()
         if route == "install/hub": return app.installer.hub_search(body.get("query"))
         if route == "install/hub-files": return app.installer.hub_files(body.get("repo"), names=app.installed_names())
         if route == "install/plan": return app.installer.plan(body.get("items"))

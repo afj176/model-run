@@ -108,15 +108,26 @@ def _model_entries(value, into):
             _model_entries(item, into)
 
 
+def _number(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def read_templates(comfy_dir, notes):
-    """{template name: (title, description, [raw model entries])} from ComfyUI's workflow templates."""
+    """{template name: {title, description, kind, media, rank, size_bytes, models}} from ComfyUI's workflow templates.
+
+    The index groups templates into modules (Image, Video, Audio, 3D Model...) and gives each one a search
+    rank and the size of everything it downloads; a template listed in several modules keeps the first.
+    """
     templates = {}
     for package in _package_dirs("comfyui_workflow_templates_json", comfy_dir):
-        titles = {}
+        meta = {}
         try:
             for module in _read(os.path.join(package, "templates", "index.json")):
                 for item in module.get("templates", []):
-                    titles[item.get("name")] = (str(item.get("title") or ""), str(item.get("description") or ""))
+                    if isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"] not in meta:
+                        meta[item["name"]] = {"title": str(item.get("title") or ""), "description": str(item.get("description") or ""),
+                                              "kind": str(module.get("title") or "")[:40], "media": str(module.get("type") or "")[:20],
+                                              "rank": _number(item.get("searchRank")) or 0, "size_bytes": _number(item.get("size"))}
         except (OSError, ValueError, AttributeError) as exc:
             notes.append(f"Workflow titles unavailable: {exc}"[:200])
         for path in sorted(glob.glob(os.path.join(package, "templates", "*.json")))[:MAX_TEMPLATES]:
@@ -129,9 +140,24 @@ def read_templates(comfy_dir, notes):
             except (OSError, ValueError):
                 continue
             if entries:
-                title, description = titles.get(name, (name.replace("_", " "), ""))
-                templates[name] = (title, description, entries)
+                info = meta.get(name) or {"title": "", "description": "", "kind": "", "media": "", "rank": 0, "size_bytes": None}
+                templates[name] = {**info, "title": info["title"] or name.replace("_", " "), "models": entries}
     return templates
+
+
+TEMPLATE_NAME = re.compile(r"[A-Za-z0-9][\w.-]{0,199}")
+
+
+def template_thumbnail(name, comfy_dir=None):
+    """The installed preview image for a workflow template, or None. ComfyUI ships them in its template media packages."""
+    if not isinstance(name, str) or not TEMPLATE_NAME.fullmatch(name):
+        return None
+    for package in _package_dirs("comfyui_workflow_templates_json", comfy_dir):
+        for media in sorted(glob.glob(os.path.join(os.path.dirname(package), "comfyui_workflow_templates_media_*"))):
+            candidate = os.path.join(media, "templates", f"{name}-1.webp")
+            if os.path.isfile(candidate):
+                return candidate
+    return None
 
 
 def read_manager(comfy_dir, notes):
@@ -165,9 +191,9 @@ def load_index(comfy_dir=None):
         return items[key]
     templates = read_templates(comfy_dir, notes)
     workflows = []
-    for name, (title, description, models) in sorted(templates.items()):
-        ids = []
-        for model in models:
+    for name, template in sorted(templates.items()):
+        title, ids = template["title"], []
+        for model in template["models"]:
             category, subfolder, filename = _split_target(model["directory"], model["name"])
             item = entry(str(model["url"]), category, subfolder, filename)
             if "templates" not in item["sources"]:
@@ -178,7 +204,8 @@ def load_index(comfy_dir=None):
                 item["workflows"].append({"name": name, "title": title})
             if item["id"] not in ids:
                 ids.append(item["id"])
-        workflows.append({"name": name, "title": title, "description": description[:400], "models": ids})
+        workflows.append({"name": name, "title": title, "description": template["description"][:400], "kind": template["kind"],
+                          "media": template["media"], "rank": template["rank"], "size_bytes": template["size_bytes"], "models": ids})
     for model in read_manager(comfy_dir, notes):
         url, filename = model.get("url"), model.get("filename")
         if not isinstance(url, str) or not isinstance(filename, str) or not url.startswith("http"):

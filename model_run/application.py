@@ -14,7 +14,7 @@ from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
 from .embedding_models import EmbeddingAdapter, is_embedding_package, load_local_embedding_model
-from .inventory import inspect_file, inspect_index
+from .inventory import inspect_file, inspect_index, summarize
 from .model_install import ModelInstaller
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
@@ -33,9 +33,13 @@ def bounded_int(value, low, high, name):
     return value
 
 
+NOT_MODEL_FOLDERS = {"configs", "custom_nodes"}
+
+
 class Application:
     def __init__(self, entries=(), *, host_kind="standalone", install_folders=None, comfy_dir=None):
-        self.entries = list(entries)
+        # ComfyUI's configs and custom_nodes folders hold no models, so the catalog does not list them.
+        self.entries = [e for e in entries if e.get("category") not in NOT_MODEL_FOLDERS]
         folders = install_folders if callable(install_folders) else (lambda: list(install_folders if install_folders is not None else self.entries))
         self.installer = ModelInstaller(folders, comfy_dir=comfy_dir)
         self.host_kind = host_kind
@@ -185,7 +189,19 @@ class Application:
         else:
             return {"kind": "unsupported_artifact", "limitations": ["This format has no installed metadata reader. It has not been deserialized."]}
         result.pop("path", None)
+        if result.get("tensors"):
+            result["summary"] = summarize(result)
+            result["summary"]["workflows"] = self.workflows_using(path.name)
         return result
+
+    def workflows_using(self, filename):
+        """Titles of the ComfyUI workflow templates that list this file, which say what it is for."""
+        try:
+            index = self.installer.index()
+        except (OSError, ValueError):
+            return []
+        titles = [w["title"] for item in index["models"].values() if item["filename"] == filename for w in item["workflows"]]
+        return sorted(dict.fromkeys(titles))[:12]
 
     def structure(self):
         with self._lock:

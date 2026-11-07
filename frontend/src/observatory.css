@@ -3572,3 +3572,192 @@ i.after {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Model library: workflow cards, kind filters and steady list heights. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.library-list {
+  height: 42vh;
+}
+.model-install .library-list {
+  height: 38vh;
+  max-height: none;
+}
+.kind-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 12px;
+}
+.kind-filters button {
+  font-size: 11px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+.kind-filters button.active {
+  background: var(--indigo);
+  border-color: var(--indigo);
+  color: #fff;
+}
+.kind-filters button span {
+  margin-left: 5px;
+  opacity: 0.7;
+}
+.workflow-section h3 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 8px 0 6px;
+  font-size: 12px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.workflow-section h3 span {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.workflow-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.workflow-thumb {
+  flex: none;
+  width: 96px;
+  height: 72px;
+  border-radius: 8px;
+  background: var(--lilac);
+  overflow: hidden;
+}
+.workflow-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.workflow-body {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-body b {
+  display: block;
+  font-size: 13px;
+}
+.workflow-body > span,
+.workflow-description {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.workflow-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.workflow-files {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.workflow-files li {
+  overflow-wrap: anywhere;
+}
+.workflow-files li.have {
+  color: #0b7a66;
+}
+.workflow-files li.blocked {
+  color: #b3261e;
+}
+.workflow-action {
+  flex: none;
+  align-self: center;
+}
+.workflow-action button {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.install-jobs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+}
+.install-jobs-head button {
+  font-size: 11px;
+  min-height: 24px;
+  padding: 2px 8px;
+}
+@media (max-width: 640px) {
+  .workflow-card {
+    flex-wrap: wrap;
+  }
+  .workflow-thumb {
+    width: 72px;
+    height: 54px;
+  }
+  .workflow-action {
+    width: 100%;
+  }
+}
+.run-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.run-badge.here {
+  border-color: #0b7a66;
+  color: #0b7a66;
+}
+.library-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.inspect-summary {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--lilac);
+  font-size: 12px;
+}
+.inspect-summary dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+}
+.inspect-summary dt {
+  color: var(--muted);
+}
+.inspect-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.inspect-summary details {
+  margin-top: 10px;
+}

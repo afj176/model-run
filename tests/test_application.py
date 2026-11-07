@@ -59,6 +59,22 @@ class ApplicationTests(unittest.TestCase):
             finally:
                 app.close()
 
+    def test_comfyui_folders_that_hold_no_models_are_not_listed(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            for name in ("configs", "custom_nodes", "vae"):
+                (root / name).mkdir()
+            (root / "configs" / "v1-inference.yaml").write_text("model: {}")
+            (root / "custom_nodes" / "pack.py").write_text("")
+            (root / "vae" / "a.bin").write_bytes(b"x")
+            app = Application([{"path": str(root / name), "category": name} for name in ("configs", "custom_nodes", "vae")])
+            try:
+                app.scan()
+                app._future.result(5)
+                self.assertEqual([a["relative_path"] for a in app.catalog()["artifacts"]], ["vae/a.bin"])
+            finally:
+                app.close()
+
     def test_http_origin_token_and_trace_roundtrip(self):
         app = Application()
         server = make_server(app, 0)

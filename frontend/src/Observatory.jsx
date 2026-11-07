@@ -34,6 +34,7 @@ import CrossAttention from "./CrossAttention";
 import { Denoising, FeatureMaps, TextEncoderPanel } from "./ComfyPanels";
 import { AttentionLinks, LogitsPanel } from "./TextPanels";
 import Response from "./Response";
+import LocalLibrary from "./LocalLibrary";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import {
   attentionPastAudio,
@@ -142,8 +143,7 @@ export function App() {
       "Explain how a transformer works in a few sentences.",
     );
   const [device, setDevice] = useState("cuda"),
-    [inputMode, setInputMode] = useState("raw"),
-    [search, setSearch] = useState("");
+    [inputMode, setInputMode] = useState("raw");
   const [spread, setSpread] = useState(1),
     [rotate, setRotate] = useState(false),
     [resetKey, setResetKey] = useState(0),
@@ -181,7 +181,6 @@ export function App() {
     [seed, setSeed] = useState(0);
   const [layer, setLayer] = useState(0),
     [head, setHead] = useState(0),
-    [inspection, setInspection] = useState(null),
     [capturePaths, setCapturePaths] = useState([]),
     [libraryTab, setLibraryTab] = useState("local"),
     [speed, setSpeed] = useState(1);
@@ -484,7 +483,6 @@ export function App() {
         : eventPath(t.events?.[landing]),
     );
     setPlaying(false);
-    setInspection(null);
     setPanel(t.kind === "attention_capture" ? "attention" : "component");
     if (t.kind === "attention_capture") {
       if (Number.isInteger(t.layer)) setLayer(t.layer);
@@ -2060,154 +2058,57 @@ export function App() {
                   onInstalled={refreshCatalog}
                 />
               ) : (
-                <>
-                  <p className="muted">
-                    Models from configured ComfyUI paths. Local packages load in
-                    standalone mode; native checkpoints run through ComfyUI.
-                  </p>
-                  <div className="library-toolbar">
-                    <input
-                      aria-label="Search models"
-                      placeholder="Search models or formats…"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                    />
-                    <Button
-                      icon={ArrowClockwise}
-                      disabled={busy}
-                      onClick={() =>
-                        action(async () => {
-                          await api("scan", {});
-                          setInspection(null);
-                        })
-                      }
-                    >
-                      Refresh
-                    </Button>
-                  </div>
-                  <div className="library-list">
-                    {catalog.artifacts
-                      .filter(
-                        (a) =>
-                          !a.relative_path?.includes("/.cache/") &&
-                          (a.format !== "unknown" ||
-                            /\.(gguf|onnx|ckpt|pt|pth|bin)$/i.test(a.name)),
-                      )
-                      .filter((a) =>
-                        `${a.name} ${a.format} ${a.relative_path}`
-                          .toLowerCase()
-                          .includes(search.toLowerCase()),
-                      )
-                      .map((a) => (
-                        <div className="artifact" key={a.id}>
-                          <div>
-                            <b>{a.name}</b>
-                            <span>
-                              {a.format} · {a.status}
-                              {a.tensor_count
-                                ? ` · ${a.tensor_count.toLocaleString()} tensors`
-                                : ""}
-                            </span>
-                            <small>{a.relative_path}</small>
-                          </div>
-                          <button
-                            onClick={() =>
-                              action(async () =>
-                                setInspection(await api(`inspect/${a.id}`)),
-                              )
-                            }
-                          >
-                            Inspect
-                          </button>
-                          {["safetensors", "safetensors_index"].includes(
-                            a.format,
-                          ) &&
-                            a.status === "metadata_inspected" && (
-                              <button
-                                onClick={() =>
-                                  action(async () => {
-                                    const structure = await api(
-                                      `artifact-structure/${a.id}`,
-                                    );
-                                    setTree(structure);
-                                    setTrace(null);
-                                    setTraceId("");
-                                    setSelected("");
-                                    setCapturePaths([]);
-                                    setPlaying(false);
-                                    setView("model");
-                                    setPanel("component");
-                                    setModal(null);
-                                  })
-                                }
-                              >
-                                Explore
-                              </button>
-                            )}
-                          {a.task !== "inventory" &&
-                            state?.host === "standalone" && (
-                              <button
-                                className="primary"
-                                disabled={busy}
-                                onClick={() =>
-                                  action(async () => {
-                                    await api("load", { id: a.id, device });
-                                    setModal(null);
-                                  })
-                                }
-                              >
-                                Load
-                              </button>
-                            )}
-                        </div>
-                      ))}
-                    {!catalog.artifacts.length && (
-                      <div className="library-empty">
-                        <h3>No model paths configured yet</h3>
-                        <p>
-                          Start with <code>--models-dir</code> pointing to
-                          ComfyUI’s models folder, or <code>--extra-paths</code>{" "}
-                          pointing to its configuration. Inside ComfyUI, Model
-                          Run uses the live folder registry.
-                        </p>
-                        <p>You can still import and explore traces.</p>
-                      </div>
-                    )}
-                  </div>
-                  {catalog.errors?.length > 0 && (
-                    <details>
-                      <summary>
-                        {catalog.errors.length} discovery notices
-                      </summary>
-                      <pre>{JSON.stringify(catalog.errors, null, 2)}</pre>
-                    </details>
-                  )}
-                  {inspection && (
-                    <details open className="inspection">
-                      <summary>Artifact metadata</summary>
-                      <pre>{JSON.stringify(inspection, null, 2)}</pre>
-                    </details>
-                  )}
-                </>
+                <LocalLibrary
+                  catalog={catalog}
+                  host={state?.host}
+                  busy={busy}
+                  action={action}
+                  onExplore={(a) =>
+                    action(async () => {
+                      const structure = await api(`artifact-structure/${a.id}`);
+                      setTree(structure);
+                      setTrace(null);
+                      setTraceId("");
+                      setSelected("");
+                      setCapturePaths([]);
+                      setPlaying(false);
+                      setView("model");
+                      setPanel("component");
+                      setModal(null);
+                    })
+                  }
+                  onLoad={(a) =>
+                    action(async () => {
+                      await api("load", { id: a.id, device });
+                      setModal(null);
+                    })
+                  }
+                />
               )}
-              <footer>
-                <Field label="Load device">
-                  <select
-                    value={device}
-                    onChange={(e) => setDevice(e.target.value)}
-                  >
-                    <option value="cuda">CUDA GPU</option>
-                    <option value="cpu">CPU</option>
-                  </select>
-                </Field>
-                <Button
-                  icon={Stop}
-                  disabled={busy || !state?.loaded}
-                  onClick={() => action(() => api("unload", {}))}
-                >
-                  Unload model
-                </Button>
-              </footer>
+              {state?.host === "standalone" &&
+                (state?.loaded ||
+                  catalog.artifacts.some(
+                    (a) => a.task && a.task !== "inventory",
+                  )) && (
+                  <footer>
+                    <Field label="Load device">
+                      <select
+                        value={device}
+                        onChange={(e) => setDevice(e.target.value)}
+                      >
+                        <option value="cuda">CUDA GPU</option>
+                        <option value="cpu">CPU</option>
+                      </select>
+                    </Field>
+                    <Button
+                      icon={Stop}
+                      disabled={busy || !state?.loaded}
+                      onClick={() => action(() => api("unload", {}))}
+                    >
+                      Unload model
+                    </Button>
+                  </footer>
+                )}
             </>
           ) : native ? (
             <>

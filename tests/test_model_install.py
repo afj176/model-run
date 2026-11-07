@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from model_run.model_install import ModelInstaller, Transport, _safe_part
-from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, install_note, load_index, parse_size
+from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, install_note, load_index, parse_size, template_thumbnail
 
 URL = "https://huggingface.co/org/repo/resolve/main/a.safetensors"
 
@@ -152,6 +152,26 @@ class Index(unittest.TestCase):
         self.assertIn("run code", ckpt["blocked"])
         self.assertEqual(index["workflows"][0]["models"], [merged["id"]])
 
+    def test_templates_keep_their_group_rank_size_and_thumbnail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp) / ".venv" / "Lib" / "site-packages"
+            templates = site / "comfyui_workflow_templates_json" / "templates"
+            templates.mkdir(parents=True)
+            model = {"name": "a.safetensors", "url": URL, "directory": "vae"}
+            (templates / "flux.json").write_text(json.dumps({"models": [model]}), encoding="utf-8")
+            index = [{"title": "Image", "type": "image", "templates": [{"name": "flux", "title": "Flux", "searchRank": 7, "size": 2048}]},
+                     {"title": "Product & Ads", "type": "image", "templates": [{"name": "flux", "title": "Flux again"}]}]
+            (templates / "index.json").write_text(json.dumps(index), encoding="utf-8")
+            media = site / "comfyui_workflow_templates_media_image" / "templates"
+            media.mkdir(parents=True)
+            (media / "flux-1.webp").write_bytes(b"RIFF")
+            workflow = load_index(tmp)["workflows"][0]
+            self.assertEqual((workflow["title"], workflow["kind"], workflow["media"], workflow["rank"], workflow["size_bytes"]),
+                             ("Flux", "Image", "image", 7, 2048))
+            self.assertEqual(Path(template_thumbnail("flux", tmp)).name, "flux-1.webp")
+            for name in ("../flux", "flux/x", "", "-flux", None):
+                self.assertIsNone(template_thumbnail(name, tmp), name)
+
     def test_no_lists_says_so(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIn("Hugging Face search still works", load_index(tmp)["notes"][-1])
@@ -232,6 +252,36 @@ class Install(Base):
         self.assertEqual(job["status"], "failed")
         self.assertIn("not a valid safetensors", job["error"])
         self.assertEqual(list(self.vae.iterdir()), [])
+
+    def test_workflows_nearest_to_ready_come_first_with_their_groups(self):
+        def model(i, size=None):
+            return {"id": f"m{i}", "name": f"m{i}.safetensors", "filename": f"m{i}.safetensors", "url": URL.replace("a.safetensors", f"m{i}.safetensors"),
+                    "category": "vae", "subfolder": "", "size_bytes": size, "sha256": None, "description": "", "base": "", "sources": ["templates"],
+                    "workflows": [], "blocked": None, "note": None}
+        models = {f"m{i}": model(i, 1000 * i) for i in range(1, 6)}
+        workflows = [{"name": "far", "title": "Far", "description": "", "kind": "Video", "rank": 900, "models": ["m1", "m2", "m3"]},
+                     {"name": "near", "title": "Near", "description": "", "kind": "Image", "rank": 5, "models": ["m4", "m1"]},
+                     {"name": "ready", "title": "Ready", "description": "", "kind": "Image", "rank": 1, "models": ["m4"]},
+                     {"name": "popular", "title": "Popular", "description": "", "kind": "Image", "rank": 50, "models": ["m4", "m2"]}]
+        index = {"models": {m["url"]: m for m in models.values()}, "by_id": models, "workflows": workflows, "notes": []}
+        self.vae.mkdir(parents=True)
+        (self.vae / "m4.safetensors").write_bytes(b"x")
+        result = self.installer(FakeHub(b""), index=index).workflows("")
+        self.assertEqual([w["name"] for w in result["workflows"]], ["ready", "popular", "near", "far"])
+        self.assertEqual(result["ready"], 1)
+        self.assertEqual(result["workflows"][2]["missing_bytes"], 1000)
+        self.assertEqual({k["kind"]: k["count"] for k in result["kinds"]}, {"Video": 1, "Image": 3})
+        only = self.installer(FakeHub(b""), index=index).workflows("", kind="Video")
+        self.assertEqual([w["name"] for w in only["workflows"]], ["far"])
+        self.assertEqual({k["kind"] for k in only["kinds"]}, {"Video", "Image"})  # every group stays offered
+
+    def test_finished_downloads_can_be_cleared(self):
+        data = safetensors()
+        installer = self.installer(FakeHub(data))
+        self.wait(installer, installer.start([self.request(len(data))])["jobs"][0])
+        self.assertEqual(len(installer.status()["jobs"]), 1)
+        self.assertEqual(installer.clear_finished()["jobs"], [])
+        self.assertTrue((self.vae / "a.safetensors").is_file())
 
     def test_search_finds_gguf_repos_too_and_merges_them(self):
         answers = {"safetensors": [{"id": "org/both", "downloads": 50}, {"id": "org/plain", "downloads": 900}],

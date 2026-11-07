@@ -152,9 +152,25 @@ the same access controls you use for ComfyUI.
 
 ## Get models
 
-**Get models** searches the model lists ComfyUI ships (its workflow templates and ComfyUI
-Manager's list) and, when you ask, Hugging Face, then installs into ComfyUI's folders.
-**By workflow** installs everything a template is missing.
+The **Model library** has two tabs.
+
+**On this computer** lists the files in your ComfyUI model folders, grouped by folder. Each
+one says whether it **runs here** (a Transformers, Sentence Transformers or Diffusers
+folder) or **runs in ComfyUI** (single-file checkpoints, diffusion models, text encoders,
+VAEs and LoRAs, which Model Run · Observe records there). **Inspect** reads a file's header
+without loading it: parameter count, storage by precision, repeated block stacks and the
+ComfyUI workflow templates that use it, with the full header below. **Explore** shows its
+tensor names in 3D.
+
+**Get models** installs into ComfyUI's folders from three places:
+
+- **By workflow** (the default) lists every workflow template ComfyUI ships, with its
+  preview, nearest to ready first: templates your installed models already complete, then
+  those one file away. Filter by kind (Image, Video, Audio, 3D, LLM and more) and get a
+  template's missing files in one step.
+- **All files** searches every file in ComfyUI's template lists and ComfyUI Manager's list.
+- **Hugging Face** searches Hugging Face, only when you ask, including repos that only have
+  GGUF files.
 
 - Nothing downloads without a click. The confirmation shows the size, source, destination
   and free space.

@@ -1,9 +1,105 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { formatBytes, installProgress, planTotals } from "./installData";
+import { SECTIONS, sectionOf } from "./libraryData";
 
 const SOURCES = { templates: "ComfyUI templates", manager: "ComfyUI Manager" };
 const ACTIVE = ["queued", "downloading", "verifying"];
+const TABS = [
+  ["workflows", "By workflow"],
+  ["models", "All files"],
+  ["hub", "Hugging Face"],
+];
+// Previews are read once per page load; null records a template with none.
+const thumbnails = new Map();
+
+/** A template's preview from ComfyUI's own media, fetched only when its card comes near the view. */
+function Thumbnail({ name }) {
+  const [src, setSrc] = useState(thumbnails.get(name) ?? null);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (thumbnails.has(name)) {
+      setSrc(thumbnails.get(name));
+      return undefined;
+    }
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return undefined;
+    let alive = true;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        api(`install/thumbnail/${encodeURIComponent(name)}`)
+          .then((r) => {
+            const url = r.thumbnail
+              ? `data:${r.thumbnail.mime};base64,${r.thumbnail.base64}`
+              : null;
+            thumbnails.set(name, url);
+            if (alive) setSrc(url);
+          })
+          .catch(() => thumbnails.set(name, null));
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(node);
+    return () => {
+      alive = false;
+      observer.disconnect();
+    };
+  }, [name]);
+  return (
+    <div className="workflow-thumb" ref={ref} aria-hidden="true">
+      {src && <img src={src} alt="" />}
+    </div>
+  );
+}
+
+function WorkflowCard({ workflow: w, onInstall }) {
+  const missing = w.models.filter((m) => !m.installed && !m.blocked);
+  const facts = [
+    w.kind,
+    w.size_bytes ? `${formatBytes(w.size_bytes)} of models` : null,
+  ].filter(Boolean);
+  return (
+    <div className="workflow-card">
+      <Thumbnail name={w.name} />
+      <div className="workflow-body">
+        <b>{w.title}</b>
+        <span>{facts.join(" · ")}</span>
+        {w.description && (
+          <small className="workflow-description">{w.description}</small>
+        )}
+        <ul className="workflow-files" aria-label={`Files for ${w.title}`}>
+          {w.models.map((m) => (
+            <li
+              key={m.id}
+              className={m.installed ? "have" : m.blocked ? "blocked" : ""}
+              title={m.blocked || `${m.category}/${m.filename}`}
+            >
+              <span aria-hidden="true">{m.installed ? "✓" : "○"}</span>{" "}
+              {m.filename}
+              <span className="sr-only">
+                {m.installed ? " (installed)" : " (missing)"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="workflow-action">
+        {!w.missing ? (
+          <span className="install-have">Ready</span>
+        ) : missing.length ? (
+          <button onClick={() => onInstall(missing.slice(0, 32))}>
+            Get {missing.length} file{missing.length === 1 ? "" : "s"}
+            {w.missing_bytes ? ` · ${formatBytes(w.missing_bytes)}` : ""}
+          </button>
+        ) : (
+          <span className="install-note">Cannot install here</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const requestFor = (model, folder) => ({
   url: model.url,
@@ -32,7 +128,9 @@ function ModelRow({ model, onInstall, categories, onCategory }) {
           {uses ? ` · used by ${uses} workflow${uses === 1 ? "" : "s"}` : ""}
         </span>
         {model.description && <small>{model.description}</small>}
-        {model.note && !model.blocked && <small className="install-note">{model.note}</small>}
+        {model.note && !model.blocked && (
+          <small className="install-note">{model.note}</small>
+        )}
         {model.blocked && (
           <small className="install-note">{model.blocked}</small>
         )}
@@ -133,8 +231,21 @@ function Jobs({ jobs, onRetry, onError }) {
   if (!jobs.length) return null;
   const cancel = (id, discard) =>
     api("install/cancel", { id, discard }).catch((e) => onError(e.message));
+  const finished = jobs.filter((j) => !ACTIVE.includes(j.status)).length;
   return (
     <div className="install-jobs" aria-label="Downloads">
+      <div className="install-jobs-head">
+        <span>Downloads</span>
+        {finished > 0 && (
+          <button
+            onClick={() =>
+              api("install/clear", {}).catch((e) => onError(e.message))
+            }
+          >
+            Clear finished
+          </button>
+        )}
+      </div>
       {jobs.map((job) => {
         const progress = installProgress(job);
         const active = ACTIVE.includes(job.status);
@@ -170,7 +281,8 @@ function Jobs({ jobs, onRetry, onError }) {
 
 /** Find models in the lists ComfyUI ships or on Hugging Face, and install them into ComfyUI's folders. */
 export default function ModelInstall({ jobs, onInstalled }) {
-  const [tab, setTab] = useState("models");
+  const [tab, setTab] = useState("workflows");
+  const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [missingOnly, setMissingOnly] = useState(false);
@@ -198,9 +310,10 @@ export default function ModelInstall({ jobs, onInstalled }) {
               missing_only: missingOnly,
             }).then((r) => alive && setResults(r))
           : tab === "workflows"
-            ? api("install/workflows", { query }).then(
-                (r) => alive && setWorkflows(r),
-              )
+            ? api("install/workflows", {
+                query,
+                kind: kind || undefined,
+              }).then((r) => alive && setWorkflows(r))
             : null;
       run?.catch((e) => alive && setError(e.message));
     }, 200);
@@ -208,7 +321,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [tab, query, category, missingOnly, installedCount]);
+  }, [tab, query, kind, category, missingOnly, installedCount]);
 
   useEffect(() => {
     if (installedCount) onInstalled?.();
@@ -262,11 +375,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
   return (
     <div className="model-install">
       <div className="tabs" role="tablist" aria-label="Where to look">
-        {[
-          ["models", "ComfyUI lists"],
-          ["workflows", "By workflow"],
-          ["hub", "Hugging Face"],
-        ].map(([id, label]) => (
+        {TABS.map(([id, label]) => (
           <button
             key={id}
             role="tab"
@@ -286,7 +395,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
               ? "Search workflows…"
               : tab === "hub"
                 ? "Search Hugging Face…"
-                : "Search models, VAEs, LoRAs…"
+                : "Search every file ComfyUI lists: models, VAEs, LoRAs…"
           }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -322,6 +431,25 @@ export default function ModelInstall({ jobs, onInstalled }) {
           </button>
         )}
       </div>
+      {tab === "workflows" && workflows?.kinds?.length > 0 && (
+        <div
+          className="kind-filters"
+          role="group"
+          aria-label="Kind of workflow"
+        >
+          {[{ kind: "", count: null }, ...workflows.kinds].map((k) => (
+            <button
+              key={k.kind || "all"}
+              aria-pressed={kind === k.kind}
+              className={kind === k.kind ? "active" : ""}
+              onClick={() => setKind(k.kind)}
+            >
+              {k.kind || "All"}
+              {k.count != null && <span>{k.count}</span>}
+            </button>
+          ))}
+        </div>
+      )}
       {error && <p className="install-note">{error}</p>}
       {plan && (
         <Confirm
@@ -374,42 +502,46 @@ export default function ModelInstall({ jobs, onInstalled }) {
             ))}
           </>
         )}
-        {tab === "workflows" &&
-          workflows?.workflows.map((w) => {
-            const missing = w.models.filter((m) => !m.installed && !m.blocked);
-            return (
-              <div className="artifact" key={w.name}>
-                <div>
-                  <b>{w.title}</b>
-                  <span>
-                    {w.models.length} model
-                    {w.models.length === 1 ? "" : "s"} · {w.missing} missing
-                  </span>
-                  <small>
-                    {w.models
-                      .map(
-                        (m) =>
-                          `${m.installed ? "✓" : "○"} ${m.category}/${m.filename}`,
-                      )
-                      .join("  ")}
-                  </small>
-                </div>
-                {missing.length ? (
-                  <button
-                    onClick={() =>
-                      check(missing.slice(0, 32).map((m) => requestFor(m)))
-                    }
-                  >
-                    Install {missing.length} missing
-                  </button>
-                ) : (
-                  <span className="install-have">
-                    {w.missing ? "Cannot install" : "Ready"}
-                  </span>
-                )}
-              </div>
-            );
-          })}
+        {tab === "workflows" && !workflows && (
+          <p className="muted install-count">
+            Reading ComfyUI’s workflow templates…
+          </p>
+        )}
+        {tab === "workflows" && workflows && (
+          <>
+            <p className="muted install-count">
+              {workflows.total.toLocaleString()} workflow
+              {workflows.total === 1 ? "" : "s"}
+              {kind ? ` in ${kind}` : ""} · {workflows.ready} ready with your
+              models
+            </p>
+            {SECTIONS.map(([id, label]) => {
+              const list = workflows.workflows.filter(
+                (w) => sectionOf(w) === id,
+              );
+              if (!list.length) return null;
+              return (
+                <section className="workflow-section" key={id}>
+                  <h3>
+                    {label} <span>{list.length}</span>
+                  </h3>
+                  {list.map((w) => (
+                    <WorkflowCard
+                      key={w.name}
+                      workflow={w}
+                      onInstall={(models) =>
+                        check(models.map((m) => requestFor(m)))
+                      }
+                    />
+                  ))}
+                </section>
+              );
+            })}
+            {!workflows.workflows.length && (
+              <p className="muted">No workflow matches that search.</p>
+            )}
+          </>
+        )}
         {tab === "hub" && (
           <>
             {!repos && (
@@ -426,7 +558,9 @@ export default function ModelInstall({ jobs, onInstalled }) {
                     <span>
                       {(r.downloads || 0).toLocaleString()} downloads
                       {r.task ? ` · ${r.task}` : ""}
-                      {r.formats?.length === 1 && r.formats[0] === "gguf" ? " · GGUF" : ""}
+                      {r.formats?.length === 1 && r.formats[0] === "gguf"
+                        ? " · GGUF"
+                        : ""}
                       {r.gated ? " · needs licence acceptance" : ""}
                     </span>
                   </div>

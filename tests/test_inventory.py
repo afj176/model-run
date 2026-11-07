@@ -34,6 +34,15 @@ class InventoryTests(unittest.TestCase):
             path.write_bytes(bad)
             with self.assertRaises(InventoryError, msg=bad[:12]): check_gguf(path)
 
+    def test_summary_counts_parameters_bytes_and_block_stacks(self):
+        from model_run.inventory import summarize
+        report = {"tensors": [{"name": "double_blocks.0.attn.w", "dtype": "BF16", "shape": [4, 4]}, {"name": "double_blocks.18.x", "dtype": "BF16", "shape": [2]},
+                              {"name": "model.single_blocks.37.y", "dtype": "F8_E4M3", "shape": [10]}, {"name": "img_in.weight", "dtype": "F32", "shape": [3]}]}
+        summary = summarize(report)
+        self.assertEqual(summary["parameters"], 31)
+        self.assertEqual(summary["bytes_by_dtype"], {"BF16": 36, "F32": 12, "F8_E4M3": 10})
+        self.assertEqual(summary["block_stacks"], {"single_blocks": 38, "double_blocks": 19})
+
     def test_bad_header_and_overlap(self):
         path = self.root / "bad.safetensors"
         path.write_bytes(struct.pack("<Q", 2**40))

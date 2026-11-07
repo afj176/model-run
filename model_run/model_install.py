@@ -1,6 +1,8 @@
 """Download model files into ComfyUI's folders, one explicit request at a time."""
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+import io
 import json
 import os
 from pathlib import Path
@@ -13,13 +15,17 @@ import urllib.request
 from uuid import uuid4
 
 from .inventory import InventoryError, check_gguf, inspect_file
-from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index
+from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index, template_thumbnail
 
 API = "https://huggingface.co/api/models"
 CHUNK = 1024 * 1024
 MAX_JOBS = 32
 MAX_PLAN_ITEMS = 32
 MAX_RESULTS = 100
+MAX_WORKFLOWS = 1000  # ComfyUI ships a few hundred; all of them are listed
+MAX_THUMBNAILS = 400
+THUMBNAIL_SIDE = 320
+MAX_RAW_THUMBNAIL = 1024 * 1024
 MAX_API_BYTES = 8 * 1024 * 1024
 RESERVE_BYTES = 256 * 1024 * 1024
 PART_SUFFIX = ".modelrun-part"
@@ -95,6 +101,7 @@ class ModelInstaller:
         self._index = index
         self._lock = Lock()
         self._jobs = {}
+        self._thumbnails = {}
         self._queue = []
         self._wake = Event()
         self._closed = False
@@ -142,17 +149,65 @@ class ModelInstaller:
         found.sort(key=lambda m: (bool(m["blocked"]), -len(m["workflows"]), m["filename"].lower()))
         return {"total": len(found), "models": found[:MAX_RESULTS], "categories": sorted(grouped), "notes": index["notes"], "logged_in": bool(_token())}
 
-    def workflows(self, query="", *, names=frozenset()):
+    def workflows(self, query="", *, kind=None, names=frozenset()):
+        """Workflow templates nearest to ready first: everything installed, then the fewest files missing."""
         if not isinstance(query, str) or len(query) > 200:
             raise ValueError("Search must be under 200 characters")
         index, grouped = self.index(), self.categories()
         terms = query.lower().split()
-        found = []
+        found, kinds = [], {}
         for workflow in index["workflows"]:
-            if all(term in f"{workflow['title']} {workflow['name']} {workflow['description']}".lower() for term in terms):
-                models = [self._public(index["by_id"][i], names, grouped) for i in workflow["models"]]
-                found.append({**workflow, "models": models, "missing": sum(not m["installed"] for m in models)})
-        return {"total": len(found), "workflows": found[:MAX_RESULTS], "notes": index["notes"]}
+            if not all(term in f"{workflow['title']} {workflow['name']} {workflow['description']} {workflow.get('kind', '')}".lower() for term in terms):
+                continue
+            label = workflow.get("kind") or "Other"
+            kinds[label] = kinds.get(label, 0) + 1
+            if kind and label != kind:
+                continue
+            models = [self._public(index["by_id"][i], names, grouped) for i in workflow["models"]]
+            missing = [m for m in models if not m["installed"]]
+            sizes = [m["size_bytes"] for m in missing]
+            found.append({**workflow, "kind": label, "models": models, "missing": len(missing),
+                          "installable": sum(not m["blocked"] for m in missing),
+                          "missing_bytes": sum(sizes) if missing and all(isinstance(s, int) for s in sizes) else None})
+        found.sort(key=lambda w: (w["missing"] > w["installable"], w["missing"], -(w.get("rank") or 0), w["title"].lower()))
+        return {"total": len(found), "workflows": found[:MAX_WORKFLOWS], "kinds": [{"kind": k, "count": n} for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])],
+                "ready": sum(not w["missing"] for w in found), "notes": index["notes"]}
+
+    def thumbnail(self, name):
+        """A small still preview of a workflow template from ComfyUI's own media, or None. Needs Pillow."""
+        with self._lock:
+            if name in self._thumbnails:
+                return self._thumbnails[name]
+        path = template_thumbnail(name, self._comfy_dir)
+        result = None
+        if path is not None:
+            try:
+                from PIL import Image
+                with Image.open(path) as image:
+                    image.seek(0)  # an animated preview keeps its first frame
+                    still = image.convert("RGB")
+                    still.thumbnail((THUMBNAIL_SIDE, THUMBNAIL_SIDE))
+                    buffer = io.BytesIO()
+                    still.save(buffer, "JPEG", quality=80)
+                result = {"mime": "image/jpeg", "base64": base64.b64encode(buffer.getvalue()).decode()}
+            except ImportError:
+                # Without Pillow a small original is sent as it is; a large one is left out.
+                if os.path.getsize(path) <= MAX_RAW_THUMBNAIL:
+                    result = {"mime": "image/webp", "base64": base64.b64encode(Path(path).read_bytes()).decode()}
+            except (OSError, ValueError):
+                result = None
+        with self._lock:
+            if len(self._thumbnails) >= MAX_THUMBNAILS:
+                self._thumbnails.pop(next(iter(self._thumbnails)))
+            self._thumbnails[name] = result
+        return result
+
+    def clear_finished(self):
+        """Forget downloads that are no longer running; files on disk are not touched."""
+        with self._lock:
+            for key in [key for key, job in self._jobs.items() if job["status"] not in ACTIVE]:
+                del self._jobs[key]
+        return self.status()
 
     def _api(self, url):
         response = self._transport.open(url, timeout=20)
