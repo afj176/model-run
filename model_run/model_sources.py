@@ -108,6 +108,18 @@ def _model_entries(value, into):
             _model_entries(item, into)
 
 
+def _text_nodes(value, into):
+    """(node type, widget values) for every node, subgraphs included."""
+    if isinstance(value, dict):
+        if isinstance(value.get("type"), str) and isinstance(value.get("widgets_values"), list):
+            into.append((value["type"], value["widgets_values"]))
+        for item in value.values():
+            _text_nodes(item, into)
+    elif isinstance(value, list):
+        for item in value:
+            _text_nodes(item, into)
+
+
 def _number(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
@@ -134,14 +146,19 @@ def read_templates(comfy_dir, notes):
             name = Path(path).stem
             if name.startswith("index"):
                 continue
-            entries = []
+            entries, nodes = [], []
             try:
-                _model_entries(_read(path), entries)
+                data = _read(path)
+                _model_entries(data, entries)
+                _text_nodes(data, nodes)
             except (OSError, ValueError):
                 continue
             if entries:
                 info = meta.get(name) or {"title": "", "description": "", "kind": "", "media": "", "rank": 0, "size_bytes": None}
-                templates[name] = {**info, "title": info["title"] or name.replace("_", " "), "models": entries}
+                loaders = [(w[0], w[1] if len(w) > 1 and isinstance(w[1], str) else "stable_diffusion") for kind, w in nodes
+                           if kind == "CLIPLoader" and w and isinstance(w[0], str)]
+                templates[name] = {**info, "title": info["title"] or name.replace("_", " "), "models": entries,
+                                   "text_loaders": loaders, "generates_text": any(kind == "TextGenerate" for kind, _ in nodes)}
     return templates
 
 
@@ -224,11 +241,55 @@ def load_index(comfy_dir=None):
         item["blocked"] = blocked_reason(item["url"], item["filename"])
         item["note"] = install_note(item["filename"])
     items, by_id = merge_mirrors(items)
+    recipes = text_recipes(templates)
     for workflow in workflows:
         workflow["models"] = list(dict.fromkeys(by_id[i]["id"] for i in workflow["models"]))
     if not items:
         notes.append("No ComfyUI model lists were found here. Hugging Face search still works.")
-    return {"models": items, "by_id": by_id, "workflows": workflows, "notes": notes}
+    return {"models": items, "by_id": by_id, "workflows": workflows, "notes": notes, "text_recipes": recipes}
+
+
+def text_recipes(templates):
+    """How ComfyUI's own templates load each text model file: {file: {type, mode, workflow}}.
+
+    mode is generate when a template writes text with the file (its only text loader beside Generate Text),
+    otherwise encode. type is the CLIPLoader setting the templates use."""
+    generate, encode = {}, {}
+    for template in templates.values():
+        loaders = template.get("text_loaders") or []
+        for file, kind in loaders:
+            encode.setdefault(file, {}).setdefault(kind, template["title"])
+        if template.get("generates_text") and len({f for f, _ in loaders}) == 1:
+            file, kind = loaders[0]
+            generate.setdefault(file, (kind, template["title"]))
+    recipes = {}
+    for file, kinds in encode.items():
+        if file in generate:
+            kind, title = generate[file]
+            recipes[file] = {"type": kind, "mode": "generate", "workflow": title}
+        else:
+            kind, title = next(iter(kinds.items()))
+            recipes[file] = {"type": kind, "mode": "encode", "workflow": title}
+    return recipes
+
+
+def recipe_for(recipes, filename):
+    """A text file's recipe, or that of the listed file sharing the longest name prefix within its family
+    (gemma4_12b_int8 borrows gemma4_e4b_it's)."""
+    if filename in recipes:
+        return recipes[filename]
+    name = filename.lower()
+    family = re.split(r"[_.-]", name, maxsplit=1)[0]
+    best, shared = None, (0, False)
+    for file in sorted(recipes):
+        other = file.lower()
+        if len(family) < 4 or re.split(r"[_.-]", other, maxsplit=1)[0] != family:
+            continue
+        # On a tie, a recipe that writes text: it shows the most of a language model.
+        score = (len(os.path.commonprefix([name, other])), recipes[file]["mode"] == "generate")
+        if score > shared:
+            best, shared = file, score
+    return {**recipes[best], "workflow": None, "like": best} if best else None
 
 
 def merge_mirrors(items):

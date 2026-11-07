@@ -5,15 +5,15 @@
   align-items: start;
 }
 .matrix-stage {
-  --stage-ink: #f5f1ff;
-  --stage-muted: #c9c1e6;
+  --stage-ink: var(--c-f5f1ff);
+  --stage-muted: var(--c-c9c1e6);
   --stage-line: #ffffff22;
   height: clamp(620px, calc(100vh - 150px), 900px);
   background: radial-gradient(
     120% 90% at 30% 10%,
-    #2b2252 0%,
-    #1a1436 45%,
-    #0f0b24 100%
+    var(--c-2b2252) 0%,
+    var(--c-1a1436) 45%,
+    var(--c-0f0b24) 100%
   );
   color: var(--stage-ink);
   border-radius: 18px;
@@ -74,7 +74,7 @@
   display: flex;
   padding: 4px;
   border-radius: 12px;
-  background: #221b45;
+  background: var(--c-221b45);
   border: 1px solid #ffffff22;
 }
 .matrix-segment button,
@@ -90,7 +90,7 @@
   gap: 8px;
 }
 .matrix-segment button.selected {
-  background: linear-gradient(180deg, #6a52d6, #4d3cb0);
+  background: linear-gradient(180deg, var(--c-6a52d6), var(--c-4d3cb0));
   box-shadow: inset 0 0 0 1px #ffffff2a;
 }
 .matrix-segment button:hover:not(.selected) {
@@ -98,12 +98,12 @@
   border-color: transparent;
 }
 .matrix-segment button.selected:hover {
-  background: linear-gradient(180deg, #7560e0, #5444ba);
+  background: linear-gradient(180deg, var(--c-7560e0), var(--c-5444ba));
   border-color: transparent;
 }
 .matrix-zoom,
 .matrix-icon-button {
-  background: #221b45;
+  background: var(--c-221b45);
   border: 1px solid #ffffff22;
   border-radius: 12px;
   display: inline-flex;
@@ -123,7 +123,7 @@
   cursor: pointer;
 }
 .matrix-zoom select option {
-  color: #141537;
+  color: var(--c-141537);
 }
 .matrix-icon-button {
   width: 50px;
@@ -193,10 +193,10 @@
 .matrix-inset {
   margin: 14px 0 6px;
   padding: 12px 14px 14px;
-  border: 1.5px solid #2b2252;
+  border: 1.5px solid var(--c-2b2252);
   border-radius: 14px;
-  background: #1a1436;
-  color: #f5f1ff;
+  background: var(--c-1a1436);
+  color: var(--c-f5f1ff);
 }
 .matrix-inset h4 {
   margin: 0 0 10px;
@@ -206,7 +206,7 @@
 .matrix-inset h4 span {
   font-weight: 400;
   font-size: 13px;
-  color: #c9c1e6;
+  color: var(--c-c9c1e6);
 }
 .matrix-inset-body {
   display: flex;
@@ -221,7 +221,7 @@
   gap: 6px;
   padding: 10px 10px 4px;
   border-radius: 10px;
-  background: #241d49;
+  background: var(--c-241d49);
   transform: perspective(500px) rotateX(28deg);
   transform-origin: 50% 100%;
 }
@@ -371,7 +371,7 @@
   position: absolute;
   inset: 32% 15% auto;
   text-align: center;
-  color: #c7bbd5;
+  color: var(--c-c7bbd5);
 }
 .matrix-empty h3 {
   font-size: 23px;
@@ -393,7 +393,7 @@
   align-items: center;
   gap: 24px;
   border-top: 1px solid #ffffff1a;
-  background: #130e2bcc;
+  background: var(--c-130e2b);
   backdrop-filter: blur(4px);
 }
 .matrix-timeline-label {
@@ -440,7 +440,7 @@
   height: 14px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 0 0 2px #0f0b24;
+  box-shadow: 0 0 0 2px var(--c-0f0b24);
 }
 .matrix-dot small {
   font-size: 15px;
@@ -457,7 +457,7 @@
 .matrix-dot.active i {
   background: #ff3d8f;
   box-shadow:
-    0 0 0 3px #0f0b24,
+    0 0 0 3px var(--c-0f0b24),
     0 0 0 5px #ff3d8f,
     0 0 16px #ff3d8f;
 }
@@ -476,7 +476,7 @@ button.matrix-dot:hover i {
 .matrix-step {
   padding: 9px 20px;
   border-radius: 10px;
-  background: #221b45;
+  background: var(--c-221b45);
   border: 1px solid #ffffff22;
   font-size: 15px;
   white-space: nowrap;
@@ -497,7 +497,7 @@ button.matrix-dot:hover i {
 }
 .matrix-table th {
   position: sticky;
-  background: #1a1437;
+  background: var(--c-1a1437);
   color: #d9d2f3;
   font-weight: 600;
   padding: 4px 6px;
@@ -514,7 +514,7 @@ button.matrix-dot:hover i {
   color: #fff;
 }
 .matrix-table td {
-  color: #141537;
+  color: var(--c-141537);
   padding: 3px 5px;
   min-width: 44px;
   text-align: right;
@@ -530,7 +530,7 @@ button.matrix-dot:hover i {
   font-weight: 700;
 }
 .matrix-inspector {
-  border: 1px solid #d9d0e8;
+  border: 1px solid var(--c-d9d0e8);
   background: #fffdfa;
   border-radius: 18px;
   padding: 20px 22px 18px;
@@ -544,12 +544,12 @@ button.matrix-dot:hover i {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #171440;
+  color: var(--c-171440);
   padding-bottom: 14px;
   border-bottom: 1px solid #e7e0f0;
 }
 .matrix-inspector h2 svg {
-  color: #4c3fb0;
+  color: var(--c-4c3fb0);
 }
 .matrix-inspector h3 {
   display: flex;
@@ -557,13 +557,13 @@ button.matrix-dot:hover i {
   gap: 8px;
   font-size: 18px;
   margin: 16px 0 6px;
-  color: #171440;
+  color: var(--c-171440);
 }
 .matrix-inspector h3 small {
   font-size: 15px;
   font-weight: 400;
   font-style: italic;
-  color: #6b6489;
+  color: var(--c-6b6489);
 }
 .matrix-facts {
   display: grid;
@@ -583,10 +583,10 @@ button.matrix-dot:hover i {
 }
 .matrix-facts dt {
   font-weight: 700;
-  color: #1e1a46;
+  color: var(--c-1e1a46);
 }
 .matrix-facts dd {
-  color: #2f2a55;
+  color: var(--c-2f2a55);
 }
 .matrix-badge {
   display: inline-block;
@@ -613,7 +613,7 @@ button.matrix-dot:hover i {
   transform: rotate(180deg);
   font-size: 13px;
   font-style: italic;
-  color: #514a77;
+  color: var(--c-514a77);
   text-align: center;
 }
 .matrix-heatmap-yticks {
@@ -621,7 +621,7 @@ button.matrix-dot:hover i {
   grid-column: 2;
   position: relative;
   font-size: 12px;
-  color: #514a77;
+  color: var(--c-514a77);
 }
 .matrix-heatmap-yticks span {
   position: absolute;
@@ -642,7 +642,7 @@ button.matrix-dot:hover i {
   display: grid;
   gap: 1px;
   width: 100%;
-  background: #1a1437;
+  background: var(--c-1a1437);
   padding: 1px;
   border-radius: 4px;
 }
@@ -677,14 +677,14 @@ button.matrix-dot:hover i {
   flex-direction: column;
   justify-content: space-between;
   font-size: 12px;
-  color: #514a77;
+  color: var(--c-514a77);
 }
 .matrix-heatmap-xticks {
   grid-row: 2;
   grid-column: 3;
   position: relative;
   font-size: 12px;
-  color: #514a77;
+  color: var(--c-514a77);
 }
 .matrix-heatmap-xticks span {
   position: absolute;
@@ -697,7 +697,7 @@ button.matrix-dot:hover i {
   text-align: center;
   font-size: 13px;
   font-style: italic;
-  color: #514a77;
+  color: var(--c-514a77);
 }
 .matrix-paging {
   display: flex;
@@ -895,32 +895,32 @@ button.matrix-dot:hover i {
   margin-top: 14px;
   padding: 12px 14px 14px;
   border-radius: 14px;
-  background: linear-gradient(180deg, #f6f2ff, #fbf9ff);
-  border: 1px solid #e3dbf5;
+  background: linear-gradient(180deg, var(--c-f6f2ff), #fbf9ff);
+  border: 1px solid var(--c-e3dbf5);
 }
 .matrix-insight h3 {
   margin: 0 0 6px;
   font-size: 16px;
 }
 .matrix-insight h3 svg {
-  color: #6a52d6;
+  color: var(--c-6a52d6);
 }
 .matrix-insight-label {
   font-size: 18px;
   font-weight: 700;
-  color: #3f31a3;
+  color: var(--c-3f31a3);
   margin: 2px 0 4px;
 }
 .matrix-insight-text {
   font-size: 14px;
   line-height: 1.45;
-  color: #2f2a55;
+  color: var(--c-2f2a55);
 }
 .matrix-insight-sub {
   margin: 12px 0 6px;
   font-size: 13px;
   font-weight: 600;
-  color: #514a77;
+  color: var(--c-514a77);
 }
 .matrix-chips {
   display: flex;
@@ -933,7 +933,7 @@ button.matrix-dot:hover i {
   font-size: 12px;
   padding: 4px 9px;
   border-radius: 999px;
-  background: #ece7fa;
+  background: var(--c-ece7fa);
   color: #3a3270;
   border: 0;
   min-height: 0;
@@ -969,13 +969,13 @@ button.matrix-dot:hover i {
   text-align: left;
 }
 .matrix-attends button:hover:not(:disabled) {
-  background: #efe9ff;
+  background: var(--c-efe9ff);
 }
 .matrix-attends-token {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #2f2a55;
+  color: var(--c-2f2a55);
 }
 .matrix-attends-bar {
   display: block;
@@ -1001,13 +1001,13 @@ button.matrix-dot:hover i {
   padding: 4px 7px 3px;
   border-radius: 7px;
   font-size: 13px;
-  color: #1e1a46;
+  color: var(--c-1e1a46);
   background: color-mix(in srgb, #0f9f86 calc(var(--heat) * 85%), #f2efe4);
   border: 1px solid #0f9f8633;
 }
 .matrix-attribution span small {
   font-size: 10px;
-  color: #2f2a55;
+  color: var(--c-2f2a55);
   opacity: 0.8;
 }
 .matrix-gallery {
@@ -1022,7 +1022,7 @@ button.matrix-dot:hover i {
   gap: 3px;
   padding: 6px 4px;
   background: #fff;
-  border: 1px solid #e3dbf5;
+  border: 1px solid var(--c-e3dbf5);
   border-radius: 10px;
   min-height: 0;
   font-size: 12px;
@@ -1032,11 +1032,11 @@ button.matrix-dot:hover i {
   aspect-ratio: 1;
   image-rendering: pixelated;
   border-radius: 4px;
-  background: #1a1437;
+  background: var(--c-1a1437);
 }
 .matrix-gallery button small {
   font-size: 9px;
-  color: #6b6489;
+  color: var(--c-6b6489);
   text-align: center;
   line-height: 1.1;
 }
@@ -1050,7 +1050,7 @@ button.matrix-dot:hover i {
   gap: 3px;
   height: 64px;
   padding: 4px 2px 0;
-  border-bottom: 1px solid #d9d0e8;
+  border-bottom: 1px solid var(--c-d9d0e8);
 }
 .matrix-deltas button {
   flex: 1;
@@ -1078,7 +1078,7 @@ button.matrix-dot:hover i {
 }
 .matrix-deltas button small {
   font-size: 9px;
-  color: #6b6489;
+  color: var(--c-6b6489);
 }
 .matrix-sparkline {
   position: absolute;
@@ -1108,7 +1108,7 @@ button.matrix-dot:hover i {
 .matrix-sparkline span {
   position: static;
   font-size: 11px;
-  color: #b9b0dd;
+  color: var(--c-b9b0dd);
   white-space: nowrap;
   align-self: center;
 }
@@ -1131,7 +1131,7 @@ button.matrix-dot:hover i {
 .matrix-callout strong small {
   display: block;
   font-size: 12px;
-  color: #c9c1e6;
+  color: var(--c-c9c1e6);
   font-weight: 400;
 }
 .matrix-heatmap-figure.with-tokens {
@@ -1217,7 +1217,7 @@ button.matrix-dot:hover i {
   color: #b4215a;
 }
 .matrix-insight-label.effect-negligible {
-  color: #6b6489;
+  color: var(--c-6b6489);
 }
 .matrix-ablation-compare {
   display: flex;
@@ -1233,7 +1233,7 @@ button.matrix-dot:hover i {
   font-size: 13px;
 }
 .matrix-ablation-compare small {
-  color: #6b6489;
+  color: var(--c-6b6489);
   font-size: 11px;
 }
 .matrix-ablation-token {
@@ -1246,7 +1246,7 @@ button.matrix-dot:hover i {
   display: block;
   height: 12px;
   border-radius: 6px;
-  background: #ece7fa;
+  background: var(--c-ece7fa);
   overflow: hidden;
 }
 .matrix-ablation-bar i {
@@ -1262,7 +1262,7 @@ button.matrix-dot:hover i {
   text-align: right;
 }
 .matrix-ablation-rank button.picked {
-  background: #efe9ff;
+  background: var(--c-efe9ff);
 }
 .matrix-ablation-rank .matrix-attends-bar {
   background: linear-gradient(90deg, #ff9ec9, #ff3d8f);
@@ -1287,15 +1287,15 @@ button.matrix-dot:hover i {
   flex: 1;
   min-height: 34px;
   border-radius: 10px;
-  border: 1px solid #c9bdf0;
+  border: 1px solid var(--c-c9bdf0);
   background: #fff;
-  color: #3f31a3;
+  color: var(--c-3f31a3);
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
 }
 .matrix-ablation-actions button:hover:not(:disabled) {
-  background: #efe9ff;
+  background: var(--c-efe9ff);
 }
 .matrix-ablation-actions button:disabled {
   opacity: 0.55;
@@ -1317,7 +1317,7 @@ button.matrix-dot:hover i {
   right: 26px;
   top: 8px;
   margin: 0;
-  color: var(--stage-muted, #c9c1e6);
+  color: var(--stage-muted, var(--c-c9c1e6));
   font-size: 11px;
 }
 

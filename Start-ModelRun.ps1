@@ -1,11 +1,26 @@
+# With -ComfyDir, start ComfyUI with Model Run inside it (the full experience) and open both.
+# With -Standalone, or without a ComfyUI folder, start the standalone app on its own.
 param(
     [string]$ComfyDir,
+    [string]$ComfyPython,
+    [switch]$Standalone,
+    [switch]$NoBrowser,
     [string]$ModelsDir,
     [string[]]$ExtraPaths = @(),
-    [int]$Port = 8766,
+    [int]$Port = 0,
     [string]$Python = "python"
 )
 $ErrorActionPreference = "Stop"
+if ($ComfyDir -and -not $Standalone) {
+    $launch = @("-m", "model_run.launch", "--comfy-dir", $ComfyDir)
+    if ($ComfyPython) { $launch += @("--comfy-python", $ComfyPython) }
+    if ($Port) { $launch += @("--port", "$Port") }
+    if ($NoBrowser) { $launch += "--no-browser" }
+    Push-Location $PSScriptRoot
+    try { & $Python @launch; if ($LASTEXITCODE) { throw "Model Run could not start ComfyUI." } } finally { Pop-Location }
+    return
+}
+if (-not $Port) { $Port = 8766 }
 $arguments = @("-m", "model_run.server", "--port", "$Port")
 if ($ComfyDir) { $arguments += @("--comfy-dir", ('"' + $ComfyDir + '"')) }
 if ($ModelsDir) { $arguments += @("--models-dir", ('"' + $ModelsDir + '"')) }

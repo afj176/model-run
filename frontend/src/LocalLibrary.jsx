@@ -73,6 +73,7 @@ export default function LocalLibrary({
   onLoad,
   packages,
   onGetModels,
+  onUseComfy,
 }) {
   const [search, setSearch] = useState("");
   const [inspected, setInspected] = useState(null);
@@ -89,6 +90,9 @@ export default function LocalLibrary({
         .includes(search.toLowerCase()),
     );
   const standalone = host === "standalone";
+  const inComfy = host === "comfyui";
+  // Packages load in Model Run in either host; inside ComfyUI, ComfyUI's own files run through ComfyUI.
+  const canLoad = standalone || packages;
   const runnable = catalog.artifacts.some((a) => groupOf(a) === "here");
   return (
     <>
@@ -110,9 +114,11 @@ export default function LocalLibrary({
         {packages
           ? "Files in your ComfyUI model folders and the packages Model Run downloaded."
           : "Files in your ComfyUI model folders."}{" "}
+        {inComfy &&
+          "Text models marked Writes text or Reads prompts run from here through ComfyUI; image and video models run from Get models › By workflow. "}
         {standalone
-          ? "Files marked Runs here load in this app. The rest run in ComfyUI, where Model Run · Observe records them; here you can read their headers and explore their tensor names."
-          : "They run in ComfyUI, where Model Run · Observe records them; here you can read their headers and explore their tensor names."}
+          ? "Files marked Runs here load in this app. The rest need ComfyUI: start Model Run inside ComfyUI to run them; here you can read their headers and explore their tensor names."
+          : "Inspect and Explore read any file's header and tensor names without loading it."}
       </p>
       <div className="library-toolbar">
         <input
@@ -164,11 +170,22 @@ export default function LocalLibrary({
                     <small>{a.relative_path}</small>
                   </div>
                   <span
-                    className={`run-badge ${groupOf(a) === "here" && standalone ? "here" : ""}`}
+                    className={`run-badge ${(groupOf(a) === "here" && canLoad) || (inComfy && a.comfy_text) ? "here" : ""}`}
+                    title={
+                      a.comfy_text
+                        ? a.comfy_text.workflow
+                          ? `Loaded the way ComfyUI's “${a.comfy_text.workflow}” template loads it`
+                          : `No template uses it; loaded like ${a.comfy_text.like}`
+                        : undefined
+                    }
                   >
-                    {groupOf(a) === "here" && standalone
+                    {groupOf(a) === "here" && canLoad
                       ? "Runs here"
-                      : "Runs in ComfyUI"}
+                      : inComfy && a.comfy_text
+                        ? a.comfy_text.mode === "generate"
+                          ? "Writes text"
+                          : "Reads prompts"
+                        : "Runs in ComfyUI"}
                   </span>
                   <button
                     aria-expanded={inspected?.id === a.id}
@@ -189,7 +206,17 @@ export default function LocalLibrary({
                     a.status === "metadata_inspected" && (
                       <button onClick={() => onExplore(a)}>Explore</button>
                     )}
-                  {groupOf(a) === "here" && standalone && (
+                  {inComfy && a.comfy_text && (
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      title="Run it from Model Run: ComfyUI loads it, Model Run records it"
+                      onClick={() => onUseComfy(a)}
+                    >
+                      Use
+                    </button>
+                  )}
+                  {groupOf(a) === "here" && canLoad && (
                     <button
                       className="primary"
                       disabled={busy}

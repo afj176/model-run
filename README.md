@@ -1,15 +1,10 @@
 # Model Run
 
-Model Run shows what a model actually does when it runs. Load a model, run it, and explore
-the tensors it produced: layer outputs, attention, the next-token distribution, denoising
-steps, where an image reads its prompt, and what changes when you remove a head or a word.
+Model Run shows what a model actually does when it runs. Run a model and explore the tensors
+it produced: layer outputs, attention, the next-token distribution, denoising steps, where an
+image reads its prompt, and what changes when you remove a head or a word.
 
-It runs two ways, with the same interface:
-
-- **Standalone**, as a local web app that loads language, embedding, image-classifier,
-  speech and Diffusers models itself.
-- **Inside ComfyUI**, as custom nodes that observe ComfyUI's own runs. ComfyUI keeps
-  loading, sampling and memory; Model Run records what passes through.
+![Model Run inside ComfyUI: a language model's attention as a 3D matrix, with the Inspector explaining the selected head](screenshots/model-run-in-comfyui.png)
 
 Everything stays on your computer: no CDN, no remote inference, no remote model code, and
 nothing downloads without a click.
@@ -20,8 +15,9 @@ limitations. [Tested models](#tested-models) lists what has been checked and how
 
 ## Contents
 
+- [Two ways to run it](#two-ways-to-run-it)
+- [Run inside ComfyUI (recommended)](#run-inside-comfyui-recommended)
 - [Run standalone](#run-standalone)
-- [Run inside ComfyUI](#run-inside-comfyui)
 - [Get models](#get-models)
 - [Explore a capture](#explore-a-capture)
 - [Tested models](#tested-models)
@@ -29,40 +25,32 @@ limitations. [Tested models](#tested-models) lists what has been checked and how
 - [Development](#development)
 - [Python API](#python-api)
 
-## Run standalone
+## Two ways to run it
 
-Model Run runs on Windows, macOS and Linux. Install it into the Python environment that will
-load your models (on macOS and Linux the command is often `python3`):
+**Run Model Run inside ComfyUI.** It is a ComfyUI extension first: inside ComfyUI it runs
+everything ComfyUI can load, through ComfyUI's own Python, loaders and memory management,
+and it sits beside the canvas so you can go back and forth. On its own, as a standalone web
+app, it runs complete Hugging Face packages and nothing else, and it says what ComfyUI would
+add.
 
-```bash
-python -m pip install -e ".[transformers,diffusers,media,comfy-paths]"
-```
+| | Inside ComfyUI (recommended) | Standalone |
+| --- | --- | --- |
+| Your ComfyUI model files: single-file checkpoints, diffusion models, fp8 and int8 text encoders, GGUF | Run them | Inspect and explore only |
+| ComfyUI's workflow templates, observed: denoising steps, attention to each word, VAE stages, the image | Run them from Model Run | No |
+| Image, video and audio models (Flux, Qwen Image, HiDream, LTX, Wan, Stable Audio…) | Yes | Diffusers pipelines only |
+| **Observe this workflow** from ComfyUI's canvas, and back again | Yes | No |
+| Get models by workflow, and every file ComfyUI lists | Yes | No |
+| Complete Hugging Face packages (Qwen3, Gemma, Whisper, ViT, EmbeddingGemma…) | Yes, through ComfyUI's Python | Yes |
+| Captures, Compare, reports, import and export | Yes | Yes |
+| Looks | Violet | Slate and ocean, with an **unlock more in ComfyUI** button that lists the above |
 
-Then start the server, pointing it at a ComfyUI folder if you have one:
+## Run inside ComfyUI (recommended)
 
-```bash
-python -m model_run.server --comfy-dir path/to/ComfyUI
-```
+### Start it with ComfyUI
 
-Open **http://127.0.0.1:8766/**. The server listens on this computer only.
-
-| Option | What it does |
-| --- | --- |
-| `--comfy-dir DIR` | A ComfyUI folder: its `models` folder, its `extra_model_paths.yaml`, Comfy Desktop's shared folders, and the model lists ComfyUI ships. |
-| `--models-dir DIR` | A ComfyUI `models` folder on its own. |
-| `--extra-paths FILE` | An `extra_model_paths.yaml`; may be repeated. |
-| `--packages-dir DIR` | Where **Get models › Runs here** downloads complete packages. Default: a `packages` folder beside the app. |
-| `--port N` | Default 8766. |
-
-With no folders the app still imports and replays traces. It only looks where you point
-it; Hugging Face, Ollama and other caches are not searched.
-
-### Start it in the background
-
-Two scripts start the server in the background, wait until it answers and print its process
-ID. Both refuse a port that is already in use and never stop another process; stop the
-printed PID to end Model Run. Logs go to `.tmp/app-server.stdout.log` and
-`.tmp/app-server.stderr.log`.
+Point the start script at your ComfyUI folder (the one holding `main.py`). It starts ComfyUI
+with Model Run loaded, waits until both answer, and opens ComfyUI and Model Run in your
+browser.
 
 Windows (PowerShell 5.1 or 7):
 
@@ -70,51 +58,59 @@ Windows (PowerShell 5.1 or 7):
 .\Start-ModelRun.ps1 -ComfyDir path/to/ComfyUI
 ```
 
-`-ModelsDir`, `-ExtraPaths`, `-Port` and `-Python` are optional.
-
 macOS and Linux:
 
 ```bash
 ./start-model-run.sh --comfy-dir path/to/ComfyUI
 ```
 
-`--models-dir`, `--extra-paths` (repeatable), `--port` and `--python` (default `python3`) are
-optional. Stop it with `kill PID`.
+- ComfyUI runs on its own Python: the folder's `.venv`, or a portable build's embedded
+  Python. Pass another with `-ComfyPython` / `--comfy-python`.
+- Your ComfyUI folder is not changed. Model Run is registered through a generated
+  `.runtime/extra_model_paths.yaml` and a link in `.runtime/custom_nodes`; Comfy Desktop's
+  shared model folders are added to the same file, so every model ComfyUI Desktop sees is
+  there.
+- ComfyUI listens on port 8188 (`-Port` / `--port` to change it) and logs to
+  `.runtime/comfyui.log`. If a ComfyUI with Model Run already answers on that port, the
+  script opens it instead of starting another. `-NoBrowser` / `--no-browser` skips the
+  browser.
+- Run only one ComfyUI at a time on one GPU; close ComfyUI Desktop first.
 
-The shell script has not yet been run on macOS.
+The launcher is `python -m model_run.launch --comfy-dir path/to/ComfyUI`; it needs only the
+Python standard library and PyYAML.
 
-### Devices
-
-The standalone app runs models on the CPU or an NVIDIA GPU (CUDA). On a Mac it runs them
-on the CPU; Apple GPUs (MPS) are not used yet. Inside ComfyUI, models run on whatever device
-ComfyUI uses, because ComfyUI does the loading and Model Run only records.
-
-### What it loads
-
-Put a model folder in one of ComfyUI's model folders (a Transformers folder goes in
-`text_encoders` or `clip`) and it appears in the library.
-
-| Kind | Notes |
-| --- | --- |
-| Causal language models (Transformers, safetensors) | One forward pass of up to 128 tokens, a greedy response of 32 to 256 tokens, attention probes. Raw or chat-template input. Image-and-text models that Transformers also loads as language models, such as Gemma 3 and 4, load as text. |
-| Embedding models (Sentence Transformers packages) | Layers and the sentence vector from the package's own pooling, dense and normalise steps. |
-| Image classifiers | Top labels, per-layer outputs on the patch grid, and the class token's attention over the image. |
-| Whisper | Transcript with per-token confidence, the spectrogram it heard, playback, and each token's attention over audio time. Uses the first 30 seconds. |
-| Diffusers text-to-image pipelines | Denoising steps, cross-attention maps and a decoded preview. |
-
-Models load in float32. On CUDA, a 16-bit checkpoint that would not fit in float32 loads in
-its own precision instead, and the model bar and the trace say so. One model is loaded at a
-time; loading another unloads the first. Image and speech files you choose stay on this
-computer.
-
-Image models need Pillow. Speech needs scipy, plus soundfile or PyAV (ComfyUI ships PyAV).
-
-## Run inside ComfyUI
+### Or install it in your own ComfyUI
 
 Clone or copy this repository into ComfyUI's `custom_nodes` folder and restart ComfyUI. The
-nodes need nothing beyond what ComfyUI installs. Open **Model Run → Open Model Run** from the
-menu, or go to `/model-run/` on your ComfyUI address. The app there reads ComfyUI's live
-model folders, including ones added by custom nodes.
+nodes need nothing beyond what ComfyUI installs. Model Run then loads every time ComfyUI
+does, Desktop included.
+
+### Back and forth with the canvas
+
+![ComfyUI's canvas with the Model Run sidebar: Open Model Run, Observe this workflow and the recent captures](screenshots/comfyui-sidebar.png)
+
+- **The Model Run sidebar** in ComfyUI opens Model Run, lists the recent captures and has
+  **Observe this workflow**: it queues the open canvas with Model Run's nodes added for that
+  run only. Your canvas is not changed. **Model Run → Observe this workflow in Model Run** in
+  the menu does the same.
+- **ComfyUI ↗** in Model Run's header goes back to the canvas.
+- **Text model files** in the library are marked **Writes text** or **Reads prompts**. **Use**
+  one, write a prompt and press **Run**: Model Run queues a small graph on ComfyUI (Load CLIP,
+  then Model Run · Generate Text or Text Encode) the way ComfyUI's own templates load that
+  file, and shows the response, each token's alternatives and every layer.
+- **Workflows**: in **Get models › By workflow**, press **Run** on a template that is ready
+  with your models. Model Run hands it to the ComfyUI tab, which opens it on the canvas and
+  queues it with Model Run's nodes added. Keep a ComfyUI tab open in the same browser for
+  this. The capture opens in Model Run when ComfyUI finishes, and the workflow stays on the
+  canvas to change and run again.
+- **Runs here packages** load inside ComfyUI too, through ComfyUI's Python. ComfyUI lets go
+  of its own models first, so both share one GPU.
+
+![A Qwen Image 2.1 workflow run from Model Run: each denoising step, the predicted noise and the estimate of the final image](screenshots/observed-workflow.png)
+
+### The nodes
+
+What Model Run adds to a workflow, by hand or through the buttons above:
 
 | Node | Where it goes | What it records |
 | --- | --- | --- |
@@ -148,35 +144,125 @@ The nodes are built to leave the output unchanged, and every model under
 Observe has been checked before and after ControlNets (classic, DiT and model-patch) and
 IP-Adapter, and with GGUF models loaded through ComfyUI-GGUF.
 
-The ComfyUI app is served on ComfyUI's own address. Keep that host local, or put it behind
-the same access controls you use for ComfyUI.
+Model Run is served on ComfyUI's own address at `/model-run/`. Keep that host local, or put
+it behind the same access controls you use for ComfyUI.
+
+## Run standalone
+
+Without ComfyUI, Model Run runs complete Hugging Face packages on its own: language,
+embedding, image-classifier, speech and Diffusers models. It runs on Windows, macOS and
+Linux. Install it into the Python environment that will load your models (on macOS and Linux
+the command is often `python3`):
+
+```bash
+python -m pip install -e ".[transformers,diffusers,media,comfy-paths]"
+```
+
+Then start the server, pointing it at a ComfyUI folder if you have one so its files can be
+inspected:
+
+```bash
+python -m model_run.server --comfy-dir path/to/ComfyUI
+```
+
+Open **http://127.0.0.1:8766/**. The server listens on this computer only.
+
+| Option | What it does |
+| --- | --- |
+| `--comfy-dir DIR` | A ComfyUI folder: its `models` folder, its `extra_model_paths.yaml`, Comfy Desktop's shared folders, and the model lists ComfyUI ships. |
+| `--models-dir DIR` | A ComfyUI `models` folder on its own. |
+| `--extra-paths FILE` | An `extra_model_paths.yaml`; may be repeated. |
+| `--packages-dir DIR` | Where **Get models › Runs here** downloads complete packages. Default: a `packages` folder beside the app. |
+| `--port N` | Default 8766. |
+
+With no folders the app still imports and replays traces. It only looks where you point
+it; Hugging Face, Ollama and other caches are not searched.
+
+### Start it in the background
+
+The same start scripts run the standalone app with `-Standalone` / `--standalone` (or
+without a ComfyUI folder). They start the server in the background, wait until it answers and
+print its process ID. Both refuse a port that is already in use and never stop another
+process; stop the printed PID to end Model Run. Logs go to `.tmp/app-server.stdout.log` and
+`.tmp/app-server.stderr.log`.
+
+Windows (PowerShell 5.1 or 7):
+
+```powershell
+.\Start-ModelRun.ps1 -Standalone -ComfyDir path/to/ComfyUI
+```
+
+`-ModelsDir`, `-ExtraPaths`, `-Port` and `-Python` are optional.
+
+macOS and Linux:
+
+```bash
+./start-model-run.sh --standalone --comfy-dir path/to/ComfyUI
+```
+
+`--models-dir`, `--extra-paths` (repeatable), `--port` and `--python` (default `python3`) are
+optional. Stop it with `kill PID`.
+
+The shell script has not yet been run on macOS.
+
+### Devices
+
+The standalone app runs models on the CPU or an NVIDIA GPU (CUDA). On a Mac it runs them
+on the CPU; Apple GPUs (MPS) are not used yet. Inside ComfyUI, models run on whatever device
+ComfyUI uses, because ComfyUI does the loading and Model Run only records.
+
+### What it loads
+
+Get a package from **Get models › Runs here**, or put a model folder in one of ComfyUI's
+model folders (a Transformers folder goes in `text_encoders` or `clip`), and it appears in
+the library.
+
+| Kind | Notes |
+| --- | --- |
+| Causal language models (Transformers, safetensors) | One forward pass of up to 128 tokens, a greedy response of 32 to 256 tokens, attention probes. Raw or chat-template input. Image-and-text models that Transformers also loads as language models, such as Gemma 3 and 4, load as text. |
+| Embedding models (Sentence Transformers packages) | Layers and the sentence vector from the package's own pooling, dense and normalise steps. |
+| Image classifiers | Top labels, per-layer outputs on the patch grid, and the class token's attention over the image. |
+| Whisper | Transcript with per-token confidence, the spectrogram it heard, playback, and each token's attention over audio time. Uses the first 30 seconds. |
+| Diffusers text-to-image pipelines | Denoising steps, cross-attention maps and a decoded preview. |
+
+Models load in float32. On CUDA, a 16-bit checkpoint that would not fit in float32 loads in
+its own precision instead, and the model bar and the trace say so. One model is loaded at a
+time; loading another unloads the first. Image and speech files you choose stay on this
+computer.
+
+Image models need Pillow. Speech needs scipy, plus soundfile or PyAV (ComfyUI ships PyAV).
 
 ## Get models
 
 The **Model library** has two tabs.
 
-**On this computer** lists the files in your ComfyUI model folders, and in the standalone app
-the packages it downloaded, grouped by folder. Each
-one says whether it **runs here** (a Transformers, Sentence Transformers or Diffusers
-folder) or **runs in ComfyUI** (single-file checkpoints, diffusion models, text encoders,
-VAEs and LoRAs, which Model Run · Observe records there). **Inspect** reads a file's header
+**On this computer** lists the files in your ComfyUI model folders and the packages Model Run
+downloaded, grouped by folder. Each one says how it runs: **Runs here** for a Transformers,
+Sentence Transformers or Diffusers package Model Run loads itself; inside ComfyUI, **Writes
+text** or **Reads prompts** for a text model file Model Run runs through ComfyUI; and **Runs
+in ComfyUI** for the rest (checkpoints, diffusion models, VAEs and LoRAs), which run in
+workflows. **Inspect** reads a file's header
 without loading it: parameter count, storage by precision, repeated block stacks and the
 ComfyUI workflow templates that use it, with the full header below. **Explore** shows its
 tensor names in 3D.
 
-**Get models** finds models in four places:
+![Get models › By workflow inside ComfyUI: every ComfyUI template, those ready with your models first, each with a Run button](screenshots/get-models.png)
 
-- **Runs here** (standalone app only, and the default there) gets complete Hugging Face
+**Get models** finds models in four places. Standalone, it shows only **Runs here** and
+**Hugging Face**, since ComfyUI's files need ComfyUI to run.
+
+- **Runs here** (the default) gets complete Hugging Face
   packages that this app loads: weights, config and tokenizer together, into the packages
   folder. It lists the models checked end to end in this app (Qwen3, SmolLM2, Whisper, ViT,
   EmbeddingGemma, Gemma 3 and 4) with their size, and its search shows only the Hugging Face
   results that run here as published. ComfyUI's single files need ComfyUI to run, so when
   nothing in your library runs here, **On this computer** says so and links here.
-- **By workflow** lists every workflow template ComfyUI ships, with its
+- **By workflow** (inside ComfyUI) lists every workflow template ComfyUI ships, with its
   preview, nearest to ready first: templates your installed models already complete, then
-  those one file away. Filter by kind (Image, Video, Audio, 3D, LLM and more) and get a
-  template's missing files in one step.
-- **All files** searches every file in ComfyUI's template lists and ComfyUI Manager's list.
+  those one file away. Filter by kind (Image, Video, Audio, 3D, LLM and more), get a
+  template's missing files in one step, and **Run** one that is ready.
+- **All files** (inside ComfyUI) searches every file in ComfyUI's template lists and ComfyUI
+  Manager's list, with each file once however many repositories host it.
 - **Hugging Face** searches Hugging Face, only when you ask, including repos that only have
   GGUF files. Each result says whether it **runs here** (a complete Transformers, Sentence
   Transformers or Diffusers package, read from its config without downloading it), is **for
@@ -439,10 +525,12 @@ from stdin.
 | `model_run/cross_attention.py`, `denoising.py`, `tensor_slices.py` | Attention maps and token labels, per-step denoising views, and per-frame and per-channel slices. |
 | `model_run/adapters.py`, `capture.py`, `transformers_capture.py`, `diffusion_capture.py` | The Python API: bindings and bounded capture for PyTorch, Transformers and Diffusers. |
 | `model_run/local_text.py`, `embedding_models.py`, `media_models.py` | Standalone loaders for language, embedding, image and speech models. |
-| `model_run/model_install.py`, `model_sources.py`, `inventory.py` | Get models: ComfyUI's model lists, Hugging Face search and downloads, and header checks. |
+| `model_run/model_install.py`, `model_sources.py`, `inventory.py` | Get models: ComfyUI's model lists, Hugging Face search and downloads, header checks, and how ComfyUI's templates load each text model. |
+| `model_run/model_packages.py` | Runs here: whether a Hugging Face repository runs in Model Run, and which of its files make a package. |
+| `model_run/launch.py` | Starts ComfyUI with Model Run registered, without changing the ComfyUI folder. |
 | `model_run/trace_store.py` | Validates every trace section on import and export. |
-| `frontend/src/` | The React interface; build and package it into `model_run/web`. |
-| `__init__.py`, `comfy_web/` | ComfyUI's entry point and its menu item. |
+| `frontend/src/` | The React interface; build and package it into `model_run/web`. `comfyRun.js` queues text models and hands workflows to ComfyUI. |
+| `__init__.py`, `comfy_web/` | ComfyUI's entry point, the Model Run sidebar and menu, and `instrument.js`, which adds Model Run's nodes to a queued workflow. |
 
 New views read recorded values only, and `trace_store.py` must validate any new trace
 section. When checking that a node leaves output unchanged, compare with a second plain run

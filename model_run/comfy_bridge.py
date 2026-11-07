@@ -727,8 +727,12 @@ def application():
             # Live, so a folder a custom node registers later can be installed into.
             return [{"category": category, "path": path} for category, value in folder_paths.folder_names_and_paths.items()
                     if category not in NOT_INSTALL_FOLDERS for path in value[0]]
+        # Runs here packages live beside this checkout in both hosts, so one download serves both.
+        packages = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "packages")
+        os.makedirs(packages, exist_ok=True)
         _application = Application(entries, host_kind="comfyui", install_folders=install_folders,
-                                   comfy_dir=[folder_paths.base_path, os.path.dirname(os.path.abspath(folder_paths.__file__))])
+                                   comfy_dir=[folder_paths.base_path, os.path.dirname(os.path.abspath(folder_paths.__file__))],
+                                   packages_dir=packages)
         _application.scan()
     return _application
 

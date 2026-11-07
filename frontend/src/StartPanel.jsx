@@ -33,13 +33,28 @@ export default function StartPanel({
   const loaded = state?.loaded;
   if (stage === "comfyui")
     return (
-      <div className="start-panel" role="status">
-        <h3>Waiting for a ComfyUI run</h3>
-        <p>
-          Add <b>Model Run · Observe</b> between a model and its sampler (or use
-          Text Encode, Generate Text or VAE Decode from Model Run), then queue
-          the workflow. Its capture opens here.
-        </p>
+      <div className="start-panel">
+        <h3>Run a model through ComfyUI</h3>
+        <ol className="start-steps">
+          <li>
+            <b>A text model</b>
+            <span>
+              Open the library, choose one marked Writes text or Reads prompts,
+              then write a prompt and press Run.
+            </span>
+            <button className="primary" onClick={onOpenLibrary}>
+              <FolderOpen aria-hidden="true" /> Open the model library
+            </button>
+          </li>
+          <li>
+            <b>An image, video or audio workflow</b>
+            <span>
+              Get models › By workflow: press Run on one that is ready with your
+              models. Or, on the ComfyUI canvas, use Observe this workflow in
+              the Model Run sidebar.
+            </span>
+          </li>
+        </ol>
         <button className="text-button" onClick={onImport}>
           <UploadSimple aria-hidden="true" /> Or import a capture you exported
         </button>

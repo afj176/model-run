@@ -75,10 +75,11 @@ export function withoutPackageFiles(artifacts) {
 
 /** Which start panel to show before a capture: comfyui, loading, ready or choose. */
 export function startStage(state) {
-  if (state?.host === "comfyui") return "comfyui";
   if (state?.job?.status === "running" && state.job.action === "load")
     return "loading";
   if (state?.loaded) return "ready";
+  // Inside ComfyUI with no package loaded, ComfyUI runs the models.
+  if (state?.host === "comfyui") return "comfyui";
   return "choose";
 }
 

@@ -111,6 +111,8 @@ test("the start panel follows what the app is doing", () => {
     "ready",
   );
   assert.equal(startStage({ host: "comfyui", loaded: null }), "comfyui");
+  // A package loaded inside ComfyUI runs in Model Run like the standalone app.
+  assert.equal(startStage({ host: "comfyui", loaded: { name: "q" } }), "ready");
 });
 
 test("packages that run here say what kind of model they are", () => {

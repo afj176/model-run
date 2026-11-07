@@ -115,7 +115,7 @@ function Thumbnail({ name }) {
   );
 }
 
-function WorkflowCard({ workflow: w, onInstall }) {
+function WorkflowCard({ workflow: w, onInstall, onRun }) {
   const missing = w.models.filter((m) => !m.installed && !m.blocked);
   const card = useRef(null);
   useFileSizes(w, card);
@@ -151,7 +151,15 @@ function WorkflowCard({ workflow: w, onInstall }) {
         </ul>
       </div>
       <div className="workflow-action">
-        {!w.missing ? (
+        {!w.missing && onRun ? (
+          <button
+            className="primary"
+            title="Opens it on the ComfyUI canvas with Model Run's nodes added for this run, and queues it"
+            onClick={() => onRun(w)}
+          >
+            Run
+          </button>
+        ) : !w.missing ? (
           <span className="install-have">Ready</span>
         ) : missing.length ? (
           <button onClick={() => onInstall(missing.slice(0, 32))}>
@@ -349,9 +357,20 @@ function Jobs({ jobs, onRetry, onError }) {
 }
 
 /** Find models in the lists ComfyUI ships or on Hugging Face, and install them into ComfyUI's folders. */
-export default function ModelInstall({ jobs, onInstalled, packages }) {
-  // Inside ComfyUI, ComfyUI loads the models, so there are no packages to get for this app.
-  const tabs = packages ? TABS : TABS.filter(([id]) => id !== "runs");
+export default function ModelInstall({
+  jobs,
+  onInstalled,
+  packages,
+  host,
+  onRunWorkflow,
+}) {
+  // ComfyUI's lists get ComfyUI's models; on its own, Model Run cannot run them, so it keeps to packages.
+  const standalone = host === "standalone";
+  const tabs = TABS.filter(
+    ([id]) =>
+      (id !== "runs" || packages) &&
+      !(standalone && ["workflows", "models"].includes(id)),
+  );
   const [tab, setTab] = useState(tabs[0][0]);
   const [starters, setStarters] = useState(null);
   const [packagePlan, setPackagePlan] = useState(null);
@@ -489,6 +508,12 @@ export default function ModelInstall({ jobs, onInstalled, packages }) {
           </button>
         ))}
       </div>
+      {standalone && (
+        <p className="muted unlock-note">
+          Inside ComfyUI, Get models also lists every ComfyUI workflow and the
+          files it needs, and runs them.
+        </p>
+      )}
       <div className="library-toolbar">
         <input
           aria-label="Search for models to install"
@@ -685,6 +710,7 @@ export default function ModelInstall({ jobs, onInstalled, packages }) {
                     <WorkflowCard
                       key={w.name}
                       workflow={w}
+                      onRun={onRunWorkflow}
                       onInstall={(models) =>
                         check(models.map((m) => requestFor(m)))
                       }

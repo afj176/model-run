@@ -1,20 +1,33 @@
 #!/bin/sh
-# Start Model Run in the background on macOS or Linux, wait until it answers, and print its PID.
-# The Windows equivalent is Start-ModelRun.ps1.
+# Start Model Run on macOS or Linux. The Windows equivalent is Start-ModelRun.ps1.
+# With --comfy-dir, start ComfyUI with Model Run inside it (the full experience) and open both.
+# With --standalone, or without a ComfyUI folder, start the standalone app in the background and print its PID.
 set -eu
 
 usage() {
-    echo "Usage: $0 [--comfy-dir DIR] [--models-dir DIR] [--extra-paths FILE]... [--port N] [--python PATH]" >&2
+    echo "Usage: $0 [--comfy-dir DIR [--comfy-python PATH] [--no-browser]] [--standalone] [--models-dir DIR] [--extra-paths FILE]... [--port N] [--python PATH]" >&2
     exit 2
 }
 
-port=8766
+port=""
 python=python3
+comfy_dir=""
+comfy_python=""
+standalone=""
+no_browser=""
 set --  "$@" --end-of-options
 server_args=""
 while [ "$1" != "--end-of-options" ]; do
     case "$1" in
-        --comfy-dir|--models-dir|--extra-paths)
+        --comfy-dir)
+            [ $# -ge 3 ] || usage
+            comfy_dir=$2
+            server_args="$server_args $1 $(printf '%s' "$2" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
+            shift 2 ;;
+        --comfy-python) [ $# -ge 3 ] || usage; comfy_python=$2; shift 2 ;;
+        --standalone) standalone=1; shift ;;
+        --no-browser) no_browser=1; shift ;;
+        --models-dir|--extra-paths)
             [ $# -ge 3 ] || usage
             server_args="$server_args $1 $(printf '%s' "$2" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
             shift 2 ;;
@@ -26,6 +39,16 @@ while [ "$1" != "--end-of-options" ]; do
 done
 
 root=$(cd "$(dirname "$0")" && pwd)
+
+if [ -n "$comfy_dir" ] && [ -z "$standalone" ]; then
+    cd "$root"
+    set -- --comfy-dir "$comfy_dir"
+    [ -n "$comfy_python" ] && set -- "$@" --comfy-python "$comfy_python"
+    [ -n "$port" ] && set -- "$@" --port "$port"
+    [ -n "$no_browser" ] && set -- "$@" --no-browser
+    exec "$python" -m model_run.launch "$@"
+fi
+[ -n "$port" ] || port=8766
 logs="$root/.tmp"
 mkdir -p "$logs"
 

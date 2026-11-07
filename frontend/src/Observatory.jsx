@@ -54,6 +54,13 @@ import EmbeddingView from "./EmbeddingView";
 import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
 import ModelInstall from "./ModelInstall";
+import Unlock from "./Unlock";
+import {
+  queuePrompt,
+  runTemplateInComfy,
+  textModelPrompt,
+  waitForPrompt,
+} from "./comfyRun";
 import { buildReport } from "./report";
 import { api, displayNodes, samples, eventPath } from "./api";
 const num = (n) =>
@@ -169,7 +176,13 @@ export function App() {
   const [logScale, setLogScale] = useState(true);
   const [cameraMode, setCameraMode] = useState("orbit");
   const [headView, setHeadView] = useState(null);
-  const native = state?.host === "comfyui";
+  const inComfy = state?.host === "comfyui";
+  const native = inComfy && !state?.loaded;
+  // A ComfyUI text model chosen in the library: Run queues it on ComfyUI.
+  const [comfyModel, setComfyModel] = useState(null);
+  useEffect(() => {
+    if (state?.host) document.documentElement.dataset.host = state.host;
+  }, [state?.host]);
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [sliceWanted, setSliceWanted] = useState({});
@@ -790,6 +803,45 @@ export function App() {
       }),
     );
   }
+  /** ComfyUI: run the chosen text model file through a small graph, and wait while ComfyUI works. */
+  function runComfyText() {
+    if (!comfyModel || nativeQueued) return;
+    setError("");
+    setNativeQueued(true);
+    (async () => {
+      try {
+        const id = await queuePrompt(
+          textModelPrompt({
+            ...comfyModel,
+            text: prompt,
+            maxLength: responseTokens,
+          }),
+        );
+        await waitForPrompt(id);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setNativeQueued(false);
+      }
+    })();
+  }
+  /** ComfyUI: hand one of ComfyUI's workflow templates to the ComfyUI tab, observed, and wait for it. */
+  function runComfyWorkflow(workflow) {
+    setError("");
+    setModal(null);
+    setComfyModel(null); // the workflow brings its own models
+    setNativeQueued(true);
+    (async () => {
+      try {
+        const queued = await runTemplateInComfy(workflow.name);
+        await waitForPrompt(queued.promptId);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setNativeQueued(false);
+      }
+    })();
+  }
   /** ComfyUI: queue this run's own workflow again with the chosen tokens masked. */
   function runNativeAblation(tokens) {
     if (!traceId || !tokens?.length) return;
@@ -920,6 +972,25 @@ export function App() {
           A model data observatory for tensors, activations, and events
         </span>
         {modelFacts && <span className="host-badge">{modelFacts}</span>}
+        {inComfy ? (
+          <a
+            className="host-link"
+            href="../"
+            target="comfyui"
+            title="Back to the ComfyUI canvas"
+          >
+            ComfyUI ↗
+          </a>
+        ) : (
+          state?.host === "standalone" && (
+            <button
+              className="host-link unlock"
+              onClick={() => setModal("unlock")}
+            >
+              Standalone · unlock more in ComfyUI
+            </button>
+          )
+        )}
       </header>
       <nav className="toolbar" aria-label="Workspace">
         <div className="toolbar-tabs">
@@ -974,6 +1045,7 @@ export function App() {
             <button className="model-picker" onClick={() => setModal("models")}>
               <span>
                 {state?.loaded?.name ||
+                  comfyModel?.name ||
                   (native && trace ? modelName : "Choose a model")}
               </span>
               <CaretDown size={14} weight="bold" />
@@ -1012,17 +1084,16 @@ export function App() {
             icon={busy ? Stop : Play}
             className="primary run-button"
             disabled={
-              !native &&
-              !busy &&
-              (!state?.loaded || tree?.kind === "artifact_tensor_namespace")
+              (native && comfyModel && nativeQueued) ||
+              (!native &&
+                !busy &&
+                (!state?.loaded || tree?.kind === "artifact_tensor_namespace"))
             }
             onClick={() =>
               native
-                ? window.open(
-                    new URL("../", window.location.href),
-                    "_blank",
-                    "noopener",
-                  )
+                ? comfyModel
+                  ? runComfyText()
+                  : window.open(new URL("../", window.location.href), "comfyui")
                 : busy
                   ? action(() => api("cancel", {}))
                   : textModel
@@ -1030,13 +1101,21 @@ export function App() {
                     : run(false)
             }
           >
-            {native ? "ComfyUI" : busy ? "Cancel" : "Run"}
+            {native
+              ? comfyModel
+                ? nativeQueued
+                  ? "Running…"
+                  : "Run"
+                : "ComfyUI ↗"
+              : busy
+                ? "Cancel"
+                : "Run"}
           </Button>
         </div>
       </nav>
       <section className="input-bar" aria-label="Capture input">
         <label htmlFor="prompt">
-          {native
+          {native && !comfyModel
             ? "Capture"
             : mediaTask === "image"
               ? "Image"
@@ -1060,30 +1139,32 @@ export function App() {
           <input
             id="prompt"
             value={
-              native
-                ? "Connect Model Run · Observe to your MODEL, then queue the workflow in ComfyUI."
+              native && !comfyModel
+                ? "Choose a text model in the library, run a ready workflow from Get models, or use Observe this workflow in ComfyUI's Model Run sidebar."
                 : prompt
             }
-            readOnly={native}
+            readOnly={native && !comfyModel}
             onChange={(e) => setPrompt(e.target.value)}
             maxLength={8192}
           />
         )}
         <div className="tokens">
           <span className={busy ? "muted working" : "muted"}>
-            {busy
-              ? sessionRef.current
-                ? `Capturing ${{ module: "layer outputs", generation: "the response", attention: "attention" }[sessionRef.current.pending[0]] || "…"} (${Object.keys(sessionRef.current.ids).length + 1} of ${Object.keys(sessionRef.current.ids).length + sessionRef.current.pending.length})…`
-                : `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
-              : trace?.input_media
-                ? mediaSummary(trace.input_media)
-                : mediaTask
-                  ? `Choose a file, then Run. It stays on this computer.`
-                  : trace?.tokens
-                    ? `Tokens (${trace.tokens.length})`
-                    : native
-                      ? "Native execution"
-                      : "Tokens appear after a capture"}
+            {nativeQueued
+              ? "Running in ComfyUI…"
+              : busy
+                ? sessionRef.current
+                  ? `Capturing ${{ module: "layer outputs", generation: "the response", attention: "attention" }[sessionRef.current.pending[0]] || "…"} (${Object.keys(sessionRef.current.ids).length + 1} of ${Object.keys(sessionRef.current.ids).length + sessionRef.current.pending.length})…`
+                  : `${state.job.action === "load" ? "Loading model" : state.job.action === "observe" ? "Running capture" : "Working"}…`
+                : trace?.input_media
+                  ? mediaSummary(trace.input_media)
+                  : mediaTask
+                    ? `Choose a file, then Run. It stays on this computer.`
+                    : trace?.tokens
+                      ? `Tokens (${trace.tokens.length})`
+                      : native
+                        ? "Native execution"
+                        : "Tokens appear after a capture"}
           </span>
           {trace?.tokens?.map((t, i) => (
             <span
@@ -2032,10 +2113,18 @@ export function App() {
       )}
       {modal && (
         <Modal
-          title={modal === "models" ? "Model library" : "Capture settings"}
+          title={
+            modal === "models"
+              ? "Model library"
+              : modal === "unlock"
+                ? "Model Run is better inside ComfyUI"
+                : "Capture settings"
+          }
           close={() => setModal(null)}
         >
-          {modal === "models" ? (
+          {modal === "unlock" ? (
+            <Unlock />
+          ) : modal === "models" ? (
             <>
               <div className="tabs" role="tablist" aria-label="Model library">
                 <button
@@ -2058,6 +2147,8 @@ export function App() {
               {libraryTab === "install" ? (
                 <ModelInstall
                   packages={!!state?.packages}
+                  host={state?.host}
+                  onRunWorkflow={inComfy ? runComfyWorkflow : null}
                   jobs={state?.install?.jobs || []}
                   onInstalled={refreshCatalog}
                 />
@@ -2067,6 +2158,18 @@ export function App() {
                   host={state?.host}
                   packages={!!state?.packages}
                   onGetModels={() => setLibraryTab("install")}
+                  onUseComfy={(a) =>
+                    action(async () => {
+                      if (state?.loaded) await api("unload", {});
+                      setComfyModel({
+                        name: a.name.replace(/\.safetensors$/, ""),
+                        file: a.name,
+                        type: a.comfy_text.type,
+                        mode: a.comfy_text.mode,
+                      });
+                      setModal(null);
+                    })
+                  }
                   busy={busy}
                   action={action}
                   onExplore={(a) =>
@@ -2085,6 +2188,7 @@ export function App() {
                   }
                   onLoad={(a) =>
                     action(async () => {
+                      setComfyModel(null);
                       setLoadingName(a.name);
                       await api("load", { id: a.id, device });
                       setModal(null);
@@ -2092,7 +2196,7 @@ export function App() {
                   }
                 />
               )}
-              {state?.host === "standalone" &&
+              {(state?.host === "standalone" || state?.packages) &&
                 (state?.loaded ||
                   catalog.artifacts.some(
                     (a) => a.task && a.task !== "inventory",

@@ -16,6 +16,7 @@ from .host import ModelHost
 from .embedding_models import EmbeddingAdapter, is_embedding_package, load_local_embedding_model
 from .inventory import inspect_file, inspect_index, summarize
 from .model_install import ModelInstaller
+from .model_sources import recipe_for
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
 from .trace_store import encode_trace
@@ -34,6 +35,7 @@ def bounded_int(value, low, high, name):
 
 
 NOT_MODEL_FOLDERS = {"configs", "custom_nodes"}
+TEXT_CATEGORIES = {"text_encoders", "clip"}
 MAX_FOLDER_FILES = 10000
 
 
@@ -54,11 +56,10 @@ class Application:
         self.entries = [e for e in entries if e.get("category") not in NOT_MODEL_FOLDERS]
         comfy_entries = list(self.entries)
         folders = install_folders if callable(install_folders) else (lambda: list(install_folders if install_folders is not None else comfy_entries))
-        if packages_dir is not None and host_kind == "standalone":
-            # Complete Hugging Face packages the app downloads for itself, apart from ComfyUI's folders.
+        if packages_dir is not None:
+            # Complete Hugging Face packages Model Run downloads and loads itself, apart from ComfyUI's folders.
             self.entries.append({"category": "packages", "path": str(Path(packages_dir).resolve())})
-        else:
-            packages_dir = None
+        self.packages_dir = Path(packages_dir).resolve() if packages_dir is not None else None
         self.installer = ModelInstaller(folders, comfy_dir=comfy_dir, packages_dir=packages_dir)
         self.host_kind = host_kind
         self.host = ModelHost(max_models=1)
@@ -119,7 +120,20 @@ class Application:
 
     def catalog(self):
         with self._lock:
-            return deepcopy(self._catalog)
+            catalog = deepcopy(self._catalog)
+        if self.host_kind == "comfyui":
+            # Inside ComfyUI, a text model file runs the way ComfyUI's own templates load it.
+            try:
+                recipes = self.installer.index().get("text_recipes") or {}
+            except (OSError, ValueError):
+                recipes = {}
+            for artifact in catalog["artifacts"]:
+                categories = {o.get("category") for o in artifact.get("origins", []) if isinstance(o, dict)}
+                if categories & TEXT_CATEGORIES and artifact.get("format") == "safetensors":
+                    recipe = recipe_for(recipes, artifact["name"])
+                    if recipe:
+                        artifact["comfy_text"] = recipe
+        return catalog
 
     def installed_names(self):
         with self._lock:
@@ -246,15 +260,21 @@ class Application:
                 torch.cuda.empty_cache()
 
     def load(self, identifier, device="cpu"):
-        if self.host_kind != "standalone":
-            raise ValueError("ComfyUI owns model loading. Connect the Model Run Observe node to a loaded MODEL.")
         if device not in ("cpu", "cuda"):
             raise ValueError("Device must be cpu or cuda")
         path = self._path(identifier)
         if not path.is_dir():
             raise ValueError("Standalone loading requires a complete local Transformers or Diffusers directory")
+        inside_comfy = self.host_kind != "standalone"
+        if inside_comfy and not (self.packages_dir and path.is_relative_to(self.packages_dir)):
+            raise ValueError("ComfyUI loads its own model files: run them from the library or a workflow. Packages from Get models › Runs here load here.")
         def load():
             self._release()
+            if inside_comfy:
+                # One GPU for both: ComfyUI lets go of its models before a package loads beside it.
+                import comfy.model_management as model_management
+                model_management.unload_all_models()
+                model_management.soft_empty_cache()
             display = path.name
             if (path / "model_index.json").is_file():
                 import torch

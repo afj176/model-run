@@ -192,7 +192,21 @@ class Packages(unittest.TestCase):
         self.assertTrue(app.snapshot()["packages"])
         inside = Application([], host_kind="comfyui", packages_dir=self.root)
         self.addCleanup(inside.close)
-        self.assertFalse(inside.snapshot()["packages"])
+        self.assertTrue(inside.snapshot()["packages"])  # inside ComfyUI, packages load through ComfyUI's Python
+
+    def test_inside_comfy_only_packages_load(self):
+        comfy_models = Path(self.tmp.name) / "models" / "text_encoders"
+        comfy_models.mkdir(parents=True)
+        (comfy_models / "config.json").write_text("{}", encoding="utf-8")
+        (comfy_models / "model.safetensors").write_bytes(safetensors())
+        app = Application([{"category": "text_encoders", "path": str(comfy_models.parent)}], host_kind="comfyui", packages_dir=self.root)
+        self.addCleanup(app.close)
+        app.scan()
+        app._future.result(timeout=30)
+        folder = next(a for a in app.catalog()["artifacts"] if a.get("format") == "local_package")
+        with self.assertRaises(ValueError) as refused:
+            app.load(folder["id"])
+        self.assertIn("ComfyUI loads its own model files", str(refused.exception))
 
 
 if __name__ == "__main__":
