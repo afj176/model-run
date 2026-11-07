@@ -10,6 +10,13 @@ def trace():
 
 
 class SessionTests(unittest.TestCase):
+    def test_a_finished_trace_reads_as_plain_numbers(self):
+        # Traces are stored packed; what a session hands back must not be.
+        values = [round(0.5 + i / 1000, 4) for i in range(100)]
+        event = {"module": "m", "status": "captured", "shape": [100], "values": values, "selection": "flattened_prefix",
+                 "total_elements": 100, "truncated": False}
+        self.assertEqual(ObservationSession._bounded_trace({**trace(), "events": [event]})["events"][0]["values"], values)
+
     def test_completion_retention_and_reuse(self):
         with ObservationSession() as session:
             first = session.start(lambda control: trace())

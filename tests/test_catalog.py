@@ -39,7 +39,10 @@ class CatalogTests(unittest.TestCase):
             result = discover_models([{"path": str(root / "missing"), "category": "vae"}, {"path": str(root), "category": "vae"}], max_files=1)
             self.assertTrue(result["truncated"])
             self.assertEqual(result["artifacts"][0]["status"], "invalid_or_unreadable")
-            self.assertEqual(len(result["errors"]), 1)
+            # A folder that does not exist yet is expected (ComfyUI makes its output model folders on first save).
+            self.assertEqual(result["errors"], [])
+            not_folder = discover_models([{"path": str(root / "b.bin"), "category": "vae"}])
+            self.assertEqual(not_folder["errors"], [{"path": str(root / "b.bin"), "error": "This is a file, not a folder"}])
 
     def test_depth_limit_reported(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as tmp:

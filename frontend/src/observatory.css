@@ -4213,20 +4213,146 @@ i.after {
   font-size: 12px;
   padding: 4px 10px;
 }
-.input-bar .host-link {
-  margin-left: 0;
-  align-self: center;
-}
 
-/* A file a workflow reads, chosen beside the prompt. */
-.workflow-input {
+/* A chosen workflow's files and settings: one slim row under the prompt, never inside its grid. */
+.workflow-bar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: -4px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.workflow-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 13px;
+}
+.file-chip label {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
   white-space: nowrap;
 }
-.workflow-input input {
-  max-width: 190px;
+.file-chip label span {
+  color: var(--muted);
+}
+.file-chip:hover,
+.file-chip:focus-within {
+  border-color: var(--indigo);
+}
+.file-chip.chosen {
+  border-style: solid;
+  border-color: var(--mint);
+}
+.file-chip.chosen label span {
+  color: var(--ink);
+}
+.file-chip.needed {
+  border-style: solid;
+  border-color: var(--coral);
+}
+.file-chip.needed label span {
+  color: var(--coral);
+}
+.chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  margin-right: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+.chip-clear:hover {
+  background: var(--lilac);
+}
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--ink);
+}
+.workflow-bar .host-link {
+  margin-left: auto;
+}
+@media (max-width: 640px) {
+  .workflow-bar .host-link {
+    margin-left: 0;
+  }
+}
+
+/* On a phone the header wraps, so the link back to ComfyUI stays on screen. */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    height: auto;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .topbar .host-link {
+    margin-left: 0;
+  }
+}
+/* On a phone the stage's tools take two rows, so the start panel sits below them. */
+@media (max-width: 640px) {
+  .matrix-stage .start-panel {
+    inset: 146px 10px auto;
+  }
+  .matrix-stage:has(.start-panel) {
+    height: 650px;
+  }
+}
+
+/* Folders the library could not read, in words. */
+.library-notices summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+.library-notices ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.library-notices li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   font-size: 12px;
+}
+.library-notices code {
+  overflow-wrap: anywhere;
+}
+.library-notices span {
+  color: var(--muted);
 }

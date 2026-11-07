@@ -320,6 +320,14 @@ tensor names in 3D.
 - **Tensor Exploration Table** shows attention and activations as a navigable 3D matrix with
   a linked heatmap, 32 × 32 values per window. **Tensor Volume** stacks a tensor's recorded
   maps along one axis. Frames and channels can be stepped through and played.
+- **Every token of a text layer.** A text model's layers, standalone or in ComfyUI, are
+  recorded as a grid: one row per prompt token (up to 128), named by the token, and one
+  column per feature, with exact values rather than averages. *All that fit* keeps every
+  feature while the trace holds them all, and otherwise the same evenly spaced features for
+  every token, numbered by their place in the layer (`#35`). For a model loaded in Model Run,
+  **Features per token** in the run settings can keep fewer (1024, 256 or 64). Each row also
+  keeps that token's RMS and peak over all its features. A text trace holds 8,388,608 values
+  across its layers, so a 4B model's 18-token prompt keeps all 2,560 features at every layer.
 - **Layer Stack** and the timeline select a layer; the inspector shows paths, shapes, dtypes
   and values.
 - **What it predicted** shows the next-token distribution and a logit lens: the top token
@@ -344,9 +352,12 @@ tensor names in 3D.
 Attention shows where a layer read, not what caused an output. Ablation and patching are
 interventions, not natural behaviour, and their effects do not add up across heads.
 
-**History.** The last 16 runs (up to 64 traces or 256 MiB) stay in memory; pin up to 8 runs
-to keep them longer. Nothing is written to disk unless you export it, so restarting clears
-the history. Export and import use validated JSON up to 16 MiB per trace.
+**History.** The last 16 runs (up to 64 traces or 1 GiB) stay in memory; pin up to 8 runs
+(512 MiB) to keep them longer. Nothing is written to disk unless you export it, so
+restarting clears the history. A trace can be up to 64 MiB. Long lists of measured values
+are kept packed as 32-bit floats (base64 in the JSON), about a third smaller than JSON
+numbers; values keep 7 significant digits, and missing ones are stored as NaN. Exports are
+packed the same way, and import reads packed and plain traces.
 
 ## Tested models
 
@@ -582,7 +593,8 @@ output, trace = adapter.capture(inputs, ["selected.module"], max_tensor_elements
 | `transformers.causal_lm` | A Transformers decoder-only model | Also next-token probabilities and attention probes |
 | `diffusers.pipeline` | A Diffusers pipeline with step callbacks | Bounded denoising latents per step |
 
-- Captured tensors are bounded float32 prefixes, not summaries. A bad output selector raises
+- Captured tensors are bounded float32 prefixes, not summaries; the app adds token grids
+  and slices on top (`model_run.tensor_slices.SliceRecorder`). A bad output selector raises
   an error, and Model Run's hooks are always removed; existing hooks are kept.
 - Bindings never move a model or switch it to evaluation mode, and refuse to capture a
   module in training mode.

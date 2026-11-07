@@ -1,12 +1,11 @@
 """One active observation per session, with explicit lifecycle and bounded trace retention."""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-import json
 from threading import Lock
 from uuid import uuid4
 
 from .control import ObservationCancelled, RunControl
-from .trace_store import encode_trace
+from .trace_store import decode_trace, encode_trace
 
 
 class ObservationSession:
@@ -51,7 +50,7 @@ class ObservationSession:
 
     @staticmethod
     def _bounded_trace(trace):
-        return json.loads(encode_trace(trace))
+        return decode_trace(encode_trace(trace))
 
     def _execute(self, operation, control):
         trace, error, status = None, None, "failed"

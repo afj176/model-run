@@ -23,13 +23,18 @@ def discover_models(entries, *, max_files=MAX_FILES, max_depth=MAX_DEPTH):
         if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("category"), str):
             raise ValueError("Each root requires path and category strings")
         root = Path(entry["path"])
+        # ComfyUI lists folders it creates only when it first saves a model there (output/checkpoints
+        # and the like), so a folder that is not there yet is expected, not a problem.
+        if not root.exists():
+            continue
         if not root.is_dir():
-            errors.append({"path": str(root), "error": "directory unavailable"})
+            errors.append({"path": str(root), "error": "This is a file, not a folder"})
             continue
         root = root.resolve()
         origin = {"root": str(root), "category": entry["category"], "section": entry.get("section")}
         def onerror(error):
-            errors.append({"path": str(error.filename), "error": str(error)})
+            reason = getattr(error, "strerror", None) or str(error)
+            errors.append({"path": str(error.filename), "error": f"Can't be read: {reason[:1].lower()}{reason[1:]}"})
         for directory, folders, files in os.walk(root, followlinks=False, onerror=onerror):
             depth = len(Path(directory).relative_to(root).parts)
             eligible = sorted(d for d in folders if not (Path(directory) / d).is_symlink())

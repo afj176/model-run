@@ -144,5 +144,42 @@ class TensorSliceTests(unittest.TestCase):
             encode_trace(trace)
 
 
+
+class TokenGridTests(unittest.TestCase):
+    def layer(self, tokens=12, depth=2560):
+        # Each value says which token and feature it is: 10000 * token + feature.
+        token, feature = torch.meshgrid(torch.arange(float(tokens)), torch.arange(float(depth)), indexing="ij")
+        return (10000 * token + feature).unsqueeze(0)
+
+    def test_every_token_keeps_the_same_features(self):
+        recorder = SliceRecorder(max_values=1_000_000, token_features=256)
+        record = recorder.record(self.layer())
+        validate_slices(record)
+        self.assertEqual((record["layout"], record["rows"], record["cols"]), ("tokens", 12, 256))
+        self.assertEqual(record["token_indices"], list(range(12)))
+        self.assertEqual(record["feature_indices"][:3], [0, 10, 20])
+        # Row 5, column 3 is token 5's feature 30: exact, not averaged.
+        self.assertEqual(record["values"][5 * 256 + 3], 50030.0)
+        expected = float(self.layer()[0, 0].pow(2).mean().sqrt())
+        self.assertAlmostEqual(record["token_rms"][0], expected, delta=expected * 1e-4)
+
+    def test_the_trace_budget_is_shared_across_layers(self):
+        recorder = SliceRecorder(max_values=12 * 100, per_event=12 * 60, token_features=1 << 20)
+        first = recorder.record(self.layer())
+        second = recorder.record(self.layer())
+        self.assertEqual((first["cols"], second["cols"]), (60, 40))
+        self.assertIn("unavailable", recorder.record(self.layer()))
+
+    def test_text_layers_need_asking_for(self):
+        self.assertIsNone(SliceRecorder().record(self.layer()))
+
+    def test_a_damaged_grid_is_refused(self):
+        record = SliceRecorder(token_features=8).record(self.layer(3, 16))
+        for change in ({"rows": 4}, {"feature_indices": [1, 0, 2, 3, 4, 5, 6, 7]}, {"values": [1.0]}, {"row_labels": ["a"]}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_slices({**record, **change})
+        validate_slices({**record, "row_labels": ["<bos>", "Walk", "park"]})
+
+
 if __name__ == "__main__":
     unittest.main()

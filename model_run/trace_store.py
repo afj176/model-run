@@ -6,7 +6,9 @@ import math
 from pathlib import Path
 from .tensor_slices import validate_slices
 
-MAX_TRACE_BYTES = 16 * 1024 * 1024
+MAX_TRACE_BYTES = 64 * 1024 * 1024
+# Long lists of measured values are kept packed: 32-bit floats in base64, about a third smaller than JSON text.
+MIN_PACKED = 64
 SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching", "generation_capture"}
 
 
@@ -439,13 +441,72 @@ def _validate(trace):
                 validate_slices(event["slices"])
 
 
+def _pack(values):
+    """A packed list, or None when the list is not one of measured floats."""
+    import base64
+    from array import array
+    import sys
+    if len(values) < MIN_PACKED or not all(type(v) is float or v is None for v in values) or not any(type(v) is float for v in values):
+        return None
+    try:
+        floats = array("f", (math.nan if v is None else v for v in values))
+    except OverflowError:
+        return None
+    if sys.byteorder != "little":
+        floats.byteswap()
+    return {"__packed__": "float32", "n": len(values), "data": base64.b64encode(floats.tobytes()).decode("ascii")}
+
+
+def pack_values(value):
+    """The trace with every long list of measured floats packed. Whole numbers, such as indices, stay as they are."""
+    if isinstance(value, list):
+        packed = _pack(value)
+        return packed if packed is not None else [pack_values(v) for v in value]
+    if isinstance(value, dict):
+        return {key: pack_values(item) for key, item in value.items()}
+    return value
+
+
+def unpack_values(value):
+    """Packed lists turned back into numbers, None where nothing was measured; ValueError for a damaged one."""
+    import base64
+    from array import array
+    import sys
+    if isinstance(value, list):
+        return [unpack_values(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    if value.get("__packed__") == "float32":
+        count, data = value.get("n"), value.get("data")
+        if type(count) is not int or count < 0 or not isinstance(data, str) or set(value) != {"__packed__", "n", "data"}:
+            raise ValueError("Invalid packed list")
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except ValueError as exc:
+            raise ValueError("Invalid packed list") from exc
+        if len(raw) != 4 * count:
+            raise ValueError("A packed list is damaged")
+        floats = array("f")
+        floats.frombytes(raw)
+        if sys.byteorder != "little":
+            floats.byteswap()
+        # Single precision holds the 5 to 7 significant digits values are recorded with.
+        return [None if math.isnan(v) else float(f"{v:.7g}") for v in floats]
+    return {key: unpack_values(item) for key, item in value.items()}
+
+
+def decode_trace(data):
+    """A stored trace as plain numbers."""
+    return unpack_values(json.loads(data))
+
+
 def encode_trace(trace):
-    """Validate and encode while bounding the accumulated serialized output."""
+    """Validate, pack and encode while bounding the accumulated serialized output."""
     _validate(trace)
     data = bytearray()
     try:
         encoder = json.JSONEncoder(ensure_ascii=True, allow_nan=False, separators=(",", ":"))
-        for chunk in encoder.iterencode(trace):
+        for chunk in encoder.iterencode(pack_values(trace)):
             encoded = chunk.encode("utf-8")
             if len(data) + len(encoded) > MAX_TRACE_BYTES:
                 raise ValueError("Trace exceeds the size limit")
@@ -482,5 +543,6 @@ def load_trace(path):
         trace = json.loads(data, object_pairs_hook=_unique_pairs, parse_constant=lambda x: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ValueError(f"Invalid trace JSON: {exc}") from exc
+    trace = unpack_values(trace)
     _validate(trace)
     return trace

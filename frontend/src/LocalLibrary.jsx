@@ -309,9 +309,19 @@ export default function LocalLibrary({
         )}
       </div>
       {catalog.errors?.length > 0 && (
-        <details>
-          <summary>{catalog.errors.length} discovery notices</summary>
-          <pre>{JSON.stringify(catalog.errors, null, 2)}</pre>
+        <details className="library-notices">
+          <summary>
+            {catalog.errors.length} model folder
+            {catalog.errors.length === 1 ? "" : "s"} could not be read
+          </summary>
+          <ul>
+            {catalog.errors.map((notice, i) => (
+              <li key={`${notice.path}-${i}`}>
+                <code>{notice.path}</code>
+                <span>{notice.error}</span>
+              </li>
+            ))}
+          </ul>
         </details>
       )}
     </>

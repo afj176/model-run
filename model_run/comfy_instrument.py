@@ -29,6 +29,9 @@ def media_inputs(prompt):
 
 # Nodes a run cannot lose: leaving out a file must not take one of these with it.
 ESSENTIAL = re.compile(r"(Sampler|Guider|TextGenerate|Encode|Decode|Save)")
+# Where a file is truly optional: a language model's image, video or audio. Elsewhere an optional
+# image input (an edit model's reference, say) is what the workflow is for.
+OPTIONAL_MEDIA = {"TextGenerate", "ModelRunTextGenerate"}
 
 
 def drop_optional(prompt, node_ids, definitions):
@@ -36,7 +39,8 @@ def drop_optional(prompt, node_ids, definitions):
     the ids of the files a run still needs.
 
     Leaving a file out removes every node with a required input fed by it, and so on downstream. That is
-    allowed only when none of those is a sampler, generator, encoder, decoder or saver."""
+    allowed only when none of those is a sampler, generator, encoder, decoder or saver, and when what is
+    left reads them only as a language model's optional media."""
     def required(node_id, name):
         spec = (definitions.get(prompt[node_id]["class_type"]) or {}).get("input", {})
         return name in (spec.get("required") or {}) or not spec
@@ -54,7 +58,9 @@ def drop_optional(prompt, node_ids, definitions):
                 if any(_is_link(v) and v[0] == current and required(other, k) for k, v in node.get("inputs", {}).items()):
                     removed.add(other)
                     frontier.append(other)
-        if any(ESSENTIAL.search(prompt[n]["class_type"]) for n in removed if n != start):
+        boundary = {other for other, node in prompt.items() if other not in removed
+                    for v in node.get("inputs", {}).values() if _is_link(v) and v[0] in removed}
+        if any(ESSENTIAL.search(prompt[n]["class_type"]) for n in removed if n != start) or                 any(prompt[n]["class_type"] not in OPTIONAL_MEDIA for n in boundary):
             needed.append(start)
             continue
         for node_id in removed:

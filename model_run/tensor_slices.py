@@ -15,6 +15,10 @@ SIDE = 16
 SEQUENCE_COLS = 64
 MAX_SEQUENCE_BATCH = 8
 TRACE_VALUES = 262144
+# Token grids: every token of a text layer (up to this many) by as many of its features as fit.
+MAX_TOKEN_ROWS = 128
+TOKEN_VALUES = 8388608  # per trace, across every layer
+ALL_FEATURES = 1 << 20
 REFERENCE_ASSUMPTION = "Reference image tokens are assumed to follow the generated image and are not shown; the count matches the references this call received."
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 JOINT_ASSUMPTION = "This block carries text and image tokens together. Text is assumed to come first and is not shown; the count matches, and ComfyUI's Flux code uses this order."
@@ -100,7 +104,7 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False, token_features=None):
         # Set when every tensor is known to be a convolutional block, such as inside a VAE.
         self.convolutional = convolutional
         self.remaining = max_values
@@ -113,6 +117,8 @@ class SliceRecorder:
         self.per_event = per_event
         # sequence(length) -> (kept steps, axis name, note) when a [1, T, D] tensor runs along a known axis.
         self.sequence = sequence
+        # Text layers: how many features of every token to keep (None leaves text layers to the prefix).
+        self.token_features = token_features
 
     def _placed(self, tensor, latent_shape):
         # Some VAEs keep channels last in places; only name the axes when the shape really is the image's.
@@ -159,8 +165,40 @@ class SliceRecorder:
                 "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
                 "aggregate_measure": None, "aggregate": []}
 
+    def _token_record(self, tensor):
+        """Every token of a [B, T, D] (or [T, D]) text layer by the same evenly spaced features, exact, not averaged.
+
+        Rows are the first tokens (up to MAX_TOKEN_ROWS): text comes first and padding last. Each row also
+        keeps the token's RMS and peak over all of its features, so a token's strength is never a sample."""
+        import torch
+        state = tensor.detach()
+        if state.ndim == 2:
+            state = state.unsqueeze(0)
+        batch, length, depth = (int(n) for n in state.shape)
+        chosen_batch = self.conditional_batch if self.conditional_batch is not None and self.conditional_batch < batch else 0
+        rows = min(length, MAX_TOKEN_ROWS)
+        budget = self.remaining if self.per_event is None else min(self.remaining, self.per_event)
+        cols = min(depth, self.token_features, budget // rows)
+        if cols < 1:
+            return {"unavailable": "This trace's value budget was already spent on earlier layers."}
+        features = _spaced(depth, cols)
+        cols = len(features)
+        self.remaining -= rows * cols
+        tokens = state[chosen_batch, :rows].to(dtype=torch.float32)
+        values = tokens[:, torch.tensor(features, device=tokens.device)]
+        magnitude = tokens.abs()
+        return {"layout": "tokens", "source_shape": list(tensor.shape), "axes": [], "row_axis": "token", "col_axis": "feature",
+                "rows": rows, "cols": cols, "source_rows": length, "source_cols": depth, "pooled": False, "assumption": None,
+                "batch_index": chosen_batch, "token_indices": list(range(rows)), "feature_indices": features,
+                "values": _clean(values.reshape(-1).to(device="cpu").tolist()),
+                "token_rms": _clean(tokens.pow(2).mean(dim=-1).sqrt().to(device="cpu").tolist()),
+                "token_max_abs": _clean(magnitude.amax(dim=-1).to(device="cpu").tolist()),
+                "aggregate_axis": None, "aggregate_measure": None, "aggregate": []}
+
     def _record(self, tensor, latent_shape):
         import torch
+        if self.token_features and (tensor.ndim == 2 or (tensor.ndim == 3 and self.sequence is None and self._placed(tensor, latent_shape) is None)):
+            return self._token_record(tensor)
         if self.sequence is not None and tensor.ndim == 3:
             plan = self.sequence(int(tensor.shape[1]))
             if plan is not None:
@@ -252,6 +290,9 @@ def validate_slices(record):
     if type(record.get("pooled")) is not bool:
         raise ValueError("Invalid slice description")
     axes, rows, cols = record.get("axes"), record.get("rows"), record.get("cols")
+    if record.get("layout") == "tokens":
+        _validate_tokens(record)
+        return
     if record.get("layout") == "sequence":
         values = record.get("values")
         if not isinstance(axes, list) or len(axes) > 1:
@@ -298,5 +339,31 @@ def validate_slices(record):
     if not isinstance(summary, list) or len(summary) != slices // len(axes[aggregate]["indices"]) * rows * cols:
         raise ValueError("Slice aggregate does not match its axes")
     for value in (*values, *summary):
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            raise ValueError("Invalid slice value")
+
+
+def _validate_tokens(record):
+    """A token grid: every listed token by the same listed features, with each token's RMS and peak."""
+    rows, cols, values = record.get("rows"), record.get("cols"), record.get("values")
+    tokens, features = record.get("token_indices"), record.get("feature_indices")
+    length, depth = record["source_rows"], record["source_cols"]
+    if (record.get("axes") != [] or record.get("aggregate") != [] or type(rows) is not int or type(cols) is not int
+            or not 1 <= rows <= MAX_TOKEN_ROWS or not 1 <= cols <= depth or rows * cols > TOKEN_VALUES
+            or type(record.get("batch_index")) is not int or record["batch_index"] < 0):
+        raise ValueError("Invalid token grid")
+    if (not isinstance(tokens, list) or len(tokens) != rows or any(type(i) is not int or not 0 <= i < length for i in tokens)
+            or not isinstance(features, list) or len(features) != cols or any(type(i) is not int or not 0 <= i < depth for i in features)
+            or features != sorted(set(features))):
+        raise ValueError("Invalid token grid indices")
+    if not isinstance(values, list) or len(values) != rows * cols:
+        raise ValueError("Token grid values do not match its size")
+    for field in ("token_rms", "token_max_abs"):
+        if not isinstance(record.get(field), list) or len(record[field]) != rows:
+            raise ValueError("Invalid token grid statistics")
+    labels = record.get("row_labels")
+    if labels is not None and (not isinstance(labels, list) or len(labels) != rows or any(not isinstance(x, str) or len(x) > 64 for x in labels)):
+        raise ValueError("Invalid token labels")
+    for value in (*values, *record["token_rms"], *record["token_max_abs"]):
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
             raise ValueError("Invalid slice value")

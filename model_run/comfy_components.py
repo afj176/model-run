@@ -4,9 +4,11 @@ import re
 
 from .capture import capture_forward
 from .structure import inspect_module_tree
-from .tensor_slices import SliceRecorder
+from .tensor_slices import ALL_FEATURES, TOKEN_VALUES, SliceRecorder
 
 MAX_LAYERS = 65
+# Text stacks share one token budget across their layers, so every layer of even a large multimodal stack fits.
+MAX_TEXT_LAYERS = 160
 MAX_TOKENS = 64
 SPECIAL_TOKEN = re.compile(r"<[^<>]+>")
 MAX_UNITS = 64
@@ -85,7 +87,7 @@ def encoder_groups(stack):
     """{encoder attribute: [layer paths]}, with the embedding first where one can be found."""
     from .comfy_bridge import all_layer_paths
     groups = {}
-    for path in [p for p in all_layer_paths(stack) if p]:
+    for path in [p for p in all_layer_paths(stack, MAX_TEXT_LAYERS) if p]:
         groups.setdefault(path.split(".")[0], []).append(path)
     names = dict(stack.named_modules())
     for encoder, paths in groups.items():
@@ -214,7 +216,7 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
     stack = clip.cond_stage_model
     try:
         groups = encoder_groups(stack)
-        paths = _thin([path for group in groups.values() for path in group])
+        paths = _thin([path for group in groups.values() for path in group], MAX_TEXT_LAYERS)
     except Exception as exc:  # noqa: BLE001 - the node must still do its work
         logging.getLogger(__name__).warning("Model Run could not read this text encoder: %s", exc)
         return call(), None
@@ -236,8 +238,10 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
         result["value"] = call()
     invocation = _Run.module("encoder", stack, run)
     try:
+        # Every token of every layer, by as many features as one trace holds.
         _, trace = capture_forward(invocation, {}, [f"encoder.{p}" for p in paths], max_tensor_elements=MAX_ELEMENTS, max_events=len(paths),
-                                   slices=SliceRecorder(max_values=SLICE_VALUES, per_event=SLICE_PER_LAYER), require_eval=False)
+                                   slices=SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(paths)), token_features=ALL_FEATURES),
+                                   require_eval=False)
     except Exception as exc:
         if result.get("started") and "value" not in result:
             raise  # the model itself failed, as it would have without this node
@@ -250,11 +254,19 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
         for event in trace["events"]:
             event["module"] = event["module"][len("encoder."):]
         token_dict = tokens()
-        sections = []
+        sections, labels = [], {}
         for encoder, group in groups.items():
-            section = encoder_section(encoder, {p: states[p] for p in group if p in states}, encoder_tokens(clip, token_dict, encoder))
+            found = encoder_tokens(clip, token_dict, encoder)
+            section = encoder_section(encoder, {p: states[p] for p in group if p in states}, found)
             if section:
                 sections.append(section)
+            for path in group:
+                labels[path] = found["labels"] if found else None
+        # Token grids take their rows' words once the prompt's tokens are known.
+        for event in trace["events"]:
+            grid, words = event.get("slices"), labels.get(event["module"])
+            if isinstance(grid, dict) and grid.get("layout") == "tokens" and words and len(words) == grid["source_rows"]:
+                grid["row_labels"] = [str(words[i])[:64] for i in grid["token_indices"]]
         trace.update(model_class=f"{type(stack).__module__}.{type(stack).__qualname__}", source="comfyui_native_text_encoder", structure=inspect_module_tree(stack))
         trace["capture"]["modules"] = paths
         trace["text_encoder"] = {"encoders": sections, "limitations": list(ENCODER_LIMITATIONS)}

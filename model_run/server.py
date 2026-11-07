@@ -10,7 +10,7 @@ import socket
 from urllib.parse import urlsplit
 
 from .application import Application
-from .trace_store import MAX_TRACE_BYTES, _unique_pairs
+from .trace_store import MAX_TRACE_BYTES, _unique_pairs, unpack_values
 
 STATIC = Path(__file__).parent / "web"
 
@@ -43,7 +43,7 @@ def dispatch(app, method, route, body=None):
         if route == "structure": return app.structure()
         if route.startswith("artifact-structure/"): return app.artifact_structure(route[19:])
         if route.startswith("inspect/"): return app.inspect(route[8:])
-        if route.startswith("traces/"): return app.trace(route[7:])
+        if route.startswith("traces/"): return app.trace_packed(route[7:])
         if route.startswith("native-workflow/"): return app.native_workflow(route[16:])
         if route.startswith("install/thumbnail/"): return {"thumbnail": app.installer.thumbnail(route[18:])}
     if method == "POST":
@@ -66,7 +66,7 @@ def dispatch(app, method, route, body=None):
         if route == "unload": return app.unload()
         if route == "run": return app.run(body)
         if route == "cancel": return app.cancel()
-        if route == "import": return app.publish(body, "Imported trace")
+        if route == "import": return app.publish(unpack_values(body), "Imported trace")
         if route.startswith("delete/"): return app.delete_trace(route[7:])
         if route.startswith("pin/"): return app.pin_trace(route[4:], body.get("pinned"))
     raise LookupError("Unknown API endpoint")

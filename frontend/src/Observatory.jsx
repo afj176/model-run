@@ -55,6 +55,7 @@ import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
 import ModelInstall from "./ModelInstall";
 import Unlock from "./Unlock";
+import WorkflowBar from "./WorkflowBar";
 import {
   cancelPrompt,
   openInComfy,
@@ -64,6 +65,7 @@ import {
   waitForPrompt,
 } from "./comfyRun";
 import { buildReport } from "./report";
+import { packValues } from "./packedValues.js";
 import { api, displayNodes, samples, eventPath } from "./api";
 const num = (n) =>
   Number.isFinite(n)
@@ -153,6 +155,20 @@ const OUTPUT_TABS = {
   preview: "Image",
 };
 
+/** A token grid's rows named by the run's own tokens, when the recorder did not name them. */
+function withTokenWords(event, trace) {
+  if (
+    !event?.token_indices ||
+    event.row_labels ||
+    !Array.isArray(trace?.tokens)
+  )
+    return event;
+  const words = event.token_indices.map((i) => trace.tokens[i]?.text);
+  return words.every((w) => typeof w === "string")
+    ? { ...event, row_labels: words.map((w) => w.trim() || "␣") }
+    : event;
+}
+
 export function App() {
   const [state, setState] = useState(null),
     [catalog, setCatalog] = useState({ artifacts: [] });
@@ -184,6 +200,61 @@ export function App() {
   const [comfyModel, setComfyModel] = useState(null);
   const [workflowSettings, setWorkflowSettings] = useState({});
   const [installStart, setInstallStart] = useState(null);
+  const restored = useRef(false);
+  useEffect(() => {
+    if (state?.host !== "comfyui" || restored.current) return;
+    restored.current = true;
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem("model-run.comfy") || "null");
+    } catch {
+      saved = null;
+    }
+    if (!saved?.model) return;
+    if (typeof saved.prompt === "string" && saved.prompt)
+      setPrompt(saved.prompt);
+    if (saved.model.kind === "text") {
+      setComfyModel(saved.model);
+      setWorkflowSettings(saved.settings || {});
+      return;
+    }
+    // A workflow is read again, so it matches what ComfyUI has now.
+    api("comfy/workflow", { name: saved.model.template })
+      .then((info) => {
+        setComfyModel({
+          kind: "workflow",
+          name: info.title,
+          template: info.name,
+          workflow: info.workflow,
+          inputs: info.inputs || [],
+        });
+        setWorkflowSettings({ ...(saved.settings || {}), files: {} });
+      })
+      .catch(() => {});
+  }, [state?.host]);
+  useEffect(() => {
+    if (!restored.current) return;
+    try {
+      localStorage.setItem(
+        "model-run.comfy",
+        JSON.stringify(
+          comfyModel
+            ? {
+                model: {
+                  ...comfyModel,
+                  workflow: undefined,
+                  inputs: undefined,
+                },
+                settings: { ...workflowSettings, files: undefined },
+                prompt,
+              }
+            : null,
+        ),
+      );
+    } catch {
+      // Only a convenience; a private window keeps nothing.
+    }
+  }, [comfyModel, workflowSettings, prompt]);
   const [comfyProgress, setComfyProgress] = useState("");
   const comfyJob = useRef(null);
   useEffect(() => {
@@ -212,6 +283,8 @@ export function App() {
   useEffect(() => {
     pairBRef.current = pairB;
   }, [pairB]);
+  // Features kept for every token of a text layer; 0 keeps as many as the trace holds.
+  const [tokenFeatures, setTokenFeatures] = useState(0);
   const [elements, setElements] = useState(1024),
     [steps, setSteps] = useState(8),
     [responseTokens, setResponseTokens] = useState(48),
@@ -300,8 +373,8 @@ export function App() {
     () =>
       view === "volume"
         ? volumeEvent(rawEvent, sliceWanted)
-        : sliceEvent(rawEvent, sliceWanted),
-    [rawEvent, sliceWanted, view],
+        : withTokenWords(sliceEvent(rawEvent, sliceWanted), trace),
+    [rawEvent, sliceWanted, view, trace],
   );
   const sliceNav = (
     <SliceNavigator event={event} wanted={sliceWanted} onChange={pickSlice} />
@@ -667,6 +740,7 @@ export function App() {
       input_mode: active.inputMode,
       modules: capturePaths,
       elements,
+      token_features: tokenFeatures,
       run_group: active.run,
       run_step: step,
     };
@@ -768,6 +842,7 @@ export function App() {
         input_mode: inputMode,
         modules: capturePaths,
         elements,
+        token_features: tokenFeatures,
         steps,
         size,
         seed,
@@ -982,7 +1057,10 @@ export function App() {
   }
   function exportTrace() {
     download(
-      new Blob([JSON.stringify(trace)], { type: "application/json" }),
+      // Packed like the stored trace, so a large capture exports and imports again within the limit.
+      new Blob([JSON.stringify(packValues(trace))], {
+        type: "application/json",
+      }),
       "model-run-trace.json",
     );
   }
@@ -1002,7 +1080,7 @@ export function App() {
     e.target.value = "";
     if (!file) return;
     await action(async () => {
-      if (file.size > 16 * 1024 * 1024) throw new Error("Trace exceeds 16 MiB");
+      if (file.size > 64 * 1024 * 1024) throw new Error("Trace exceeds 64 MiB");
       const r = await api("import", JSON.parse(await file.text()));
       await openTrace(r.id);
     });
@@ -1090,9 +1168,7 @@ export function App() {
             <span>Model</span>
             <button className="model-picker" onClick={() => setModal("models")}>
               <span>
-                {state?.loaded?.name ||
-                  comfyModel?.name ||
-                  (native && trace ? modelName : "Choose a model")}
+                {state?.loaded?.name || comfyModel?.name || "Choose a model"}
               </span>
               <CaretDown size={14} weight="bold" />
             </button>
@@ -1140,7 +1216,7 @@ export function App() {
                   ? nativeQueued
                     ? comfyJob.current && cancelPrompt(comfyJob.current)
                     : runComfy()
-                  : window.open(new URL("../", window.location.href), "comfyui")
+                  : setModal("models")
                 : busy
                   ? action(() => api("cancel", {}))
                   : textModel
@@ -1153,7 +1229,7 @@ export function App() {
                 ? nativeQueued
                   ? "Cancel"
                   : "Run"
-                : "ComfyUI ↗"
+                : "Run"
               : busy
                 ? "Cancel"
                 : "Run"}
@@ -1162,13 +1238,11 @@ export function App() {
       </nav>
       <section className="input-bar" aria-label="Capture input">
         <label htmlFor="prompt">
-          {native && !comfyModel
-            ? "Capture"
-            : mediaTask === "image"
-              ? "Image"
-              : mediaTask === "audio"
-                ? "Audio"
-                : "Prompt"}
+          {mediaTask === "image"
+            ? "Image"
+            : mediaTask === "audio"
+              ? "Audio"
+              : "Prompt"}
         </label>
         {mediaTask ? (
           <input
@@ -1185,64 +1259,15 @@ export function App() {
         ) : (
           <input
             id="prompt"
-            value={
+            value={prompt}
+            placeholder={
               native && !comfyModel
-                ? "Choose a model or workflow in the library, or use Observe this workflow in ComfyUI's Model Run sidebar."
-                : prompt
+                ? "Choose a model or workflow, then write a prompt"
+                : undefined
             }
-            readOnly={native && !comfyModel}
             onChange={(e) => setPrompt(e.target.value)}
             maxLength={8192}
           />
-        )}
-        {native &&
-          comfyModel?.kind === "workflow" &&
-          comfyModel.inputs.map((input) => (
-            <label
-              key={input.node}
-              className="workflow-input"
-              title={`${input.title} (${input.node}) reads this file`}
-            >
-              <span>
-                {input.kind[0].toUpperCase() + input.kind.slice(1)}
-                {workflowSettings.files?.[input.node]
-                  ? ""
-                  : input.needed && !input.present
-                    ? " (needed)"
-                    : !input.present
-                      ? " (optional)"
-                      : ""}
-              </span>
-              <input
-                type="file"
-                accept={`${input.kind}/*`}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  uploadInput(file)
-                    .then((name) =>
-                      setWorkflowSettings((s) => ({
-                        ...s,
-                        files: { ...(s.files || {}), [input.node]: name },
-                      })),
-                    )
-                    .catch((err) => setError(err.message));
-                }}
-              />
-            </label>
-          ))}
-        {native && comfyModel?.kind === "workflow" && (
-          <button
-            className="host-link"
-            title="Show this workflow on the ComfyUI canvas, to change it there"
-            onClick={() =>
-              openInComfy(comfyModel.workflow, comfyModel.template).catch((e) =>
-                setError(e.message),
-              )
-            }
-          >
-            Open in ComfyUI ↗
-          </button>
         )}
         <div className="tokens">
           <span className={busy ? "muted working" : "muted"}>
@@ -1259,7 +1284,7 @@ export function App() {
                     : trace?.tokens
                       ? `Tokens (${trace.tokens.length})`
                       : native
-                        ? "Native execution"
+                        ? "Runs through ComfyUI"
                         : "Tokens appear after a capture"}
           </span>
           {trace?.tokens?.map((t, i) => (
@@ -1278,6 +1303,35 @@ export function App() {
           onClick={() => setModal("settings")}
         />
       </section>
+      {native && comfyModel?.kind === "workflow" && (
+        <WorkflowBar
+          model={comfyModel}
+          settings={workflowSettings}
+          onPick={(node, file) =>
+            uploadInput(file)
+              .then((name) =>
+                setWorkflowSettings((s) => ({
+                  ...s,
+                  files: { ...(s.files || {}), [node]: name },
+                })),
+              )
+              .catch((err) => setError(err.message))
+          }
+          onClear={(node) =>
+            setWorkflowSettings((s) => {
+              const files = { ...(s.files || {}) };
+              delete files[node];
+              return { ...s, files };
+            })
+          }
+          onSettings={() => setModal("settings")}
+          onOpen={() =>
+            openInComfy(comfyModel.workflow, comfyModel.template).catch((e) =>
+              setError(e.message),
+            )
+          }
+        />
+      )}
       {error && (
         <div className="error" role="alert">
           <Info size={20} />
@@ -2428,6 +2482,22 @@ export function App() {
                     ))}
                   </select>
                 </Field>
+                {settingsFor.text && (
+                  <Field label="Features per token">
+                    <select
+                      value={tokenFeatures}
+                      onChange={(e) => setTokenFeatures(Number(e.target.value))}
+                      title="How many of each token's features every layer keeps. Every token is always kept."
+                    >
+                      <option value={0}>All that fit (default)</option>
+                      {[1024, 256, 64].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
                 {settingsFor.text && (
                   <Field label="Response length">
                     <select

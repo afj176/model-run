@@ -79,12 +79,14 @@ class EmbeddingAdapter(TorchModuleAdapter):
         super().__init__(model)
         self.head = head
 
-    def embed(self, inputs, module_paths, *, max_tensor_elements=1024, control=None):
+    def embed(self, inputs, module_paths, *, max_tensor_elements=1024, control=None, token_features=None):
         import torch
+        from .transformers_capture import token_slices
         self._require("module_outputs")
         def forward():
             return capture_forward(self.model, {"input_ids": inputs["input_ids"], "attention_mask": inputs["attention_mask"]},
-                                   module_paths, control=control, max_tensor_elements=max_tensor_elements)
+                                   module_paths, control=control, max_tensor_elements=max_tensor_elements,
+                                   slices=token_slices(module_paths, token_features))
         output, trace = self._run(forward)
         states = output.last_hidden_state[0].detach().to(device="cpu", dtype=torch.float32)
         mask = inputs["attention_mask"][0].to("cpu").bool()

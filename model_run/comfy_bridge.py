@@ -60,7 +60,7 @@ def _layer_entry(path, module):
     return path
 
 
-def all_layer_paths(core):
+def all_layer_paths(core, limit=None):
     """Every top-level block of a denoiser, then its final output; just the output if it has no blocks."""
     import torch
     containers, paths = [], []
@@ -73,8 +73,9 @@ def all_layer_paths(core):
         elif isinstance(module, torch.nn.Sequential) and len(module) > 0:
             containers.append(name)
             paths.append(_layer_entry(name, module))
-    if len(paths) > MAX_LAYER_PATHS - 1:
-        paths = [paths[round(i * (len(paths) - 1) / (MAX_LAYER_PATHS - 2))] for i in range(MAX_LAYER_PATHS - 1)]
+    limit = limit or MAX_LAYER_PATHS
+    if len(paths) > limit - 1:
+        paths = [paths[round(i * (len(paths) - 1) / (limit - 2))] for i in range(limit - 1)]
     return [*paths, ""]
 
 
@@ -973,6 +974,7 @@ def install_routes():
     from aiohttp import web
     from server import PromptServer
     from .server import STATIC, decode_body, dispatch
+    from .trace_store import MAX_TRACE_BYTES
     token = secrets.token_urlsafe(32)
 
     async def api(request):
@@ -992,7 +994,7 @@ def install_routes():
             if request.method == "POST":
                 if request.content_type != "application/json":
                     raise ValueError("Expected application/json")
-                if request.content_length is None or request.content_length > 16 * 1024 * 1024:
+                if request.content_length is None or request.content_length > MAX_TRACE_BYTES:
                     raise ValueError("Invalid request size")
                 body = decode_body(await request.read())
             result = await asyncio.to_thread(dispatch, application(), request.method, route, body)

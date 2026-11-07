@@ -19,13 +19,14 @@ from .model_install import ModelInstaller
 from .model_sources import read_template, recipe_for
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
-from .trace_store import encode_trace
+from .tensor_slices import ALL_FEATURES
+from .trace_store import decode_trace, encode_trace
 
 MAX_RUNS = 16
 MAX_TRACES = 64
-MAX_RETAINED_BYTES = 256 * 1024 * 1024
+MAX_RETAINED_BYTES = 1024 * 1024 * 1024
 MAX_PINNED_RUNS = 8
-MAX_PINNED_BYTES = 128 * 1024 * 1024
+MAX_PINNED_BYTES = 512 * 1024 * 1024
 
 
 def bounded_int(value, low, high, name):
@@ -395,6 +396,8 @@ class Application:
             raise ValueError("Select at most 32 module paths")
         paths = list(paths)
         elements = bounded_int(request.get("elements", 1024), 1, 4096, "elements")
+        # Features kept for every token of a text layer; 0 keeps as many as the trace holds.
+        token_features = bounded_int(request.get("token_features", 0), 0, 65536, "token_features") or ALL_FEATURES
         ablate = request.get("ablate")
         if ablate not in (None, "head", "layer"):
             raise ValueError("ablate must be head or layer")
@@ -465,7 +468,7 @@ class Application:
                 else:
                     operation = "probe_attention" if attention else "next_token"
                     options = {"layer": bounded_int(request.get("layer", 0), 0, 1024, "layer"),
-                               "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements}
+                               "head": bounded_int(request.get("head", 0), 0, 1024, "head")} if attention else {"max_tensor_elements": elements, "token_features": token_features}
                 if not paths and not attention and not ablate and not patching and generate is None:
                     paths.extend(text_layer_paths(item["adapter"].model, self._tree) or [""])
                 def decorate(output, trace):
@@ -506,7 +509,7 @@ class Application:
                 if not paths:
                     paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
                 inputs = {"input_ids": encoded["input_ids"].to(item["device"]), "attention_mask": encoded["attention_mask"].to(item["device"])}
-                operation, options = "embed", {"max_tensor_elements": elements}
+                operation, options = "embed", {"max_tensor_elements": elements, "token_features": token_features}
                 def decorate(output, trace):
                     trace["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in encoded["input_ids"][0].tolist()]
                     trace["limitations"].append("This application trace includes decoded input tokens; exported traces may contain private text.")
@@ -736,6 +739,17 @@ class Application:
                 break
 
     def trace(self, identifier):
+        with self._lock:
+            for record in self._traces:
+                if record["id"] == identifier:
+                    data = record["data"]
+                    break
+            else:
+                raise ValueError("Trace is no longer retained")
+        return decode_trace(data)
+
+    def trace_packed(self, identifier):
+        """A trace as stored, long value lists still packed: what the browser fetches."""
         with self._lock:
             for record in self._traces:
                 if record["id"] == identifier:

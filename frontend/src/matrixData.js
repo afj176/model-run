@@ -194,6 +194,7 @@ export function sliceEvent(event, wanted = {}) {
           : `${axisLabel(axis)} ${axis.indices[positions[i]]}`,
     )
     .join(" · ");
+  if (slices.layout === "tokens") return tokenGridEvent(event, slices);
   const label =
     slices.layout === "sequence"
       ? [`${slices.row_axis} by ${slices.col_axis}`, axisPart]
@@ -229,6 +230,37 @@ export function sliceEvent(event, wanted = {}) {
     slice_label: label,
     magnitude: all,
     slice_note: notes.join(" "),
+  };
+}
+
+/** A text layer's token grid: every token (rows) by the same recorded features (columns), exact values. */
+function tokenGridEvent(event, slices) {
+  const notes = [
+    slices.cols < slices.source_cols
+      ? `Every token by ${slices.cols} of its ${slices.source_cols.toLocaleString()} features, evenly spaced; the feature numbers are the columns.`
+      : `Every token by all ${slices.source_cols.toLocaleString()} of its features.`,
+  ];
+  if (slices.rows < slices.source_rows)
+    notes.push(
+      `The first ${slices.rows} of ${slices.source_rows} tokens; text comes before padding.`,
+    );
+  return {
+    ...event,
+    values: slices.values,
+    shape: [slices.rows, slices.cols],
+    selection: "tensor_slice",
+    total_elements: slices.rows * slices.cols,
+    truncated: false,
+    axes: ["token", "feature"],
+    grid_cols: slices.cols,
+    source_shape: event.shape,
+    slice_label: "every token by feature",
+    magnitude: false,
+    slice_note: notes.join(" "),
+    row_labels: slices.row_labels ?? null,
+    col_labels: slices.feature_indices.map((i) => `#${i}`),
+    token_rms: slices.token_rms,
+    token_indices: slices.token_indices,
   };
 }
 

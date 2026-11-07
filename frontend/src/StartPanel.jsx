@@ -37,21 +37,21 @@ export default function StartPanel({
         <h3>Run a model through ComfyUI</h3>
         <ol className="start-steps">
           <li>
-            <b>A text model</b>
+            <b>Choose a model or a workflow</b>
             <span>
-              Open the library, choose one marked Writes text or Reads prompts,
-              then write a prompt and press Run.
+              In the library: Use a text model, Run an image, video or audio
+              model, or Use a workflow from Get models › By workflow.
             </span>
             <button className="primary" onClick={onOpenLibrary}>
               <FolderOpen aria-hidden="true" /> Open the model library
             </button>
           </li>
           <li>
-            <b>An image, video or audio workflow</b>
+            <b>Write a prompt and press Run</b>
             <span>
-              Get models › By workflow: press Run on one that is ready with your
-              models. Or, on the ComfyUI canvas, use Observe this workflow in
-              the Model Run sidebar.
+              Model Run sends it to ComfyUI and opens what it recorded. Or, on
+              the ComfyUI canvas, use Observe this workflow in the Model Run
+              sidebar.
             </span>
           </li>
         </ol>

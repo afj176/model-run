@@ -188,6 +188,11 @@ class Instrumenting(unittest.TestCase):
         self.assertNotIn("7", prompt)
         self.assertNotIn("image", prompt["2"]["inputs"])
         self.assertNotIn("video", prompt["2"]["inputs"])
+        # An edit model's optional reference image is what its workflow is for, so it stays needed.
+        edit = {"1": {"class_type": "LoadImage", "inputs": {"image": "x.png"}},
+                "2": {"class_type": "TextEncodeQwenImageEdit", "inputs": {"clip": ["9", 0], "image": ["1", 0]}}}
+        defs = {"TextEncodeQwenImageEdit": {"input": {"required": {"clip": ["CLIP"]}, "optional": {"image": ["IMAGE"]}}}}
+        self.assertEqual(drop_optional(edit, ["1"], defs), ["1"])
         chosen = instrument(prompt, {"files": {"3": "mine.png", "4": "../../x.png"}})["prompt"]
         self.assertEqual(chosen["3"]["inputs"]["image"], "mine.png")
 

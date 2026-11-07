@@ -153,8 +153,17 @@ export default function MatrixWorkspace({
     trace.tokens.length === data.shape[0]
       ? trace.tokens
       : null;
-  const labelFor = (index) =>
-    tokens ? tokenLabel(tokens[index], index) : null;
+  // Attention labels both axes with tokens; a token grid labels its rows with tokens and its columns with feature numbers.
+  const labelRow = (index) =>
+    tokens
+      ? tokenLabel(tokens[index], index)
+      : (event?.row_labels?.[index] ?? null);
+  const labelCol = (index) =>
+    tokens
+      ? tokenLabel(tokens[index], index)
+      : (event?.col_labels?.[index] ?? null);
+  const rowsLabelled = Boolean(tokens || event?.row_labels);
+  const colsLabelled = Boolean(tokens || event?.col_labels);
   const val = data?.matrix[selected.row]?.[selected.col];
   const status = data?.states[selected.row]?.[selected.col];
   const finite = data?.matrix.flat().filter((v) => Number.isFinite(v)) || [];
@@ -163,8 +172,12 @@ export default function MatrixWorkspace({
   const colName = data ? axisWord(data.axes[1]) : "column";
   const rowIndex = rowOffset + selected.row;
   const colIndex = colOffset + selected.col;
-  const rowToken = labelFor(rowIndex);
-  const colToken = labelFor(colIndex);
+  const rowToken = labelRow(rowIndex);
+  const colToken = labelCol(colIndex);
+  // A token grid's columns are named by their feature number ("#35"), which says it all.
+  const colText = colToken?.startsWith("#")
+    ? colToken
+    : `${colIndex}${colToken ? ` “${colToken}”` : ""}`;
   const valueLabel = attention ? "Weight" : "Value";
   const valueText =
     status === "captured"
@@ -287,7 +300,7 @@ export default function MatrixWorkspace({
     }
     return out;
   }, [data, selected]);
-  const ticks = (n, offset, dense) => {
+  const ticks = (n, offset, dense, labelFor) => {
     const limit = dense ? 16 : 8;
     const step =
       [1, 2, 4, 5, 8, 10, 16, 20, 32].find((s) => s >= n / limit) || 32;
@@ -382,8 +395,7 @@ export default function MatrixWorkspace({
                 <span>{(event?.source_shape ?? data.shape).join(" × ")}</span>
                 <span>
                   {cap(rowName)} {rowIndex}
-                  {rowToken ? ` “${rowToken}”` : ""} · {cap(colName)} {colIndex}
-                  {colToken ? ` “${colToken}”` : ""}
+                  {rowToken ? ` “${rowToken}”` : ""} · {cap(colName)} {colText}
                 </span>
               </p>
             ) : (
@@ -494,11 +506,11 @@ export default function MatrixWorkspace({
                     col: tokens ? "key token" : axisTitle(data.axes[1]),
                     rowOffset,
                     colOffset,
-                    rowLabels: tokens
-                      ? data.matrix.map((_, r) => labelFor(rowOffset + r))
+                    rowLabels: rowsLabelled
+                      ? data.matrix.map((_, r) => labelRow(rowOffset + r))
                       : null,
-                    colLabels: tokens
-                      ? data.matrix[0].map((_, c) => labelFor(colOffset + c))
+                    colLabels: colsLabelled
+                      ? data.matrix[0].map((_, c) => labelCol(colOffset + c))
                       : null,
                   }}
                   callout={
@@ -506,7 +518,9 @@ export default function MatrixWorkspace({
                       <span>
                         {tokens
                           ? `“${rowToken}” → “${colToken}”`
-                          : `${cap(rowName.charAt(0))} ${rowIndex}, ${cap(colName.charAt(0))} ${colIndex}`}
+                          : rowToken
+                            ? `“${rowToken}” · ${colToken ?? `${cap(colName)} ${colIndex}`}`
+                            : `${cap(rowName.charAt(0))} ${rowIndex}, ${cap(colName.charAt(0))} ${colIndex}`}
                       </span>
                       <strong>
                         {valueLabel} <em>{valueText}</em>
@@ -533,7 +547,7 @@ export default function MatrixWorkspace({
                           key={c}
                           className={c === selected.col ? "picked" : ""}
                         >
-                          {labelFor(colOffset + c) ?? colOffset + c}
+                          {labelCol(colOffset + c) ?? colOffset + c}
                         </th>
                       ))}
                     </tr>
@@ -542,7 +556,7 @@ export default function MatrixWorkspace({
                     {data.matrix.map((row, r) => (
                       <tr key={r}>
                         <th className={r === selected.row ? "picked" : ""}>
-                          {labelFor(rowOffset + r) ?? rowOffset + r}
+                          {labelRow(rowOffset + r) ?? rowOffset + r}
                         </th>
                         {row.map((v, c) => (
                           <td
@@ -751,10 +765,7 @@ export default function MatrixWorkspace({
                   {rowToken ? ` “${rowToken}”` : ""}
                 </dd>
                 <dt>{cap(colName)}:</dt>
-                <dd>
-                  {colIndex}
-                  {colToken ? ` “${colToken}”` : ""}
-                </dd>
+                <dd>{colText}</dd>
                 <dt>{valueLabel}:</dt>
                 <dd className="mint">{valueText}</dd>
               </dl>
@@ -1134,13 +1145,13 @@ export default function MatrixWorkspace({
               <small>(linked)</small>
             </h3>
             <div
-              className={`matrix-heatmap-figure ${tokens ? "with-tokens" : ""}`}
+              className={`matrix-heatmap-figure ${rowsLabelled ? "with-tokens" : ""}`}
             >
               <span className="matrix-heatmap-ylabel">
                 {tokens ? "query token" : axisTitle(data.axes[0])}
               </span>
               <div className="matrix-heatmap-yticks">
-                {ticks(data.rows, rowOffset, Boolean(tokens)).map(
+                {ticks(data.rows, rowOffset, rowsLabelled, labelRow).map(
                   ({ i, label }) => (
                     <span
                       key={i}
@@ -1193,7 +1204,7 @@ export default function MatrixWorkspace({
                           ?.focus();
                       }}
                       aria-label={`${rowName} ${r + rowOffset}, ${colName} ${c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
-                      title={`${labelFor(r + rowOffset) ?? r + rowOffset} → ${labelFor(c + colOffset) ?? c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
+                      title={`${labelRow(r + rowOffset) ?? r + rowOffset} → ${labelCol(c + colOffset) ?? c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
                       className={
                         selected.row === r && selected.col === c
                           ? "picked"
@@ -1225,7 +1236,7 @@ export default function MatrixWorkspace({
                 </div>
               </div>
               <div className="matrix-heatmap-xticks">
-                {ticks(data.cols, colOffset, Boolean(tokens)).map(
+                {ticks(data.cols, colOffset, colsLabelled, labelCol).map(
                   ({ i, label }) => (
                     <span
                       key={i}

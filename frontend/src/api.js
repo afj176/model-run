@@ -1,3 +1,4 @@
+import { unpackValues } from "./packedValues.js";
 let token;
 export const eventPath = (event) =>
   event?.module ?? (event?.step !== undefined ? `Step ${event.step}` : "");
@@ -29,7 +30,8 @@ export async function api(route, body, refreshed = false) {
     return api(route, body, true);
   }
   if (!r.ok) throw new Error(value.error || `Request failed (${r.status})`);
-  return value;
+  // Long value lists arrive packed; every view reads plain numbers.
+  return route.startsWith("traces/") ? unpackValues(value) : value;
 }
 export function displayNodes(tree, trace) {
   const nodes = tree?.nodes || [];
