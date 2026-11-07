@@ -8,9 +8,10 @@ import struct
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from model_run.model_install import ModelInstaller, Transport, _safe_part
-from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, load_index, parse_size
+from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, install_note, load_index, parse_size
 
 URL = "https://huggingface.co/org/repo/resolve/main/a.safetensors"
 
@@ -87,6 +88,13 @@ class Rules(unittest.TestCase):
         for name in ("a.ckpt", "a.pt", "a.pth", "a.bin", "a.pkl", "a.safetensors.exe"):
             self.assertIn("run code", blocked_reason(URL, name))
 
+    def test_gguf_installs_where_comfyui_gguf_reads_it(self):
+        self.assertIsNone(blocked_reason(URL, "flux1-dev-Q4_K_S.gguf"))
+        self.assertEqual(guess_folder("flux1-dev-Q4_K_S.gguf"), "diffusion_models")
+        self.assertEqual(guess_folder("t5-v1_1-xxl-encoder-Q5_K_M.gguf"), "text_encoders")
+        self.assertIn("ComfyUI-GGUF", install_note("flux1-dev-Q4_K_S.gguf"))
+        self.assertIsNone(install_note("flux1-dev.safetensors"))
+
     def test_unsafe_names_are_refused(self):
         for name in ("..", ".", "a/b", "a\\b", "c:evil", "CON", "nul.safetensors", "a ", "a.", "x" * 201, "a\x00b", ""):
             with self.assertRaises(ValueError, msg=repr(name)):
@@ -109,6 +117,12 @@ class Rules(unittest.TestCase):
 
 
 class Index(unittest.TestCase):
+    def setUp(self):
+        # Inside ComfyUI's own Python the real template package is importable; these tests read only their folder.
+        patcher = mock.patch("model_run.model_sources.importlib.util.find_spec", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_lists_merge_by_url_and_keep_their_workflows(self):
         with tempfile.TemporaryDirectory() as tmp:
             templates = Path(tmp) / ".venv" / "Lib" / "site-packages" / "comfyui_workflow_templates_json" / "templates"

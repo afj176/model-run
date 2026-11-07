@@ -10,7 +10,8 @@ from urllib.parse import quote, unquote, urlsplit
 
 MAX_LIST_BYTES = 16 * 1024 * 1024
 MAX_TEMPLATES = 5000
-INSTALLABLE_SUFFIXES = (".safetensors", ".sft")
+INSTALLABLE_SUFFIXES = (".safetensors", ".sft", ".gguf")  # tensors and metadata only; pickle formats can run code
+GGUF_NOTE = "Loads through the ComfyUI-GGUF custom node, from the diffusion model or text encoder folder"
 TYPE_FOLDERS = {"checkpoint": "checkpoints", "checkpoints": "checkpoints", "lora": "loras", "vae": "vae", "taesd": "vae_approx",
                 "upscale": "upscale_models", "controlnet": "controlnet", "t2i-adapter": "controlnet", "clip": "text_encoders",
                 "unet": "diffusion_models", "diffusion_model": "diffusion_models", "clip_vision": "clip_vision", "embedding": "embeddings",
@@ -44,7 +45,9 @@ def file_url(repo, path, revision="main"):
 def guess_folder(path):
     """A guess from a file's name; the person installing confirms it."""
     lowered = path.lower().replace("\\", "/")
-    return next((folder for pattern, folder in FILE_FOLDERS if re.search(pattern, lowered)), "checkpoints")
+    # ComfyUI-GGUF reads GGUF models from the diffusion model folders, never from checkpoints.
+    fallback = "diffusion_models" if lowered.endswith(".gguf") else "checkpoints"
+    return next((folder for pattern, folder in FILE_FOLDERS if re.search(pattern, lowered)), fallback)
 
 
 def parse_size(text):
@@ -56,8 +59,13 @@ def blocked_reason(url, filename):
     if huggingface_parts(url) is None:
         return "Only https files from Hugging Face can be installed"
     if not str(filename).lower().endswith(INSTALLABLE_SUFFIXES):
-        return "Only .safetensors and .sft can be installed: other formats can run code when loaded"
+        return "Only .safetensors, .sft and .gguf can be installed: pickle formats such as .ckpt, .pt, .pth and .bin can run code when loaded"
     return None
+
+
+def install_note(filename):
+    """What a person should know before installing this file, or None."""
+    return GGUF_NOTE if str(filename).lower().endswith(".gguf") else None
 
 
 def _read(path):
@@ -187,6 +195,7 @@ def load_index(comfy_dir=None):
         item["size_bytes"] = item["size_bytes"] or parse_size(str(model.get("size") or ""))
     for item in items.values():
         item["blocked"] = blocked_reason(item["url"], item["filename"])
+        item["note"] = install_note(item["filename"])
     if not items:
         notes.append("No ComfyUI model lists were found here. Hugging Face search still works.")
     return {"models": items, "by_id": {item["id"]: item for item in items.values()}, "workflows": workflows, "notes": notes}

@@ -32,6 +32,7 @@ function ModelRow({ model, onInstall, categories, onCategory }) {
           {uses ? ` · used by ${uses} workflow${uses === 1 ? "" : "s"}` : ""}
         </span>
         {model.description && <small>{model.description}</small>}
+        {model.note && !model.blocked && <small className="install-note">{model.note}</small>}
         {model.blocked && (
           <small className="install-note">{model.blocked}</small>
         )}
@@ -435,7 +436,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
               <>
                 <button onClick={() => setFiles(null)}>Back to results</button>
                 <p className="muted install-count">
-                  {files.repo}: {files.total} safetensors file
+                  {files.repo}: {files.total} model file
                   {files.total === 1 ? "" : "s"}
                 </p>
                 {files.files.map((f) => (

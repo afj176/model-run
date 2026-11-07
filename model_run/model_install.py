@@ -13,7 +13,7 @@ import urllib.request
 from uuid import uuid4
 
 from .inventory import InventoryError, inspect_file
-from .model_sources import blocked_reason, file_url, guess_folder, huggingface_parts, load_index
+from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index
 
 API = "https://huggingface.co/api/models"
 CHUNK = 1024 * 1024
@@ -182,7 +182,7 @@ class ModelInstaller:
         found = []
         for item in files if isinstance(files, list) else []:
             path = item.get("path") if isinstance(item, dict) else None
-            if not isinstance(path, str) or item.get("type") != "file" or not path.lower().endswith((".safetensors", ".sft")):
+            if not isinstance(path, str) or item.get("type") != "file" or not path.lower().endswith(INSTALLABLE_SUFFIXES):
                 continue
             lfs = item.get("lfs") if isinstance(item.get("lfs"), dict) else {}
             oid = lfs.get("oid") if isinstance(lfs.get("oid"), str) else None
@@ -190,7 +190,8 @@ class ModelInstaller:
             category = guess_folder(path)
             found.append({"id": sha256(f"{repo}/{path}".encode()).hexdigest()[:16], "name": path, "filename": filename, "url": file_url(repo, path),
                           "category": category, "guessed_folder": True, "subfolder": "", "size_bytes": item.get("size"), "sha256": oid,
-                          "installed": (category, filename) in names, "blocked": None if category in grouped else f"ComfyUI has no {category} folder here"})
+                          "installed": (category, filename) in names, "blocked": None if category in grouped else f"ComfyUI has no {category} folder here",
+                          "note": install_note(filename)})
         return {"repo": repo, "files": found[:MAX_RESULTS], "total": len(found), "categories": sorted(grouped)}
 
     def _target(self, request):

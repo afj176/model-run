@@ -19,7 +19,7 @@ from .cross_attention import stable_audio_labels, stable_audio_3_labels, collaps
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
 BLOCK_CONTAINER = re.compile(r"(?:^|\.)[a-z_]*(?:blocks?|layers?)$")
-TEXT_LAST_MODELS = {"AceStepConditionGenerationModel", "AsymmDiTJoint", "ErnieImageModel", "Flux3", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MOSSImage"}
+TEXT_LAST_MODELS = {"AceStepConditionGenerationModel", "AsymmDiTJoint", "ErnieImageModel", "Flux3", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MOSSImage", "HYVideoDiffusionTransformer"}  # the last: ComfyUI-HunyuanVideoWrapper's transformer, image then text
 # Measured the same way: keys run image, text, then other conditioning, so the text is neither first nor last.
 IMAGE_FIRST_MODELS = {"HiDreamImageTransformer2DModel", "StageC"}
 # These call ComfyUI's attention without transformer_options, so its override never reaches them.
@@ -45,7 +45,7 @@ QUERY_TEXT_MODELS = {"MingImage"}  # by the ComfyUI model, since its denoiser is
 QUERY_TEXT_LIMITATION = ("This model's text keys are learned query tokens that its language model reads the prompt into, not the prompt's own "
                          "tokens. They are numbered, and masking one masks a query, not a word.")
 LABELS_CHECKED = {"Anima", "AsymmDiTJoint", "GeneralDIT", "Kandinsky5", "CogVideoXTransformer3DModel", "LTXVModel", "MMDiT", "MiniTrainDIT", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
-LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
+LABELS_CHECKED_UNET_TEXT = {768, 1024, 1280, 2048}  # SD 1.5, SD 2.x (OpenCLIP-H), the SDXL Refiner (bigG), SDXL; checked by swapping a word
 MAX_LAYER_PATHS = 65
 MAX_LAYER_EVENTS = 1000  # the trace store accepts 1,024 events
 ALL_LAYER_PREFIX_VALUES = 65536
@@ -270,7 +270,7 @@ class DenoiserObserver:
         name = type(self.core).__name__
         # Klein is the Flux variant checked; Flux 1 uses other text encoders.
         if name == "UNetModel":
-            # The same class also runs other text encoders, such as SD 2's and Kolors', which were not checked.
+            # The same class also runs other text encoders, such as Kolors', which were not checked.
             reader = next((module.attn2.to_k for module in self.core.modules() if hasattr(module, "attn2")), None)
             return getattr(reader, "in_features", None) in LABELS_CHECKED_UNET_TEXT
         return name in LABELS_CHECKED
@@ -871,7 +871,7 @@ def labels_from_encoders(model, sets, text_tokens):
         # SD3 keys run the CLIP tokens, then T5's.
         first, t5 = sets.get("l") or sets.get("g"), sets.get("t5xxl")
         return [*first, *t5] if first and t5 and len(first) + len(t5) == text_tokens else None
-    if model == "HunyuanVideo" and "user" in sets.get("llama", []):
+    if model in ("HunyuanVideo", "HYVideoDiffusionTransformer") and "user" in sets.get("llama", []):
         # Its encoder cuts the template's opening: the keys start after the user header and its line break.
         # With an image prompt (Hunyuan Video I2V), its LLaVA image tokens come first, so they are the shortfall.
         start = sets["llama"].index("user") + 3

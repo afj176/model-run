@@ -89,18 +89,53 @@ def decode_image(media):
         raise ValueError("That file is not a readable PNG, JPEG or WebP image") from exc
 
 
-def decode_audio(media):
-    """Mono 16 kHz samples and what was done to get them, from an audio file libsndfile can read."""
-    import numpy as np
+def _read_soundfile(data):
+    """(samples [frames, channels], rate, channels, total frames) through libsndfile."""
     import soundfile
-    from scipy.signal import resample_poly
     try:
-        with soundfile.SoundFile(io.BytesIO(_decode_bytes(media))) as source:
+        with soundfile.SoundFile(io.BytesIO(data)) as source:
             rate, channels, total = source.samplerate, source.channels, source.frames
             # Only what will be used is decoded: a small compressed file can hold hours of audio.
             samples = source.read(frames=min(total, (MAX_SPEECH_SECONDS + 1) * rate), dtype="float32", always_2d=True)
     except (soundfile.LibsndfileError, RuntimeError, TypeError) as exc:
         raise ValueError("That file is not readable audio; use WAV, FLAC, OGG or MP3") from exc
+    return samples, rate, channels, total
+
+
+def _read_pyav(data):
+    """The same through PyAV, which ComfyUI always installs where soundfile may be missing."""
+    import av
+    import numpy as np
+    try:
+        with av.open(io.BytesIO(data)) as container:
+            stream = container.streams.audio[0]
+            rate, channels = int(stream.codec_context.sample_rate or 0), int(stream.codec_context.channels or 0)
+            resampler = av.AudioResampler(format="fltp", layout=stream.codec_context.layout.name, rate=rate)
+            limit, parts, got = (MAX_SPEECH_SECONDS + 1) * rate, [], 0
+            for frame in container.decode(stream):
+                for out in resampler.resample(frame):
+                    parts.append(out.to_ndarray())
+                    got += parts[-1].shape[1]
+                if got >= limit:
+                    break
+            known = container.duration if container.duration and container.duration > 0 else None
+    except (av.error.FFmpegError, IndexError, ValueError, AttributeError) as exc:
+        raise ValueError("That file is not readable audio; use WAV, FLAC, OGG or MP3") from exc
+    samples = np.concatenate(parts, axis=1).T[:limit].astype(np.float32) if parts else np.zeros((0, max(channels, 1)), np.float32)
+    total = round(known / 1_000_000 * rate) if known and got >= limit else got
+    return samples, rate, channels or samples.shape[1], total
+
+
+def decode_audio(media):
+    """Mono 16 kHz samples and what was done to get them, from an audio file libsndfile or FFmpeg can read."""
+    import numpy as np
+    from scipy.signal import resample_poly
+    try:
+        import soundfile  # noqa: F401
+        reader = _read_soundfile
+    except ImportError:
+        reader = _read_pyav
+    samples, rate, channels, total = reader(_decode_bytes(media))
     if not len(samples) or rate < 1:
         raise ValueError("The audio file has no samples")
     duration = total / rate
@@ -371,9 +406,16 @@ def validate_audio_view(view):
 
 def encode_wav(samples, rate):
     """16-bit WAV of the exact samples the model received, for playback."""
-    import soundfile
+    import wave
+    import numpy as np
+    pcm = np.asarray(samples, dtype=np.float32)
+    pcm = np.round(np.clip(pcm, -1.0, 1.0) * 32767).astype("<i2")
     buffer = io.BytesIO()
-    soundfile.write(buffer, samples, rate, format="WAV", subtype="PCM_16")
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1 if pcm.ndim == 1 else pcm.shape[1])
+        out.setsampwidth(2)
+        out.setframerate(int(rate))
+        out.writeframes(pcm.tobytes())
     return {"mime": "audio/wav", "base64": base64.b64encode(buffer.getvalue()).decode()}
 
 

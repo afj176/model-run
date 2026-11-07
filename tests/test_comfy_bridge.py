@@ -260,6 +260,26 @@ class PublishSafetyTests(unittest.TestCase):
         del arguments["c"]["num_tokens"]
         self.assertEqual(observer._attention_context(0, arguments)["text_tokens"], 256)
 
+    def test_unet_labels_count_as_checked_by_their_text_width(self):
+        class Attention(torch.nn.Module):
+            def __init__(self, width):
+                super().__init__()
+                self.to_k = torch.nn.Linear(width, 4)
+        class Block(torch.nn.Module):
+            def __init__(self, width):
+                super().__init__()
+                self.attn2 = Attention(width)
+                self.layer = torch.nn.Linear(4, 4)
+        class UNetModel(torch.nn.Module):
+            def __init__(self, width):
+                super().__init__()
+                self.block = Block(width)
+        for width, checked in ((1024, True), (1280, True), (4096, False)):  # SD 2.x, SDXL Refiner, Kolors
+            patcher = Patcher()
+            patcher.model.diffusion_model = UNetModel(width).eval()
+            observer = DenoiserObserver(patcher, ["block.layer"], max_calls=1, elements=3)
+            self.assertEqual(observer._labels_checked_family(), checked, width)
+
     def test_hunyuan_video_15_image_prompt_tokens_come_before_the_text(self):
         class HunyuanVideo(torch.nn.Module):
             def __init__(self):

@@ -207,21 +207,22 @@ Loaded with city96's ComfyUI-GGUF loaders, which dequantize GGUF weights on the 
 
 ## Wrapper packs
 
-ComfyUI-WanVideoWrapper's sampler calls its transformer directly, so ComfyUI's MODEL wrapper, and with it Model Run · Observe, never runs. Model Run · Observe (WanVideoWrapper) rides in the pack's model `transformer_options`, which its sampler passes into every transformer call.
+ComfyUI-WanVideoWrapper's sampler calls its transformer directly, so ComfyUI's MODEL wrapper, and with it Model Run · Observe, never runs. Model Run · Observe (WanVideoWrapper) rides in the pack's model `transformer_options`, which its sampler passes into every transformer call. ComfyUI-HunyuanVideoWrapper's sampler passes nothing, so Model Run · Observe (HunyuanVideoWrapper) arms its observer on the transformer for the one queued prompt.
 
 | Setup | Result |
 |---|---|
 | Kijai's Wan 2.1 T2V 1.3B `bf16` through WanVideo Model Loader and WanVideo Sampler, SDPA attention, 480x320, 9 frames, 10 steps | Frame pixel-identical with every block recorded (124 events over 4 calls) and with two chosen blocks; a plain run afterwards still matched. Token-grid and frame views work. Its attention is routed through Observe's hook: maps on `double:2` and `double:15` stayed pixel-identical in `sdpa` and `comfy` modes, labels from the pack's T5 tokenizer matched its 8 text tokens, and masking "red" gave a white cube while "wooden" removed the table |
+| Kijai's HunyuanVideo 720 cfg-distilled `fp8` through HunyuanVideo Model Loader and Sampler, ComfyUI's LLaVA encoder through HunyuanVideo TextEmbed Bridge, SDPA, 480x320, 9 frames, 20 steps | Model Run · Observe (HunyuanVideoWrapper). Its sampler passes no options, so the observer is armed on the transformer for the prompt that ran the node only. Frame pixel-identical with every block recorded (504 events) and with maps on `double:0` and `single:10`, labels from ComfyUI's encoder; masking "red" gave a beige cube. A plain run afterwards matched and published nothing |
 
 ## Same-network configs on real weights
 
-ComfyUI detection configs whose network class had already run on real weights, each run with its own released file. Every row: two plain runs matched, and Model Run · Observe on two blocks matched the plain run pixel for pixel (audio byte for byte). Word test: the attention to "red" or "wooden" masked, then the picture checked by eye. With a start image or a control, the picture is mostly set by that, so a weak word test there says little.
+ComfyUI detection configs whose network class had already run on real weights, each run with its own released file. Every row: two plain runs matched, and Model Run · Observe on two blocks matched the plain run pixel for pixel (audio byte for byte). Word test: the attention to "red" or "wooden" masked, then the picture checked by eye. With a start image or a control, the picture is mostly set by that, so a weak word test there says little. Labels for the SD 2.x and SDXL Refiner text encoders were also checked by swapping one word ("red" for "blue", "wooden" for "glass", "dog" for "cat"): in each, the first key that changed was the word's labelled position.
 
 | Config and file | Result |
 |---|---|
-| SD 2.x: SD 2.1 768 `v2-1_768-ema-pruned` (sd2-community mirror; Stability's repo is gone) | Maps and labels on `output:4` and `input:8`. Masking changed little, so labels stay unchecked |
-| SD 2.1 unCLIP-H, with a reference image | Maps and labels; word test inconclusive |
-| SDXL Refiner | Its `output:1` has no cross-attention (it has 11 attention blocks, `input:4` to `output:8`); maps on `input:7`. Word test inconclusive |
+| SD 2.x: SD 2.1 768 `v2-1_768-ema-pruned` (sd2-community mirror; Stability's repo is gone) | Maps and labels on `output:4` and `input:8`. Masking changed little; labels checked by the word swap |
+| SD 2.1 unCLIP-H, with a reference image | Maps and labels; word test inconclusive, labels checked by the word swap |
+| SDXL Refiner | Its `output:1` has no cross-attention (it has 11 attention blocks, `input:4` to `output:8`); maps on `input:7`. Word test inconclusive; labels checked by the word swap |
 | Segmind Vega | Maps and labels on `output:1` and `input:7`; word test inconclusive |
 | SSD-1B (Segmind, single file) | Maps and labels on `output:1` and `input:7`; masking changed little |
 | KOALA 700M and 1B (Diffusers UNets with the SDXL encoders) | Maps and labels on `output:1`; the 700M has no attention in its middle block. Masking "wooden" removed the table in both; "red" changed little |
@@ -245,8 +246,14 @@ ComfyUI detection configs whose network class had already run on real weights, e
 | Hunyuan Video 1.5 720p T2V | Same, on `double:0` and `double:30`. Masking "red" gave a brown cube, "wooden" a plain table |
 | Hunyuan Video 1.5 720p I2V, SigCLIP image prompt | Same. Its image prompt's 729 tokens come before the text, which left maps out until the text start was moved past them. Masking "wooden" removed the wood |
 | Hunyuan Video 1.5 1080p SR distilled `fp8`, with the 1080p latent upsampler | Same; no word test, the input picture sets the result |
+| InstructPix2Pix SD 1.5 (timbrooks), editing the reference picture | Maps and labels on `output:4` and `input:8`. Masking "wooden" in the instruction removed the wood; "red" changed little |
+| InstructPix2Pix SDXL (Diffusers UNet, which ComfyUI converts) | Maps and labels on `output:1` and `input:7`; masking changed the picture only a little |
+| Hunyuan Image 2.1 `fp8`, 1024 | Maps and labels on `double:0` and `single:10`; masking "red" turned half the cubes teal |
+| Hunyuan Image 2.1 refiner `fp8`, refining the reference picture | Maps and labels; no word test, the input picture sets the result |
+| SkyReels V1 Hunyuan I2V `fp8` (Kijai's ComfyUI file), start image | Frame pixel-identical, maps and labels. Masking "red" gave a green and red block, "wooden" removed the table |
+| Hunyuan3D 2 mini `fp16` (Tencent's single file) | Shape latent bit-identical with the nodes on, layers recorded; shape tokens are not an image, so there is no map |
 
-No usable file was found for the rest: Stable Zero123 and SD 2.1 unCLIP-L are published only as `.ckpt` pickles, which the installer refuses, and InstructPix2Pix, SV3D, Hunyuan Image 2.1 and its refiner, SkyReels I2V, Wan FlowRVS, Hunyuan3D 2 mini and the CogVideoX T2V and I2V configs had no file found in a form ComfyUI loads.
+Not run: Stable Zero123 ships only as a `.ckpt` pickle, which the installer refuses, and its Diffusers copies lack the camera projection ComfyUI needs. SV3D and CogVideoX T2V and I2V exist only as Diffusers files ComfyUI does not convert, and FlowRVS has no published weights. SD 2.1 unCLIP-L's Diffusers files were found, but ComfyUI's own plain run failed in its text encoder, without Model Run in the graph.
 
 ## Language models in ComfyUI
 

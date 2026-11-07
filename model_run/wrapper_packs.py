@@ -5,37 +5,78 @@ sampler calls that transformer itself, so a MODEL function wrapper never runs. I
 the model's (deep-copied) transformer_options into every call, so the observer travels there: the
 transformer is routed once, and a call that carries an observer is recorded by the same
 DenoiserObserver the Observe node uses, with the call's latent and text context put in ComfyUI's form.
-Its attention goes through one module-level ``attention`` function, which is routed through the
-observer's attention hook for the call, block by block, as ComfyUI's own Wan labels them (``double:N``).
+ComfyUI-HunyuanVideoWrapper's sampler passes no options at all, so its observer is armed on the
+transformer for the one queued prompt that ran the Observe node, and calls from any other prompt pass by.
+Both packs send attention through one module-level ``attention`` function, which is routed through the
+observer's attention hook for the call, block by block, as ComfyUI's own models label them
+(``double:N``, and ``single:N`` for Hunyuan's single-stream blocks).
 """
 import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 OBSERVER_KEY = "model_run_observer"
+ARMED = "_model_run_armed"
 MASKABLE_MODES = ("sdpa",)  # the pack's kernels that take an attention mask
 LIMITATIONS = [
     "Recorded through ComfyUI-WanVideoWrapper's own sampler: each call of its transformer is one denoiser call, conditional and unconditional passes separately.",
 ]
+HUNYUAN_LIMITATIONS = [
+    "Recorded through ComfyUI-HunyuanVideoWrapper's own sampler: each call of its transformer is one denoiser call, conditional and unconditional passes separately.",
+]
 UNMASKED_LIMITATION = "Token ablation needs the pack's sdpa attention mode; this run used another kernel, so no keys were masked."
 
 
+def executing_prompt():
+    """The id of the queued prompt ComfyUI is running now, or None outside one."""
+    try:
+        from comfy_execution.utils import get_executing_context
+        return getattr(get_executing_context(), "prompt_id", None)
+    except Exception:
+        return None
+
+
+def arm_transformer(core, observer):
+    """Hand ``core``'s calls in the prompt running now to ``observer``, for a sampler that passes no options."""
+    route_transformer(core)
+    setattr(core, ARMED, (observer, executing_prompt()))
+
+
 def route_transformer(core):
-    """Make ``core`` hand a call to the observer its transformer_options carry; once per module, otherwise unchanged."""
+    """Make ``core`` hand a call to the observer its transformer_options carry, or the one armed for this prompt; once per module."""
     if getattr(core, "_model_run_routed", False):
         return
     original = core.forward
     def forward(*args, **kwargs):
         options = kwargs.get("transformer_options")
         observer = options.get(OBSERVER_KEY) if isinstance(options, dict) else None
-        if observer is None:
+        armed = getattr(core, ARMED, None)
+        if observer is None and armed is not None and armed[1] == executing_prompt():
+            observer = armed[0]
+        if observer is None or getattr(core, "_model_run_inside", False):
             return original(*args, **kwargs)
         # The recorded call runs the module again without the observer, so hooks on the whole transformer fire too.
-        inner = {**kwargs, "transformer_options": {k: v for k, v in options.items() if k != OBSERVER_KEY}}
+        inner = dict(kwargs)
+        if isinstance(options, dict):
+            inner["transformer_options"] = {k: v for k, v in options.items() if k != OBSERVER_KEY}
+        def run(*_unused, **_ignored):
+            core._model_run_inside = True
+            try:
+                return core(*args, **inner)
+            finally:
+                core._model_run_inside = False
         with routed_attention(core, observer):
-            return observer(lambda *_unused, **_ignored: core(*args, **inner), call_arguments(args, kwargs))
+            return observer(run, call_arguments(args, kwargs))
     core.forward = forward
     core._model_run_routed = True
+
+
+def block_stacks(core):
+    """The transformer's block lists, by the label ComfyUI's own model gives their blocks."""
+    if hasattr(core, "double_blocks"):
+        return [("double", core.double_blocks), ("single", getattr(core, "single_blocks", None) or [])]
+    blocks = getattr(core, "blocks", None)
+    return [("double", blocks)] if blocks is not None else []
 
 
 @contextmanager
@@ -43,21 +84,22 @@ def routed_attention(core, observer):
     """For one call, send the pack's attention through ``observer.attention_override``, labelled by block."""
     module = sys.modules.get(type(core).__module__)
     original = getattr(module, "attention", None)
-    blocks = getattr(core, "blocks", None)
-    if not (observer.attention_block or observer.ablate_tokens) or not callable(original) or blocks is None:
+    stacks = block_stacks(core)
+    if not (observer.attention_block or observer.ablate_tokens) or not callable(original) or not stacks:
         yield
         return
     current = []
-    def enter(index):
-        return lambda _module, _args: current.append(index)
+    def enter(kind, index):
+        return lambda _module, _args: current.append((kind, index))
     def leave(_module, _args, _output):
         if current:
             current.pop()
-    handles = [h for i, block in enumerate(blocks) for h in (block.register_forward_pre_hook(enter(i)), block.register_forward_hook(leave))]
+    handles = [h for kind, blocks in stacks for i, block in enumerate(blocks)
+               for h in (block.register_forward_pre_hook(enter(kind, i)), block.register_forward_hook(leave))]
     def routed(q, k, v, *args, **kwargs):
         if not current or q.ndim != 4 or k.ndim != 4:
             return original(q, k, v, *args, **kwargs)
-        mode = kwargs.get("attention_mode", "sdpa")
+        mode = kwargs.get("attention_mode", kwargs.get("mode", "sdpa"))  # Hunyuan's pack names it mode
         def kernel(_q, _k, _v, _heads, *inner, **settings):
             call = dict(kwargs)
             mask = settings.get("mask")
@@ -69,7 +111,7 @@ def routed_attention(core, observer):
             return original(q, k, v, *args, **call)
         # The pack lays q and k out as [batch, tokens, heads, dim]; the hook reads [batch, heads, tokens, dim].
         return observer.attention_override(kernel, q.transpose(1, 2), k.transpose(1, 2), v, int(q.shape[2]),
-                                           transformer_options={"block_type": "double", "block_index": current[-1]})
+                                           transformer_options={"block_type": current[-1][0], "block_index": current[-1][1]})
     module.attention = routed
     try:
         yield
@@ -80,11 +122,13 @@ def routed_attention(core, observer):
 
 
 def call_arguments(args, kwargs):
-    """A WanVideoWrapper transformer call in the shape DenoiserObserver reads: latent, timestep, text context."""
+    """A wrapper pack's transformer call in the shape DenoiserObserver reads: latent, timestep, text context."""
     import torch
     names = ("x", "t", "context")
     given = dict(zip(names, args))
     given.update({k: kwargs[k] for k in names if k in kwargs})
+    if "context" not in given and "text_states" in kwargs:
+        given["context"] = kwargs["text_states"]  # HunyuanVideoWrapper's name for it
     latents, context = given.get("x"), given.get("context")
     latent = torch.stack(list(latents)) if isinstance(latents, (list, tuple)) else latents
     text = context[0] if isinstance(context, (list, tuple)) and context else context
@@ -132,31 +176,75 @@ class ModelRunObserveWanVideo:
         return float("nan")  # Fresh observation budget for every queued execution.
 
     def observe(self, model, modules, max_calls, elements, attention_block="", attention_grid=32, prompt="", ablate_tokens=""):
-        from .comfy_bridge import DenoiserObserver, all_layer_paths, all_layer_plan, application, parse_token_list
         core = model.model.diffusion_model
-        app = application()
-        last_id = [None]
-        notes = list(LIMITATIONS)
-        def publish(trace):
-            trace["model_name"] = type(core).__name__
-            for note in notes:
-                if note not in trace["limitations"]:
-                    trace["limitations"].append(note)
-            last_id[0] = app.publish(trace, trace["model_name"], replace_id=last_id[0], note=prompt or None)["id"]
-        chosen = [s.strip() for s in modules.splitlines() if s.strip()]
-        plan = {"max_calls": max_calls, "elements": elements}
-        if not chosen:
-            chosen = all_layer_paths(core)
-            plan = all_layer_plan(chosen, max_calls, elements)
-        block = attention_block.strip() if isinstance(attention_block, str) else ""
-        ablated = parse_token_list(ablate_tokens if isinstance(ablate_tokens, str) else "")
-        labels = pack_token_labels(core, prompt) if (block or ablated) and isinstance(prompt, str) and prompt.strip() else None
-        observer = DenoiserObserver(model, chosen, publish=publish, **plan, attention_block=block or None, attention_grid=attention_grid,
-                                    token_labels=labels, ablate_tokens=ablated)
-        observer.note = lambda text: notes.append(text) if text not in notes else None
+        wanted = any(isinstance(v, str) and v.strip() for v in (attention_block, ablate_tokens))
+        labels = pack_token_labels(core, prompt) if wanted and isinstance(prompt, str) and prompt.strip() else None
+        observer = pack_observer(model, LIMITATIONS, modules, max_calls, elements, attention_block, attention_grid, prompt, ablate_tokens, labels)
         clone = model.clone()
         options = dict(clone.model_options.get("transformer_options") or {})
         options[OBSERVER_KEY] = observer
         clone.model_options["transformer_options"] = options
         route_transformer(core)
         return (clone,)
+
+
+def pack_observer(model, limitations, modules, max_calls, elements, attention_block, attention_grid, prompt, ablate_tokens, labels, label_sets=None):
+    """A DenoiserObserver over a pack's ModelPatcher that publishes into Model Run with the pack's notes."""
+    from .comfy_bridge import DenoiserObserver, all_layer_paths, all_layer_plan, application, parse_token_list
+    core = model.model.diffusion_model
+    app = application()
+    last_id = [None]
+    notes = list(limitations)
+    def publish(trace):
+        trace["model_name"] = type(core).__name__
+        for note in notes:
+            if note not in trace["limitations"]:
+                trace["limitations"].append(note)
+        last_id[0] = app.publish(trace, trace["model_name"], replace_id=last_id[0], note=prompt or None)["id"]
+    chosen = [s.strip() for s in modules.splitlines() if s.strip()]
+    plan = {"max_calls": max_calls, "elements": elements}
+    if not chosen:
+        chosen = all_layer_paths(core)
+        plan = all_layer_plan(chosen, max_calls, elements)
+    block = attention_block.strip() if isinstance(attention_block, str) else ""
+    ablated = parse_token_list(ablate_tokens if isinstance(ablate_tokens, str) else "")
+    observer = DenoiserObserver(model, chosen, publish=publish, **plan, attention_block=block or None, attention_grid=attention_grid,
+                                token_labels=labels if (block or ablated) else None, ablate_tokens=ablated)
+    if block or ablated:
+        observer.token_label_sets = label_sets or {}
+    observer.note = lambda text: notes.append(text) if text not in notes else None
+    return observer
+
+
+class ModelRunObserveHunyuanVideo:
+    CATEGORY = "Model Run"
+    RETURN_TYPES = ("HYVIDEOMODEL",)
+    RETURN_NAMES = ("observed_model",)
+    FUNCTION = "observe"
+    DESCRIPTION = ("Observe a ComfyUI-HunyuanVideoWrapper model. Connect between HunyuanVideo Model Loader and HunyuanVideo Sampler; "
+                   "it records only the prompt it runs in. Open Model Run to inspect captures.")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"model": ("HYVIDEOMODEL",),
+                             "modules": ("STRING", {"default": "", "multiline": True, "tooltip": "One module path per line. Leave empty to record every block and the final output."}),
+                             "max_calls": ("INT", {"default": 8, "min": 1, "max": 32}),
+                             "elements": ("INT", {"default": 1024, "min": 1, "max": 4096})},
+                "optional": {"attention_block": ("STRING", {"default": "", "tooltip": "Measure attention to text in one block, double:0 to double:19 or single:0 to single:39. Empty disables."}),
+                             "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
+                             "clip": ("CLIP", {"tooltip": "Optional: the CLIP that encoded the prompt (through HunyuanVideo TextEmbed Bridge), to label tokens."}),
+                             "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used with clip to label tokens."}),
+                             "ablate_tokens": ("STRING", {"default": "", "tooltip": "Intervention: comma-separated text token indices masked out of every attention call. Needs the sdpa attention mode."})}}
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")  # Fresh observation budget for every queued execution.
+
+    def observe(self, model, modules, max_calls, elements, attention_block="", attention_grid=32, clip=None, prompt="", ablate_tokens=""):
+        from .comfy_bridge import encoder_labels, token_labels
+        has_prompt = clip is not None and isinstance(prompt, str) and prompt.strip()
+        labels = token_labels(clip, prompt) if has_prompt else None
+        observer = pack_observer(model, HUNYUAN_LIMITATIONS, modules, max_calls, elements, attention_block, attention_grid, prompt, ablate_tokens,
+                                 labels, encoder_labels(clip, prompt) if has_prompt else None)
+        arm_transformer(model.model.diffusion_model, observer)
+        return (model,)

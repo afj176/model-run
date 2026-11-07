@@ -1,7 +1,9 @@
 import base64
+import importlib.util
 import io
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import torch
@@ -24,6 +26,16 @@ def tiny_vit():
     config = ViTConfig(image_size=32, patch_size=8, hidden_size=16, num_hidden_layers=2, num_attention_heads=2, intermediate_size=32,
                        num_labels=3, id2label={0: "cat", 1: "dog", 2: "cube"}, label2id={"cat": 0, "dog": 1, "cube": 2}, attn_implementation="eager")
     return ViTForImageClassification(config).eval()
+
+
+def wav_bytes(samples, rate):
+    """A 16-bit WAV file, written with the standard library so no audio package is needed."""
+    from model_run.media_models import encode_wav
+    return base64.b64decode(encode_wav(samples, rate)["base64"])
+
+
+def available_readers():
+    return [name for name, package in (("_read_soundfile", "soundfile"), ("_read_pyav", "av")) if importlib.util.find_spec(package)]
 
 
 class TaskTests(unittest.TestCase):
@@ -63,18 +75,17 @@ class DecodeTests(unittest.TestCase):
 
     def test_audio_is_resampled_mono_and_clipped_with_a_record(self):
         import numpy as np
-        import soundfile
-        buffer = io.BytesIO()
-        rate = 8000
-        soundfile.write(buffer, np.zeros((rate * 31, 2), dtype="float32"), rate, format="WAV")
-        samples, info = decode_audio(media(buffer.getvalue()))
-        self.assertEqual(samples.ndim, 1)
-        self.assertEqual(len(samples), 30 * 16000)
-        self.assertEqual((info["source_rate"], info["source_channels"], info["rate"], info["clipped"], info["used_seconds"]), (8000, 2, 16000, True, 30.0))
-        self.assertEqual(info["source_seconds"], 31.0)
-        with self.assertRaises(ValueError):
-            decode_audio(media(b"not audio"))
-
+        from model_run import media_models
+        data = wav_bytes(np.zeros((8000 * 31, 2), dtype="float32"), 8000)
+        for reader in available_readers():
+            with self.subTest(reader=reader), mock.patch.object(media_models, "_read_soundfile", getattr(media_models, reader)):
+                samples, info = decode_audio(media(data))
+                self.assertEqual(samples.ndim, 1)
+                self.assertEqual(len(samples), 30 * 16000)
+                self.assertEqual((info["source_rate"], info["source_channels"], info["rate"], info["clipped"], info["used_seconds"]), (8000, 2, 16000, True, 30.0))
+                self.assertEqual(info["source_seconds"], 31.0)
+                with self.assertRaises(ValueError):
+                    decode_audio(media(b"not audio"))
 
 class ImportValidationTests(unittest.TestCase):
     def audio(self):
@@ -149,10 +160,10 @@ class BatchedSequenceTests(unittest.TestCase):
 
 
 class LongAudioTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("soundfile"), "soundfile is not installed")
     def test_only_what_is_used_is_decoded(self):
         import numpy as np
         import soundfile
-        from unittest import mock
         buffer = io.BytesIO()
         soundfile.write(buffer, np.zeros(16000 * 120, dtype="float32"), 16000, format="FLAC")
         real = soundfile.SoundFile.read
@@ -166,6 +177,13 @@ class LongAudioTests(unittest.TestCase):
         self.assertEqual(len(samples), 30 * 16000)
         self.assertEqual((info["source_seconds"], info["used_seconds"], info["clipped"]), (120.0, 30.0, True))
 
+    @unittest.skipUnless(importlib.util.find_spec("av"), "PyAV is not installed")
+    def test_pyav_stops_after_what_is_used(self):
+        import numpy as np
+        from model_run.media_models import _read_pyav
+        samples, rate, channels, total = _read_pyav(wav_bytes(np.zeros(16000 * 120, dtype="float32"), 16000))
+        self.assertEqual((rate, channels, total), (16000, 1, 120 * 16000))
+        self.assertLess(len(samples), 32 * 16000)  # decoding stops a frame past the 31 seconds asked for
 
 class ImageAdapterTests(unittest.TestCase):
     def test_classify_measures_labels_attention_and_patch_slices(self):
