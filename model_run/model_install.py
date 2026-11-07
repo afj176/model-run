@@ -2,6 +2,7 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha1, sha256
+from http.client import HTTPException
 import io
 import json
 import os
@@ -9,13 +10,14 @@ from pathlib import Path
 import re
 import shutil
 from threading import Event, Lock, Thread
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 import urllib.request
 from uuid import uuid4
 
 from .inventory import InventoryError
-from .model_packages import STARTERS, check_file, classify, is_installed, package_files, package_folder
+from .model_packages import MARKERS, PART_SUFFIX, STARTERS, check_file, classify, is_installed, package_files, package_folder
 from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index, template_thumbnail
 
 API = "https://huggingface.co/api/models"
@@ -29,7 +31,6 @@ THUMBNAIL_SIDE = 320
 MAX_RAW_THUMBNAIL = 1024 * 1024
 MAX_API_BYTES = 8 * 1024 * 1024
 RESERVE_BYTES = 256 * 1024 * 1024
-PART_SUFFIX = ".modelrun-part"
 RESERVED = re.compile(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", re.I)
 ACTIVE = ("queued", "downloading", "verifying")
 
@@ -111,6 +112,24 @@ def _expected(name):
             else "SentencePiece" if lower.endswith(".model") else "safetensors")
 
 
+class _Transient(Exception):
+    """A network failure a download can resume from."""
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _reason(exc):
+    """A plain account of a network failure, without Windows' error numbers."""
+    if isinstance(exc, ConnectionResetError):
+        return "the connection was reset"
+    if isinstance(exc, TimeoutError):
+        return "the connection timed out"
+    if isinstance(exc, URLError):
+        return f"{exc.reason}"[:200]
+    return f"{exc}"[:200] or type(exc).__name__
+
+
 class _Cancelled(Exception):
     pass
 
@@ -121,6 +140,8 @@ class ModelInstaller:
         self.packages_dir = Path(packages_dir).resolve() if packages_dir else None
         self._starters = None
         self._transport = transport or Transport()
+        # Waits before resuming after a dropped connection; reset whenever bytes arrive.
+        self.retry_delays = (2, 5, 10, 20, 40)
         self._index = index
         self._lock = Lock()
         self._jobs = {}
@@ -370,11 +391,12 @@ class ModelInstaller:
             active = {j["destination"] for j in self._jobs.values() if j["status"] in ACTIVE}
             if any(f["destination"] in active for f in plan["files"]):
                 raise RuntimeError("This package is already downloading")
-            jobs = []
+            jobs, batch = [], uuid4().hex
             for f in plan["files"]:
                 if f["have"]:
                     continue
-                job = {"id": uuid4().hex, "filename": f["path"], "category": "package", "package": repo, "destination": f["destination"], "url": f["url"],
+                job = {"id": uuid4().hex, "filename": f["path"], "category": "package", "package": repo, "batch": batch,
+                       "destination": f["destination"], "url": f["url"],
                        "status": "queued", "bytes": 0, "total_bytes": f["size_bytes"], "sha256": f["sha256"], "git_oid": f["git_oid"],
                        "hash_checked": False, "error": None, "cancel": False, "discard": False}
                 self._jobs[job["id"]] = job
@@ -602,7 +624,73 @@ class ModelInstaller:
         if job["cancel"]:
             raise _Cancelled()
 
+    def _pause(self, job, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self._check_cancel(job)
+            time.sleep(min(0.25, max(0.0, end - time.monotonic())))
+
+    def _fetch(self, job, part, state):
+        """One request appended to the partial file; True when the stream ended. _Transient when it can be resumed."""
+        headers = {"Accept-Encoding": "identity"}
+        if state["have"]:
+            headers["Range"] = f"bytes={state['have']}-"
+        try:
+            response = self._transport.open(job["url"], headers=headers, timeout=60)
+        except (OSError, HTTPException) as exc:
+            if isinstance(exc, (FileNotFoundError, PermissionError)):
+                raise
+            raise _Transient(_reason(exc)) from exc
+        try:
+            if response.code == 429 or 500 <= response.code < 600:
+                raise _Transient(f"Hugging Face answered {response.code}")
+            if response.code == 200 and state["have"]:
+                # The server ignored the range, so start over.
+                state.update(have=0, digest=sha256(), blob=sha1(f"blob {job['total_bytes']}\0".encode()))
+                part.unlink()
+            elif response.code == 206:
+                match = re.match(r"bytes (\d+)-", response.headers.get("Content-Range", ""))
+                if not match or int(match.group(1)) != state["have"]:
+                    raise ValueError("The server resumed from the wrong place")
+            elif response.code != 200:
+                raise ValueError(f"Hugging Face answered {response.code}")
+            with part.open("ab") as stream:
+                try:
+                    while chunk := response.read(CHUNK):
+                        self._check_cancel(job)
+                        stream.write(chunk)
+                        state["digest"].update(chunk)
+                        state["blob"].update(chunk)
+                        state["have"] += len(chunk)
+                        self._set(job, bytes=state["have"])
+                        if state["have"] > job["total_bytes"]:
+                            break
+                except (OSError, HTTPException) as exc:
+                    raise _Transient(_reason(exc)) from exc
+                finally:
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        finally:
+            response.close()
+        if state["have"] > job["total_bytes"]:
+            part.unlink(missing_ok=True)
+            raise ValueError("The file was larger than Hugging Face said; it was deleted")
+        return True
+
+    def _held_back(self, job):
+        """A package's marker waits until the rest of its files are in, so a part-downloaded package is never listed."""
+        if not job.get("batch") or job["filename"] not in MARKERS:
+            return None
+        with self._lock:
+            others = [j for j in self._jobs.values() if j.get("batch") == job["batch"] and j is not job]
+        if any(j["status"] != "installed" for j in others):
+            return "Waits for the package's other files; retry to finish the package"
+        return None
+
     def _download(self, job):
+        reason = self._held_back(job)
+        if reason:
+            raise ValueError(reason)
         target = Path(job["destination"])
         target.parent.mkdir(parents=True, exist_ok=True)
         part = target.with_name(target.name + PART_SUFFIX)
@@ -621,42 +709,25 @@ class ModelInstaller:
                     have += len(chunk)
                     self._set(job, bytes=have)
         self._set(job, status="downloading", bytes=have)
-        if have < job["total_bytes"]:
-            headers = {"Accept-Encoding": "identity"}
-            if have:
-                headers["Range"] = f"bytes={have}-"
-            response = self._transport.open(job["url"], headers=headers, timeout=60)
+        state = {"have": have, "digest": digest, "blob": blob}
+        failures = 0
+        while state["have"] < job["total_bytes"]:
+            before = state["have"]
             try:
-                if response.code == 200 and have:
-                    # The server ignored the range, so start over.
-                    digest, blob, have = sha256(), sha1(f"blob {job['total_bytes']}\0".encode()), 0
-                    part.unlink()
-                elif response.code == 206:
-                    match = re.match(r"bytes (\d+)-", response.headers.get("Content-Range", ""))
-                    if not match or int(match.group(1)) != have:
-                        raise ValueError("The server resumed from the wrong place")
-                elif response.code != 200:
-                    raise ValueError(f"Hugging Face answered {response.code}")
-                with part.open("ab") as stream:
-                    while chunk := response.read(CHUNK):
-                        self._check_cancel(job)
-                        stream.write(chunk)
-                        digest.update(chunk)
-                        blob.update(chunk)
-                        have += len(chunk)
-                        self._set(job, bytes=have)
-                        if have > job["total_bytes"]:
-                            part_too_long = True
-                            break
-                    else:
-                        part_too_long = False
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            finally:
-                response.close()
-            if part_too_long:
-                part.unlink(missing_ok=True)
-                raise ValueError("The file was larger than Hugging Face said; it was deleted")
+                if self._fetch(job, part, state):
+                    break
+            except _Transient as exc:
+                # A dropped connection or a busy server: wait and resume from the partial file.
+                failures = 0 if state["have"] > before else failures
+                if failures >= len(self.retry_delays):
+                    raise ValueError(f"The connection to Hugging Face kept dropping ({exc.reason}). Stopped at {state['have']:,} of "
+                                     f"{job['total_bytes']:,} bytes; retry to resume") from exc
+                delay = self.retry_delays[failures]
+                failures += 1
+                self._set(job, retrying=f"Connection dropped; resuming in {delay:g} s (try {failures} of {len(self.retry_delays)})")
+                self._pause(job, delay)
+                self._set(job, retrying=None)
+        have, digest, blob = state["have"], state["digest"], state["blob"]
         self._set(job, status="verifying")
         if have != job["total_bytes"]:
             if have > job["total_bytes"]:

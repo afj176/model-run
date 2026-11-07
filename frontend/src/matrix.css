@@ -1366,3 +1366,171 @@ button.matrix-dot:hover i {
 .matrix-callout strong small {
   display: none;
 }
+
+/* Token barcode: every token × feature of a text layer, under the stage. */
+.matrix-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.token-barcode {
+  background: var(--c-1a1436);
+  color: var(--c-f5f1ff);
+  border-radius: 18px;
+  padding: 18px 22px 16px;
+  box-shadow: inset 0 0 0 1px #ffffff14;
+  min-width: 0;
+}
+.token-barcode > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.token-barcode h3 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--c-f5f1ff);
+}
+.token-barcode header p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--c-c9c1e6);
+}
+.token-barcode-scale {
+  display: inline-flex;
+  background: #ffffff10;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.token-barcode-scale button {
+  border: 0;
+  background: transparent;
+  color: var(--c-c9c1e6);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.token-barcode-scale button.selected {
+  background: linear-gradient(180deg, var(--c-6a52d6), var(--c-4d3cb0));
+  color: #fff;
+}
+.token-barcode-channels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 2px;
+  font-size: 12px;
+  color: var(--c-c9c1e6);
+}
+.token-barcode-channels button {
+  border: 1px solid #ffffff26;
+  background: #ffffff0d;
+  color: var(--c-f5f1ff);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.token-barcode-channels button:hover {
+  border-color: #ff4fa3;
+}
+.token-barcode-plot {
+  position: relative;
+  margin-top: 14px;
+}
+.token-barcode-plot canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+  border-radius: 4px;
+}
+.token-barcode-plot canvas:focus-visible {
+  outline: 2px solid #ff4fa3;
+  outline-offset: 3px;
+}
+.token-barcode-tip {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  background: #0f0b24f2;
+  border: 1px solid #ffffff2e;
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--c-f5f1ff);
+  z-index: 2;
+}
+.token-barcode-axis {
+  position: relative;
+  height: 20px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--c-c9c1e6);
+}
+.token-barcode-axis span,
+.token-barcode-axis em {
+  position: absolute;
+  transform: translateX(-50%);
+  font-style: normal;
+}
+.token-barcode-axis span:first-child {
+  transform: none;
+}
+.token-barcode-axis span:nth-last-child(2) {
+  transform: translateX(-100%);
+}
+.token-barcode-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--c-c9c1e6);
+}
+.token-barcode-legend i {
+  width: 160px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgb(255, 184, 199),
+    rgb(214, 84, 116) 20%,
+    var(--c-1a1436) 50%,
+    rgb(31, 168, 140) 80%,
+    rgb(167, 242, 219)
+  );
+}
+.token-barcode-legend small {
+  font-size: 11.5px;
+  flex-basis: 100%;
+}
+@media (max-width: 600px) {
+  .token-barcode {
+    padding: 14px 12px;
+  }
+  .token-barcode-tip {
+    white-space: normal;
+  }
+  .token-barcode-scale button {
+    padding: 6px 8px;
+  }
+}
+.token-barcode-channels button:hover,
+.token-barcode-channels button:focus-visible {
+  background: #ffffff1a;
+  color: var(--c-f5f1ff);
+  border-color: #ff4fa3;
+}
+.token-barcode-scale button:hover:not(.selected) {
+  background: #ffffff14;
+  color: var(--c-f5f1ff);
+}

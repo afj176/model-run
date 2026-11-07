@@ -260,7 +260,9 @@ function tokenGridEvent(event, slices) {
     row_labels: slices.row_labels ?? null,
     col_labels: slices.feature_indices.map((i) => `#${i}`),
     token_rms: slices.token_rms,
+    token_max_abs: slices.token_max_abs,
     token_indices: slices.token_indices,
+    feature_indices: slices.feature_indices,
   };
 }
 

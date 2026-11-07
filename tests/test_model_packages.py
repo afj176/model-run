@@ -7,7 +7,7 @@ import unittest
 
 from model_run.application import Application
 from model_run.model_install import ModelInstaller
-from model_run.model_packages import check_file, classify, package_files
+from model_run.model_packages import check_file, classify, is_installed, package_files
 
 from tests.test_model_install import Response, safetensors
 
@@ -172,6 +172,26 @@ class Packages(unittest.TestCase):
         jobs = {j["filename"]: j for j in self.wait(installer)}
         self.assertEqual(jobs["tokenizer.json"]["status"], "failed")
         self.assertFalse((self.root / "org" / "tiny" / "tokenizer.json").exists())
+        # The config waits for the rest, so the package is not listed as here and can be retried.
+        self.assertEqual(jobs["config.json"]["status"], "failed")
+        self.assertIn("Waits for the package's other files", jobs["config.json"]["error"])
+        self.assertFalse((self.root / "org" / "tiny" / "config.json").exists())
+        hub.files["tokenizer.json"] = b'{"version": "1.0"}'
+        retry = installer.package_plan("org/tiny")
+        self.assertTrue(retry["ok"], retry["reason"])
+        self.assertEqual(retry["download_bytes"], len(self.files["tokenizer.json"]) + len(self.files["config.json"]))
+        installer.package_start("org/tiny", retry["download_bytes"])
+        self.assertTrue(all(j["status"] == "installed" for j in self.wait(installer) if j.get("batch") != jobs["config.json"]["batch"]))
+        self.assertEqual(installer.package_plan("org/tiny")["reason"], "This package is already here")
+
+    def test_a_package_with_a_part_downloaded_file_is_not_here(self):
+        folder = self.root / "org" / "tiny"
+        folder.mkdir(parents=True)
+        (folder / "config.json").write_bytes(self.files["config.json"])
+        (folder / "model.safetensors.modelrun-part").write_bytes(b"x" * 10)
+        self.assertFalse(is_installed(self.root, "org/tiny"))
+        (folder / "model.safetensors.modelrun-part").unlink()
+        self.assertTrue(is_installed(self.root, "org/tiny"))
 
     def test_a_gated_package_says_what_to_do(self):
         plan = self.installer(Hub(self.files, gated=True)).package_plan("org/tiny")

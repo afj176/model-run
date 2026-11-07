@@ -339,6 +339,9 @@ function Jobs({ jobs, onRetry, onError }) {
                 />
               )}
               {job.error && <small className="install-note">{job.error}</small>}
+              {active && job.retrying && (
+                <small className="install-note">{job.retrying}</small>
+              )}
             </div>
             {active && (
               <button onClick={() => cancel(job, false)}>Pause</button>

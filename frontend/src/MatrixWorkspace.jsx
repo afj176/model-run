@@ -13,6 +13,7 @@ import {
   Table,
 } from "@phosphor-icons/react";
 import MatrixScene from "./MatrixScene";
+import TokenBarcode from "./TokenBarcode";
 import { extractMatrix } from "./matrixData";
 import {
   ablationStory,
@@ -162,6 +163,25 @@ export default function MatrixWorkspace({
     tokens
       ? tokenLabel(tokens[index], index)
       : (event?.col_labels?.[index] ?? null);
+  // A text layer's token grid gets the full barcode under the stage instead of the small heatmap.
+  const tokenGrid = !attention && Boolean(event?.token_rms) && Boolean(data);
+  /** Select a cell anywhere in the grid, moving the 3D window so it is in view. */
+  function pickCell(row, col) {
+    if (!data) return;
+    const [rows, cols] = data.dimensions;
+    const clamp = (v, n) => Math.max(0, Math.min(Math.max(0, n - WINDOW), v));
+    const r0 =
+      row >= rowOffset && row < rowOffset + data.rows
+        ? rowOffset
+        : clamp(row - Math.floor(WINDOW / 2), rows);
+    const c0 =
+      col >= colOffset && col < colOffset + data.cols
+        ? colOffset
+        : clamp(col - Math.floor(WINDOW / 2), cols);
+    setRowOffset(r0);
+    setColOffset(c0);
+    setSelected({ row: row - r0, col: col - c0 });
+  }
   const rowsLabelled = Boolean(tokens || event?.row_labels);
   const colsLabelled = Boolean(tokens || event?.col_labels);
   const val = data?.matrix[selected.row]?.[selected.col];
@@ -372,338 +392,361 @@ export default function MatrixWorkspace({
   }, [deltas, event]);
   return (
     <div className="matrix-workspace">
-      <section
-        className="matrix-stage"
-        aria-label="Tensor matrix visualization"
-      >
-        <header className="matrix-stage-header">
-          <div className="matrix-stage-title">
-            <h2>{data ? title : "Tensor exploration table"}</h2>
-            {data ? (
-              <p className="matrix-meta">
-                <span>
-                  {currentStop
-                    ? `${currentStop.label} · `
-                    : currentLayer !== null && currentLayer !== undefined
-                      ? `L${currentLayer} · `
-                      : ""}
-                  {attention
-                    ? `Attention${trace.head_mean ? " · head mean" : trace.head !== undefined ? ` · head ${trace.head}` : ""}`
-                    : data.source}
-                  {event?.slice_label ? ` · ${event.slice_label}` : ""}
-                </span>
-                <span>{(event?.source_shape ?? data.shape).join(" × ")}</span>
-                <span>
-                  {cap(rowName)} {rowIndex}
-                  {rowToken ? ` “${rowToken}”` : ""} · {cap(colName)} {colText}
-                </span>
-              </p>
-            ) : (
-              <p className="matrix-meta">
-                <span>Select a capture or run an attention probe</span>
-              </p>
-            )}
-          </div>
-          <div className="matrix-tools">
-            <div
-              className="matrix-segment"
-              role="group"
-              aria-label="Stage view"
-            >
-              <button
-                className={stageMode === "overview" ? "selected" : ""}
-                aria-pressed={stageMode === "overview"}
-                onClick={() => setStageMode("overview")}
+      <div className="matrix-main">
+        <section
+          className="matrix-stage"
+          aria-label="Tensor matrix visualization"
+        >
+          <header className="matrix-stage-header">
+            <div className="matrix-stage-title">
+              <h2>{data ? title : "Tensor exploration table"}</h2>
+              {data ? (
+                <p className="matrix-meta">
+                  <span>
+                    {currentStop
+                      ? `${currentStop.label} · `
+                      : currentLayer !== null && currentLayer !== undefined
+                        ? `L${currentLayer} · `
+                        : ""}
+                    {attention
+                      ? `Attention${trace.head_mean ? " · head mean" : trace.head !== undefined ? ` · head ${trace.head}` : ""}`
+                      : data.source}
+                    {event?.slice_label ? ` · ${event.slice_label}` : ""}
+                  </span>
+                  <span>{(event?.source_shape ?? data.shape).join(" × ")}</span>
+                  <span>
+                    {cap(rowName)} {rowIndex}
+                    {rowToken ? ` “${rowToken}”` : ""} · {cap(colName)}{" "}
+                    {colText}
+                  </span>
+                </p>
+              ) : (
+                <p className="matrix-meta">
+                  <span>Select a capture or run an attention probe</span>
+                </p>
+              )}
+            </div>
+            <div className="matrix-tools">
+              <div
+                className="matrix-segment"
+                role="group"
+                aria-label="Stage view"
               >
-                <Cube size={17} /> Overview: aggregated
-              </button>
+                <button
+                  className={stageMode === "overview" ? "selected" : ""}
+                  aria-pressed={stageMode === "overview"}
+                  onClick={() => setStageMode("overview")}
+                >
+                  <Cube size={17} /> Overview: aggregated
+                </button>
+                <button
+                  className={stageMode === "detail" ? "selected" : ""}
+                  aria-pressed={stageMode === "detail"}
+                  onClick={() => setStageMode("detail")}
+                >
+                  <Table size={17} /> Cell detail
+                </button>
+              </div>
+              {stageOptions &&
+                (stageOptions.attention || stageOptions.outputs) && (
+                  <div
+                    className="matrix-segment matrix-stage-kind"
+                    role="group"
+                    aria-label="Stage tensor"
+                  >
+                    <button
+                      className={
+                        stageOptions.current === "attention" ? "selected" : ""
+                      }
+                      aria-pressed={stageOptions.current === "attention"}
+                      disabled={!stageOptions.attention}
+                      onClick={() => stageOptions.open(stageOptions.attention)}
+                      title={
+                        stageOptions.attention
+                          ? "Attention weights of the selected layer and head"
+                          : "This run recorded layer outputs but no attention. A model loaded in Model Run records attention; runs through ComfyUI's Generate Text do not yet."
+                      }
+                    >
+                      Attention
+                    </button>
+                    <button
+                      className={
+                        stageOptions.current === "outputs" ? "selected" : ""
+                      }
+                      aria-pressed={stageOptions.current === "outputs"}
+                      disabled={!stageOptions.outputs}
+                      onClick={() => stageOptions.open(stageOptions.outputs)}
+                      title="Captured output values of the selected layer"
+                    >
+                      Layer output
+                    </button>
+                  </div>
+                )}
+              <label className="matrix-zoom">
+                <MagnifyingGlass size={16} />
+                <select
+                  aria-label="Zoom"
+                  disabled={stageMode !== "overview"}
+                  title={
+                    stageMode === "overview"
+                      ? "Stage zoom"
+                      : "Zoom applies to the 3D overview"
+                  }
+                  value={zoom}
+                  onChange={(e) => {
+                    setZoom(Number(e.target.value));
+                  }}
+                >
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => (
+                    <option key={z} value={z}>
+                      {Math.round(z * 100)}%
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
-                className={stageMode === "detail" ? "selected" : ""}
-                aria-pressed={stageMode === "detail"}
-                onClick={() => setStageMode("detail")}
+                className="matrix-icon-button"
+                aria-label="Expand matrix visualization"
+                onClick={(e) =>
+                  e.currentTarget.closest(".matrix-stage").requestFullscreen()
+                }
               >
-                <Table size={17} /> Cell detail
+                <ArrowsOut size={18} />
               </button>
             </div>
-            {stageOptions &&
-              (stageOptions.attention || stageOptions.outputs) && (
-                <div
-                  className="matrix-segment matrix-stage-kind"
-                  role="group"
-                  aria-label="Stage tensor"
-                >
-                  <button
-                    className={
-                      stageOptions.current === "attention" ? "selected" : ""
+          </header>
+          {sliceNav}
+          {data && data.rows && data.cols ? (
+            <>
+              {stageMode === "overview" ? (
+                <div className="matrix-canvas">
+                  <MatrixScene
+                    matrix={data.matrix}
+                    selected={selected}
+                    onSelect={(row, col) => setSelected({ row, col })}
+                    mode={data.kind}
+                    resetKey={reset}
+                    zoom={zoom}
+                    axisLabels={{
+                      row: tokens ? "query token" : axisTitle(data.axes[0]),
+                      col: tokens ? "key token" : axisTitle(data.axes[1]),
+                      rowOffset,
+                      colOffset,
+                      rowLabels: rowsLabelled
+                        ? data.matrix.map((_, r) => labelRow(rowOffset + r))
+                        : null,
+                      colLabels: colsLabelled
+                        ? data.matrix[0].map((_, c) => labelCol(colOffset + c))
+                        : null,
+                    }}
+                    callout={
+                      <>
+                        <span>
+                          {tokens
+                            ? `“${rowToken}” → “${colToken}”`
+                            : rowToken
+                              ? `“${rowToken}” · ${colToken ?? `${cap(colName)} ${colIndex}`}`
+                              : `${cap(rowName.charAt(0))} ${rowIndex}, ${cap(colName.charAt(0))} ${colIndex}`}
+                        </span>
+                        <strong>
+                          {valueLabel} <em>{valueText}</em>
+                          {tokens && (
+                            <small>
+                              Q {rowIndex} · K {colIndex}
+                            </small>
+                          )}
+                        </strong>
+                      </>
                     }
-                    aria-pressed={stageOptions.current === "attention"}
-                    disabled={!stageOptions.attention}
-                    onClick={() => stageOptions.open(stageOptions.attention)}
-                    title="Attention weights of the selected layer and head"
-                  >
-                    Attention
-                  </button>
-                  <button
-                    className={
-                      stageOptions.current === "outputs" ? "selected" : ""
-                    }
-                    aria-pressed={stageOptions.current === "outputs"}
-                    disabled={!stageOptions.outputs}
-                    onClick={() => stageOptions.open(stageOptions.outputs)}
-                    title="Captured output values of the selected layer"
-                  >
-                    Layer output
-                  </button>
+                  />
                 </div>
-              )}
-            <label className="matrix-zoom">
-              <MagnifyingGlass size={16} />
-              <select
-                aria-label="Zoom"
-                disabled={stageMode !== "overview"}
-                title={
-                  stageMode === "overview"
-                    ? "Stage zoom"
-                    : "Zoom applies to the 3D overview"
-                }
-                value={zoom}
-                onChange={(e) => {
-                  setZoom(Number(e.target.value));
-                }}
-              >
-                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => (
-                  <option key={z} value={z}>
-                    {Math.round(z * 100)}%
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              className="matrix-icon-button"
-              aria-label="Expand matrix visualization"
-              onClick={(e) =>
-                e.currentTarget.closest(".matrix-stage").requestFullscreen()
-              }
-            >
-              <ArrowsOut size={18} />
-            </button>
-          </div>
-        </header>
-        {sliceNav}
-        {data && data.rows && data.cols ? (
-          <>
-            {stageMode === "overview" ? (
-              <div className="matrix-canvas">
-                <MatrixScene
-                  matrix={data.matrix}
-                  selected={selected}
-                  onSelect={(row, col) => setSelected({ row, col })}
-                  mode={data.kind}
-                  resetKey={reset}
-                  zoom={zoom}
-                  axisLabels={{
-                    row: tokens ? "query token" : axisTitle(data.axes[0]),
-                    col: tokens ? "key token" : axisTitle(data.axes[1]),
-                    rowOffset,
-                    colOffset,
-                    rowLabels: rowsLabelled
-                      ? data.matrix.map((_, r) => labelRow(rowOffset + r))
-                      : null,
-                    colLabels: colsLabelled
-                      ? data.matrix[0].map((_, c) => labelCol(colOffset + c))
-                      : null,
-                  }}
-                  callout={
-                    <>
-                      <span>
-                        {tokens
-                          ? `“${rowToken}” → “${colToken}”`
-                          : rowToken
-                            ? `“${rowToken}” · ${colToken ?? `${cap(colName)} ${colIndex}`}`
-                            : `${cap(rowName.charAt(0))} ${rowIndex}, ${cap(colName.charAt(0))} ${colIndex}`}
-                      </span>
-                      <strong>
-                        {valueLabel} <em>{valueText}</em>
-                        {tokens && (
-                          <small>
-                            Q {rowIndex} · K {colIndex}
-                          </small>
-                        )}
-                      </strong>
-                    </>
-                  }
-                />
-              </div>
-            ) : (
-              <div className="matrix-table-wrap">
-                <table className="matrix-table">
-                  <thead>
-                    <tr>
-                      <th>
-                        {rowName} \ {colName}
-                      </th>
-                      {data.matrix[0].map((_, c) => (
-                        <th
-                          key={c}
-                          className={c === selected.col ? "picked" : ""}
-                        >
-                          {labelCol(colOffset + c) ?? colOffset + c}
+              ) : (
+                <div className="matrix-table-wrap">
+                  <table className="matrix-table">
+                    <thead>
+                      <tr>
+                        <th>
+                          {rowName} \ {colName}
                         </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.matrix.map((row, r) => (
-                      <tr key={r}>
-                        <th className={r === selected.row ? "picked" : ""}>
-                          {labelRow(rowOffset + r) ?? rowOffset + r}
-                        </th>
-                        {row.map((v, c) => (
-                          <td
+                        {data.matrix[0].map((_, c) => (
+                          <th
                             key={c}
-                            className={
-                              r === selected.row && c === selected.col
-                                ? "picked"
-                                : r === selected.row || c === selected.col
-                                  ? "lit"
-                                  : ""
-                            }
-                            style={{ background: color(v) }}
-                            onClick={() => setSelected({ row: r, col: c })}
-                            title={`${rowOffset + r}, ${colOffset + c}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
+                            className={c === selected.col ? "picked" : ""}
                           >
-                            {data.states[r][c] === "captured"
-                              ? fmtShort(v)
-                              : "·"}
-                          </td>
+                            {labelCol(colOffset + c) ?? colOffset + c}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.matrix.map((row, r) => (
+                        <tr key={r}>
+                          <th className={r === selected.row ? "picked" : ""}>
+                            {labelRow(rowOffset + r) ?? rowOffset + r}
+                          </th>
+                          {row.map((v, c) => (
+                            <td
+                              key={c}
+                              className={
+                                r === selected.row && c === selected.col
+                                  ? "picked"
+                                  : r === selected.row || c === selected.col
+                                    ? "lit"
+                                    : ""
+                              }
+                              style={{ background: color(v) }}
+                              onClick={() => setSelected({ row: r, col: c })}
+                              title={`${rowOffset + r}, ${colOffset + c}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
+                            >
+                              {data.states[r][c] === "captured"
+                                ? fmtShort(v)
+                                : "·"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {stageMode === "overview" && upperTriangleZero && (
+                <p className="matrix-annotation">
+                  <em>Causal mask</em>
+                  <span>(weights above the diagonal are 0)</span>
+                </p>
+              )}
+              <div className="matrix-scale">
+                <span className="matrix-scale-label">
+                  {attention
+                    ? "Attention weight (post-softmax)"
+                    : "Activation value"}
+                </span>
+                <div className="matrix-ramp-wrap">
+                  <div
+                    className={
+                      attention ? "matrix-ramp attention" : "matrix-ramp signed"
+                    }
+                  />
+                  <div className="matrix-ramp-ticks">
+                    {attention
+                      ? Array.from({ length: 11 }, (_, i) => (
+                          <span key={i}>{(i / 10).toFixed(1)}</span>
+                        ))
+                      : [`−${fmt(abs)}`, "0", `+${fmt(abs)}`].map((t) => (
+                          <span key={t}>{t}</span>
+                        ))}
+                  </div>
+                </div>
+                <span className="matrix-divider" />
+                <span className="matrix-pink">
+                  <i /> Pink = selected
+                </span>
               </div>
-            )}
-            {stageMode === "overview" && upperTriangleZero && (
-              <p className="matrix-annotation">
-                <em>Causal mask</em>
-                <span>(weights above the diagonal are 0)</span>
+            </>
+          ) : !trace && !events.length && startPanel ? (
+            startPanel
+          ) : (
+            <div className="matrix-empty">
+              <GridFour size={44} />
+              <h3>
+                {events.length && !extracted.error
+                  ? "This layer was not captured in this run"
+                  : "No matrix captured yet"}
+              </h3>
+              <p>
+                {extracted.error ||
+                  (events.length
+                    ? "Pick a captured layer, or add this one to the capture and run again."
+                    : null) ||
+                  "Run a text attention probe, or select a recorded tensor event. Only retained values are displayed."}
+              </p>
+            </div>
+          )}
+          <footer
+            className="matrix-timeline"
+            aria-label="Layer / ordinal events"
+          >
+            <span className="matrix-timeline-label">
+              Layer / Ordinal Events{" "}
+              <Info
+                size={15}
+                weight="regular"
+                aria-hidden="true"
+                title="Each dot is a decoder layer. Click one to look at that layer: attention is re-probed there and the layer output view jumps to it."
+              />
+            </span>
+            <div className="matrix-track">
+              {timelineSeries && timelineSeries.points.length > 1 && (
+                <Sparkline
+                  series={timelineSeries}
+                  activeLayer={stops[0]?.repeated ? stepIndex : currentLayer}
+                />
+              )}
+              <div className="matrix-track-dots">
+                <span className="matrix-track-line" />
+                <OrdinalDot label="Input" />
+                {condense(stopPositions, stepIndex).map((entry, i) =>
+                  entry === "gap" ? (
+                    <span key={`gap${i}`} className="matrix-ellipsis">
+                      ···
+                    </span>
+                  ) : (
+                    <OrdinalDot
+                      key={entry}
+                      label={stops[entry].label}
+                      active={entry === stepIndex}
+                      pending={
+                        busy &&
+                        stops[entry].number === layer &&
+                        entry !== stepIndex
+                      }
+                      onClick={() => pickLayer(stops[entry])}
+                    />
+                  ),
+                )}
+                <OrdinalDot label="Output" />
+              </div>
+            </div>
+            <span
+              className="matrix-step"
+              title={
+                stepIndex >= 0
+                  ? "Which layer the stage shows; click a dot or use the Layer select to move"
+                  : undefined
+              }
+            >
+              {stepIndex >= 0
+                ? `${currentStop.name[0].toUpperCase()}${currentStop.name.slice(1)} · ${stepIndex + 1} of ${stepTotal}${partial ? " captured" : ""}`
+                : event?.denoiser_call !== undefined
+                  ? `Call ${event.denoiser_call} · ${eventIndex + 1} of ${events.length}`
+                  : event?.step !== undefined
+                    ? `Step ${event.step} · ${eventIndex + 1} of ${events.length}`
+                    : events.length
+                      ? `Event ${eventIndex + 1} of ${events.length}`
+                      : "No events"}
+            </span>
+            {native && partial && allStops.length > 0 && (
+              <p className="matrix-timeline-hint">
+                {stops.length} of {allStops.length} layers captured. To record
+                more, list them in the modules field of Model Run · Observe.
               </p>
             )}
-            <div className="matrix-scale">
-              <span className="matrix-scale-label">
-                {attention
-                  ? "Attention weight (post-softmax)"
-                  : "Activation value"}
-              </span>
-              <div className="matrix-ramp-wrap">
-                <div
-                  className={
-                    attention ? "matrix-ramp attention" : "matrix-ramp signed"
-                  }
-                />
-                <div className="matrix-ramp-ticks">
-                  {attention
-                    ? Array.from({ length: 11 }, (_, i) => (
-                        <span key={i}>{(i / 10).toFixed(1)}</span>
-                      ))
-                    : [`−${fmt(abs)}`, "0", `+${fmt(abs)}`].map((t) => (
-                        <span key={t}>{t}</span>
-                      ))}
-                </div>
-              </div>
-              <span className="matrix-divider" />
-              <span className="matrix-pink">
-                <i /> Pink = selected
-              </span>
-            </div>
-          </>
-        ) : !trace && !events.length && startPanel ? (
-          startPanel
-        ) : (
-          <div className="matrix-empty">
-            <GridFour size={44} />
-            <h3>
-              {events.length && !extracted.error
-                ? "This layer was not captured in this run"
-                : "No matrix captured yet"}
-            </h3>
-            <p>
-              {extracted.error ||
-                (events.length
-                  ? "Pick a captured layer, or add this one to the capture and run again."
-                  : null) ||
-                "Run a text attention probe, or select a recorded tensor event. Only retained values are displayed."}
-            </p>
-          </div>
+          </footer>
+        </section>
+        {tokenGrid && (
+          <TokenBarcode
+            event={event}
+            view={{
+              row0: rowOffset,
+              rows: data.rows,
+              col0: colOffset,
+              cols: data.cols,
+            }}
+            selected={{ row: rowIndex, col: colIndex }}
+            onPick={pickCell}
+          />
         )}
-        <footer className="matrix-timeline" aria-label="Layer / ordinal events">
-          <span className="matrix-timeline-label">
-            Layer / Ordinal Events{" "}
-            <Info
-              size={15}
-              weight="regular"
-              aria-hidden="true"
-              title="Each dot is a decoder layer. Click one to look at that layer: attention is re-probed there and the layer output view jumps to it."
-            />
-          </span>
-          <div className="matrix-track">
-            {timelineSeries && timelineSeries.points.length > 1 && (
-              <Sparkline
-                series={timelineSeries}
-                activeLayer={stops[0]?.repeated ? stepIndex : currentLayer}
-              />
-            )}
-            <div className="matrix-track-dots">
-              <span className="matrix-track-line" />
-              <OrdinalDot label="Input" />
-              {condense(stopPositions, stepIndex).map((entry, i) =>
-                entry === "gap" ? (
-                  <span key={`gap${i}`} className="matrix-ellipsis">
-                    ···
-                  </span>
-                ) : (
-                  <OrdinalDot
-                    key={entry}
-                    label={stops[entry].label}
-                    active={entry === stepIndex}
-                    pending={
-                      busy &&
-                      stops[entry].number === layer &&
-                      entry !== stepIndex
-                    }
-                    onClick={() => pickLayer(stops[entry])}
-                  />
-                ),
-              )}
-              <OrdinalDot label="Output" />
-            </div>
-          </div>
-          <span
-            className="matrix-step"
-            title={
-              stepIndex >= 0
-                ? "Which layer the stage shows; click a dot or use the Layer select to move"
-                : undefined
-            }
-          >
-            {stepIndex >= 0
-              ? `${currentStop.name[0].toUpperCase()}${currentStop.name.slice(1)} · ${stepIndex + 1} of ${stepTotal}${partial ? " captured" : ""}`
-              : event?.denoiser_call !== undefined
-                ? `Call ${event.denoiser_call} · ${eventIndex + 1} of ${events.length}`
-                : event?.step !== undefined
-                  ? `Step ${event.step} · ${eventIndex + 1} of ${events.length}`
-                  : events.length
-                    ? `Event ${eventIndex + 1} of ${events.length}`
-                    : "No events"}
-          </span>
-          {native && partial && allStops.length > 0 && (
-            <p className="matrix-timeline-hint">
-              {stops.length} of {allStops.length} layers captured. To record
-              more, list them in the modules field of Model Run · Observe.
-            </p>
-          )}
-        </footer>
-      </section>
+      </div>
       <aside className="matrix-inspector">
         <h2>
           <Stack size={22} weight="duotone" /> Inspector
@@ -1138,120 +1181,130 @@ export default function MatrixWorkspace({
             <dd>{data?.shape.join(" × ") || "—"}</dd>
           </dl>
         )}
+        {tokenGrid && (
+          <p className="matrix-note">
+            Every token and feature is in the barcode under the stage; click it
+            to move the 3D window.
+          </p>
+        )}
         {data && (
           <>
-            <h3>
-              {attention ? "Attention heatmap" : "Value heatmap"}{" "}
-              <small>(linked)</small>
-            </h3>
-            <div
-              className={`matrix-heatmap-figure ${rowsLabelled ? "with-tokens" : ""}`}
-            >
-              <span className="matrix-heatmap-ylabel">
-                {tokens ? "query token" : axisTitle(data.axes[0])}
-              </span>
-              <div className="matrix-heatmap-yticks">
-                {ticks(data.rows, rowOffset, rowsLabelled, labelRow).map(
-                  ({ i, label }) => (
-                    <span
-                      key={i}
-                      className={i === selected.row ? "picked" : ""}
-                      style={{ top: `${((i + 0.5) / data.rows) * 100}%` }}
-                    >
-                      {label}
-                    </span>
-                  ),
-                )}
-              </div>
-              <div
-                className="matrix-heatmap"
-                style={{
-                  gridTemplateColumns: `repeat(${data.cols},1fr)`,
-                  aspectRatio: `${data.cols} / ${data.rows}`,
-                }}
-              >
-                {data.matrix.map((row, r) =>
-                  row.map((v, c) => (
-                    <button
-                      key={`${r}:${c}`}
-                      data-row={r}
-                      data-col={c}
-                      tabIndex={
-                        selected.row === r && selected.col === c ? 0 : -1
-                      }
-                      onKeyDown={(e) => {
-                        const delta = {
-                          ArrowUp: [-1, 0],
-                          ArrowDown: [1, 0],
-                          ArrowLeft: [0, -1],
-                          ArrowRight: [0, 1],
-                        }[e.key];
-                        if (!delta) return;
-                        e.preventDefault();
-                        const nextRow = Math.max(
-                          0,
-                          Math.min(data.rows - 1, r + delta[0]),
-                        );
-                        const nextCol = Math.max(
-                          0,
-                          Math.min(data.cols - 1, c + delta[1]),
-                        );
-                        setSelected({ row: nextRow, col: nextCol });
-                        e.currentTarget.parentElement
-                          .querySelector(
-                            `[data-row="${nextRow}"][data-col="${nextCol}"]`,
-                          )
-                          ?.focus();
-                      }}
-                      aria-label={`${rowName} ${r + rowOffset}, ${colName} ${c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
-                      title={`${labelRow(r + rowOffset) ?? r + rowOffset} → ${labelCol(c + colOffset) ?? c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
-                      className={
-                        selected.row === r && selected.col === c
-                          ? "picked"
-                          : selected.row === r || selected.col === c
-                            ? "lit"
-                            : ""
-                      }
-                      style={{ background: color(v) }}
-                      onClick={() => setSelected({ row: r, col: c })}
-                    />
-                  )),
-                )}
-              </div>
-              <div className="matrix-colorbar">
+            {!tokenGrid && (
+              <>
+                <h3>
+                  {attention ? "Attention heatmap" : "Value heatmap"}{" "}
+                  <small>(linked)</small>
+                </h3>
                 <div
-                  className={
-                    attention
-                      ? "matrix-ramp attention vertical"
-                      : "matrix-ramp signed vertical"
-                  }
-                />
-                <div className="matrix-colorbar-ticks">
-                  {(attention
-                    ? ["1.0", "0.8", "0.6", "0.4", "0.2", "0.0"]
-                    : [`+${fmtShort(abs)}`, "0", `−${fmtShort(abs)}`]
-                  ).map((t) => (
-                    <span key={t}>{t}</span>
-                  ))}
+                  className={`matrix-heatmap-figure ${rowsLabelled ? "with-tokens" : ""}`}
+                >
+                  <span className="matrix-heatmap-ylabel">
+                    {tokens ? "query token" : axisTitle(data.axes[0])}
+                  </span>
+                  <div className="matrix-heatmap-yticks">
+                    {ticks(data.rows, rowOffset, rowsLabelled, labelRow).map(
+                      ({ i, label }) => (
+                        <span
+                          key={i}
+                          className={i === selected.row ? "picked" : ""}
+                          style={{ top: `${((i + 0.5) / data.rows) * 100}%` }}
+                        >
+                          {label}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  <div
+                    className="matrix-heatmap"
+                    style={{
+                      gridTemplateColumns: `repeat(${data.cols},1fr)`,
+                      aspectRatio: `${data.cols} / ${data.rows}`,
+                    }}
+                  >
+                    {data.matrix.map((row, r) =>
+                      row.map((v, c) => (
+                        <button
+                          key={`${r}:${c}`}
+                          data-row={r}
+                          data-col={c}
+                          tabIndex={
+                            selected.row === r && selected.col === c ? 0 : -1
+                          }
+                          onKeyDown={(e) => {
+                            const delta = {
+                              ArrowUp: [-1, 0],
+                              ArrowDown: [1, 0],
+                              ArrowLeft: [0, -1],
+                              ArrowRight: [0, 1],
+                            }[e.key];
+                            if (!delta) return;
+                            e.preventDefault();
+                            const nextRow = Math.max(
+                              0,
+                              Math.min(data.rows - 1, r + delta[0]),
+                            );
+                            const nextCol = Math.max(
+                              0,
+                              Math.min(data.cols - 1, c + delta[1]),
+                            );
+                            setSelected({ row: nextRow, col: nextCol });
+                            e.currentTarget.parentElement
+                              .querySelector(
+                                `[data-row="${nextRow}"][data-col="${nextCol}"]`,
+                              )
+                              ?.focus();
+                          }}
+                          aria-label={`${rowName} ${r + rowOffset}, ${colName} ${c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
+                          title={`${labelRow(r + rowOffset) ?? r + rowOffset} → ${labelCol(c + colOffset) ?? c + colOffset}: ${data.states[r][c] === "captured" ? fmt(v) : data.states[r][c]}`}
+                          className={
+                            selected.row === r && selected.col === c
+                              ? "picked"
+                              : selected.row === r || selected.col === c
+                                ? "lit"
+                                : ""
+                          }
+                          style={{ background: color(v) }}
+                          onClick={() => setSelected({ row: r, col: c })}
+                        />
+                      )),
+                    )}
+                  </div>
+                  <div className="matrix-colorbar">
+                    <div
+                      className={
+                        attention
+                          ? "matrix-ramp attention vertical"
+                          : "matrix-ramp signed vertical"
+                      }
+                    />
+                    <div className="matrix-colorbar-ticks">
+                      {(attention
+                        ? ["1.0", "0.8", "0.6", "0.4", "0.2", "0.0"]
+                        : [`+${fmtShort(abs)}`, "0", `−${fmtShort(abs)}`]
+                      ).map((t) => (
+                        <span key={t}>{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="matrix-heatmap-xticks">
+                    {ticks(data.cols, colOffset, colsLabelled, labelCol).map(
+                      ({ i, label }) => (
+                        <span
+                          key={i}
+                          className={i === selected.col ? "picked" : ""}
+                          style={{ left: `${((i + 0.5) / data.cols) * 100}%` }}
+                        >
+                          {label}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  <span className="matrix-heatmap-xlabel">
+                    {tokens ? "key token" : axisTitle(data.axes[1])}
+                  </span>
                 </div>
-              </div>
-              <div className="matrix-heatmap-xticks">
-                {ticks(data.cols, colOffset, colsLabelled, labelCol).map(
-                  ({ i, label }) => (
-                    <span
-                      key={i}
-                      className={i === selected.col ? "picked" : ""}
-                      style={{ left: `${((i + 0.5) / data.cols) * 100}%` }}
-                    >
-                      {label}
-                    </span>
-                  ),
-                )}
-              </div>
-              <span className="matrix-heatmap-xlabel">
-                {tokens ? "key token" : axisTitle(data.axes[1])}
-              </span>
-            </div>
+              </>
+            )}
             {windowed && (
               <div className="matrix-paging">
                 <span>Rows</span>

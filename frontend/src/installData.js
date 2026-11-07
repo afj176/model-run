@@ -85,6 +85,7 @@ export function groupJobs(jobs) {
     row.total_bytes = members.reduce((sum, j) => sum + (j.total_bytes || 0), 0);
     row.hash_checked = members.every((j) => j.hash_checked);
     row.error = members.find((j) => j.error)?.error || null;
+    row.retrying = members.find((j) => j.retrying)?.retrying || null;
     row.files = {
       done: members.filter((j) => j.status === "installed").length,
       total: members.length,

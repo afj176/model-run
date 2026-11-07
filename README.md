@@ -328,6 +328,11 @@ tensor names in 3D.
   **Features per token** in the run settings can keep fewer (1024, 256 or 64). Each row also
   keeps that token's RMS and peak over all its features. A text trace holds 8,388,608 values
   across its layers, so a 4B model's 18-token prompt keeps all 2,560 features at every layer.
+- **Every token × feature** under the stage draws that grid whole: one row per token, every
+  feature as a stripe, and each token's RMS beside it. The robust colour scale saturates at
+  the 99th percentile so one huge channel does not wash out the rest; white ticks and the
+  **Outlier channels** chips mark massive activations (over 10× their token's RMS). Click
+  anywhere, or use the arrow keys, to move the 3D window there.
 - **Layer Stack** and the timeline select a layer; the inspector shows paths, shapes, dtypes
   and values.
 - **What it predicted** shows the next-token distribution and a logit lens: the top token

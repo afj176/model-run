@@ -26,6 +26,8 @@ MAX_PACKAGE_FILES = 160
 SKIP_FOLDERS = {"onnx", "openvino", "original", "coreml", "flax", "tf", "tflite", "mlx", "gguf", "metal", "runs", "logs"}
 # The files that make a folder a package; written last, so a half-downloaded package is never listed.
 MARKERS = ("config.json", "model_index.json")
+# A file still downloading; the installer names its partial files this way.
+PART_SUFFIX = ".modelrun-part"
 
 
 def _repo_parts(repo):
@@ -41,8 +43,11 @@ def package_folder(root, repo):
 
 
 def is_installed(root, repo):
+    """A package is here when its marker is, and no file of it is still part-downloaded."""
+    if root is None:
+        return False
     folder = package_folder(root, repo)
-    return root is not None and any((folder / marker).is_file() for marker in MARKERS)
+    return any((folder / marker).is_file() for marker in MARKERS) and not any(folder.rglob(f"*{PART_SUFFIX}"))
 
 
 def _names(info):

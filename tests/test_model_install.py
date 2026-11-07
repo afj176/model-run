@@ -394,6 +394,47 @@ class Install(Base):
         self.assertEqual(hub.requests[-1][2]["Range"], "bytes=1000-")
         self.assertEqual((self.vae / "a.safetensors").read_bytes(), data)
 
+    def test_a_dropped_connection_resumes_by_itself(self):
+        data = safetensors(4096)
+        class Dropping(FakeHub):
+            drops = 2
+            def open(self, url, **kwargs):
+                response = super().open(url, **kwargs)
+                if kwargs.get("method", "GET") == "GET" and self.drops:
+                    self.drops -= 1
+                    body = response.read(700)
+                    class Reset(Response):
+                        def read(self, size=-1):
+                            chunk = super().read(size)
+                            if not chunk:
+                                raise ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+                            return chunk
+                    return Reset(response.code, body, dict(response.headers.items()))
+                return response
+        hub = Dropping(data)
+        installer = self.installer(hub)
+        installer.retry_delays = (0, 0, 0)
+        job = self.wait(installer, installer.start([self.request(len(data))])["jobs"][0])
+        self.assertEqual(job["status"], "installed")
+        self.assertTrue(job["hash_checked"])
+        self.assertEqual([r[2].get("Range") for r in hub.requests if r[0] == "GET"], [None, "bytes=700-", "bytes=1400-"])
+        self.assertEqual((self.vae / "a.safetensors").read_bytes(), data)
+
+    def test_a_connection_that_keeps_dropping_stops_with_a_plain_reason(self):
+        data = safetensors(4096)
+        class Down(FakeHub):
+            def open(self, url, **kwargs):
+                if kwargs.get("method", "GET") == "GET":
+                    raise ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+                return super().open(url, **kwargs)
+        installer = self.installer(Down(data))
+        installer.retry_delays = (0, 0)
+        job = self.wait(installer, installer.start([self.request(len(data))])["jobs"][0])
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("the connection was reset", job["error"])
+        self.assertIn("retry to resume", job["error"])
+        self.assertNotIn("WinError", job["error"])
+
     def test_an_existing_file_is_never_replaced(self):
         data = safetensors()
         self.vae.mkdir(parents=True)
