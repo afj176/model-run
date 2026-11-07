@@ -234,7 +234,7 @@ export function sliceEvent(event, wanted = {}) {
 }
 
 /** A text layer's token grid: every token (rows) by the same recorded features (columns), exact values. */
-function tokenGridEvent(event, slices) {
+export function tokenGridEvent(event, slices) {
   const notes = [
     slices.cols < slices.source_cols
       ? `Every token by ${slices.cols} of its ${slices.source_cols.toLocaleString()} features, evenly spaced; the feature numbers are the columns.`
@@ -263,6 +263,7 @@ function tokenGridEvent(event, slices) {
     token_max_abs: slices.token_max_abs,
     token_indices: slices.token_indices,
     feature_indices: slices.feature_indices,
+    patch_grid: slices.patch_grid ?? null,
   };
 }
 

@@ -323,6 +323,30 @@ def _validate(trace):
         if not isinstance(preview, dict) or preview.get("mime") != "image/png":
             raise ValueError("Invalid preview")
         _check_png(preview.get("base64"))
+    if "block_parts" in trace:
+        # How large each block's attention and MLP outputs were next to the block's own, on one call.
+        blocks = trace["block_parts"]
+        if not isinstance(blocks, list) or len(blocks) > 1024:
+            raise ValueError("Invalid block parts")
+        finite = lambda v: type(v) in (int, float) and math.isfinite(v) and v >= 0
+        for block in blocks:
+            parts = block.get("parts") if isinstance(block, dict) else None
+            if (not isinstance(block.get("block"), str) or len(block["block"]) > 512 or not finite(block.get("output_rms"))
+                    or ("update_rms" in block and not finite(block["update_rms"]))
+                    or not isinstance(parts, list) or not 1 <= len(parts) <= 4
+                    or any(not isinstance(p, dict) or p.get("kind") not in ("attention", "mlp") or not isinstance(p.get("path"), str)
+                           or not p["path"].startswith(f"{block['block']}.") or not finite(p.get("rms")) for p in parts)):
+                raise ValueError("Invalid block parts")
+    if "source_images" in trace:
+        # The pictures a ComfyUI run read, shown beside what it made.
+        sources = trace["source_images"]
+        if not isinstance(sources, list) or not 1 <= len(sources) <= 4:
+            raise ValueError("Invalid source images")
+        for source in sources:
+            if (not isinstance(source, dict) or source.get("mime") != "image/png" or not isinstance(source.get("title"), str) or len(source["title"]) > 160
+                    or not isinstance(source.get("file"), str) or len(source["file"]) > 256):
+                raise ValueError("Invalid source image")
+            _check_png(source.get("base64"))
     if "preview_frames" in trace:
         block = trace["preview_frames"]
         frames = block.get("frames") if isinstance(block, dict) else None

@@ -50,6 +50,24 @@ function StepBars({ title, values, picked, onPick, labels }) {
 }
 
 /** The sampler's work at each step: the latent, the noise it predicts and where that leaves the image. */
+/** The pictures the run read, so what it made can be seen beside where it started. */
+export function SourceFigures({ trace }) {
+  return (trace?.source_images || []).map((source, i) => (
+    <figure key={`source-${i}`} className="source-figure">
+      <img
+        src={`data:image/png;base64,${source.base64}`}
+        alt={`Source image: ${source.file}`}
+      />
+      <figcaption>
+        <b>Source</b>
+        <span title={`${source.title} reads ${source.file}`}>
+          {source.file.split("/").pop()}
+        </span>
+      </figcaption>
+    </figure>
+  ));
+}
+
 export function Denoising({ trace }) {
   const section = trace?.denoising;
   const steps = section?.steps || [];
@@ -122,6 +140,7 @@ export function Denoising({ trace }) {
       </p>
       {section.skipped && <p className="micro">{section.skipped}</p>}
       <div className="denoising-grid">
+        <SourceFigures trace={trace} />
         {PANELS.filter(([key]) => step.images?.[key]).map(
           ([key, title, hint]) => (
             <figure key={key}>

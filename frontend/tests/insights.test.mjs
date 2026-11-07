@@ -936,3 +936,63 @@ test("token text reads as words: real spaces inside, none at the ends", () => {
   assert.equal(tokenText("\n"), "⏎");
   assert.equal(tokenText(""), "∅");
 });
+
+test("a layer's parts come from its part events, its patches, or a block's one-time sizes", async () => {
+  const { layerParts } = await import("../src/insights.js");
+  // A ViT layer: its output keeps every patch beside its maps; its attention is a patch grid.
+  const patches = (rms) => ({
+    layout: "tokens",
+    token_rms: rms,
+    row_labels: ["CLS", "r0 c0", "r0 c1"],
+    patch_grid: [1, 1, 2],
+  });
+  const vit = layerParts(
+    [
+      {
+        module: "vit.encoder.layer.0",
+        slices: { layout: "patch_tokens", patches: patches([2, 2, 2]) },
+      },
+      {
+        module: "vit.encoder.layer.0.attention",
+        part: "attention",
+        part_of: "vit.encoder.layer.0",
+        slices: patches([1, 0.5, 0.5]),
+      },
+    ],
+    "vit.encoder.layer.0",
+  );
+  assert.equal(vit.parts[0].share, 2 / 6);
+  assert.deepEqual(
+    vit.tokens.map((t) => t.label),
+    ["CLS", "r0 c0", "r0 c1"],
+  );
+  // A diffusion block: sizes measured once, no per-token rows; selecting a part opens the block.
+  const trace = {
+    block_parts: [
+      {
+        block: "double_blocks.3",
+        output_rms: 4,
+        parts: [
+          { kind: "attention", path: "double_blocks.3.img_attn", rms: 2 },
+          { kind: "mlp", path: "double_blocks.3.img_mlp", rms: 6 },
+        ],
+      },
+    ],
+  };
+  const block = layerParts(
+    [{ module: "double_blocks.3" }],
+    "double_blocks.3",
+    trace,
+  );
+  // Sizes before the block's gate: compared with the block's larger part, not with its output.
+  assert.equal(block.basis, "before_gate");
+  assert.deepEqual(
+    block.parts.map((p) => [p.label, p.share, p.rms, p.recorded]),
+    [
+      ["Attention", 2 / 6, 2, false],
+      ["MLP", 1, 6, false],
+    ],
+  );
+  assert.equal(block.tokens.length, 0);
+  assert.equal(layerParts([], "single_blocks.0", trace), null);
+});

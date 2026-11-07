@@ -65,5 +65,71 @@ class LayerPartTests(unittest.TestCase):
             encode_trace(trace)
 
 
+    def test_image_blocks_are_measured_even_when_attention_is_called_in_pieces(self):
+        from model_run.layer_parts import block_part_meter
+        class SelfAttention(torch.nn.Module):  # like Flux: the block calls qkv and proj, never forward
+            def __init__(self):
+                super().__init__()
+                self.qkv = torch.nn.Linear(4, 12)
+                self.proj = torch.nn.Linear(4, 4)
+        class DoubleBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.img_attn = SelfAttention()
+                self.img_mlp = torch.nn.Sequential(torch.nn.Linear(4, 4))
+            def forward(self, img):
+                q, k, v = self.img_attn.qkv(img).chunk(3, dim=-1)
+                img = img + self.img_attn.proj(torch.softmax(q @ k.transpose(-1, -2), -1) @ v)
+                # Text first, as Qwen-Image does: the larger image stream is the block's output.
+                return torch.full((1, 2, 4), 1e4), img + self.img_mlp(img)
+        class Core(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.double_blocks = torch.nn.ModuleList([DoubleBlock(), DoubleBlock()])
+                self.final = torch.nn.Linear(4, 4)
+            def forward(self, img):
+                for block in self.double_blocks:
+                    img = block(img)[1]
+                return self.final(img)
+        core = Core().eval()
+        results, remove = block_part_meter(core, ["double_blocks.0", "double_blocks.1", "final", ""])
+        with torch.no_grad():
+            core(torch.randn(1, 6, 4))
+            core(torch.randn(1, 6, 4) * 100)  # a later call does not change what was measured
+        remove()
+        found = results()
+        self.assertEqual([b["block"] for b in found], ["double_blocks.0", "double_blocks.1"])
+        self.assertEqual([p["kind"] for p in found[0]["parts"]], ["attention", "mlp"])
+        self.assertTrue(all(0 < p["rms"] < 50 for p in found[0]["parts"]))
+        self.assertLess(found[0]["output_rms"], 1000)  # the image stream, not the text
+        # What the block changed: its attention and MLP added together, matched to its input by shape.
+        self.assertGreater(found[0]["update_rms"], 0)
+        self.assertLess(found[0]["update_rms"], found[0]["output_rms"] * 10)
+        trace = {"schema_version": "1.0", "kind": "pytorch_module_capture", "model_class": "Core", "torch_version": "2",
+                 "events": [], "capture": {}, "limitations": [], "block_parts": found}
+        encode_trace(trace)
+        found[0]["parts"][0]["path"] = "elsewhere.attn"
+        with self.assertRaises(ValueError):
+            encode_trace(trace)
+
+    def test_a_vit_layer_keeps_every_patch_and_its_maps(self):
+        recorder = SliceRecorder(token_grid=(1, 4, 4), patch_features=1 << 20, parts=["layers.0.attention"], part_features=PART_FEATURES)
+        tensor = torch.randn(1, 17, 48)
+        record = recorder.record(tensor, None, path="layers.0")
+        self.assertEqual(record["layout"], "patch_tokens")  # the patch maps are still there
+        patches = record["patches"]
+        self.assertEqual((patches["rows"], patches["cols"], patches["patch_grid"]), (17, 48, [1, 4, 4]))
+        self.assertEqual(patches["row_labels"][:3], ["CLS", "r0 c0", "r0 c1"])
+        self.assertEqual(patches["row_labels"][-1], "r3 c3")
+        part = recorder.record(tensor, None, path="layers.0.attention")
+        self.assertEqual((part["layout"], part["rows"], part["patch_grid"]), ("tokens", 17, [1, 4, 4]))
+        from model_run.tensor_slices import validate_slices
+        validate_slices(record)
+        validate_slices(part)
+        record["patches"]["patch_grid"] = [1, 4, 5]
+        with self.assertRaises(ValueError):
+            validate_slices(record)
+
+
 if __name__ == "__main__":
     unittest.main()

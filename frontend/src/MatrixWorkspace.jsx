@@ -14,7 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import MatrixScene from "./MatrixScene";
 import TokenBarcode from "./TokenBarcode";
-import { extractMatrix } from "./matrixData";
+import { extractMatrix, tokenGridEvent } from "./matrixData";
 import {
   ablationStory,
   activationStats,
@@ -182,6 +182,16 @@ export default function MatrixWorkspace({
     setColOffset(c0);
     setSelected({ row: row - r0, col: col - c0 });
   }
+  // An image layer (a ViT's patches) keeps every patch by its features beside its maps: its own barcode.
+  const patchEvent = useMemo(
+    () =>
+      !attention && event?.slices?.patches?.token_rms
+        ? tokenGridEvent(event, event.slices.patches)
+        : null,
+    [attention, event],
+  );
+  const [patchPick, setPatchPick] = useState({ row: 0, col: 0 });
+  const inputImage = trace?.image_classification?.input_image;
   const rowsLabelled = Boolean(tokens || event?.row_labels);
   const colsLabelled = Boolean(tokens || event?.col_labels);
   const val = data?.matrix[selected.row]?.[selected.col];
@@ -733,6 +743,19 @@ export default function MatrixWorkspace({
             )}
           </footer>
         </section>
+        {patchEvent && (
+          <TokenBarcode
+            event={patchEvent}
+            view={null}
+            selected={patchPick}
+            onPick={(row, col) => setPatchPick({ row, col })}
+            image={
+              inputImage
+                ? `data:${inputImage.mime};base64,${inputImage.base64}`
+                : null
+            }
+          />
+        )}
         {tokenGrid && (
           <TokenBarcode
             event={event}

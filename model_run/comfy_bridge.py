@@ -13,6 +13,7 @@ from .capture import capture_forward
 from .comfy_paths import NOT_INSTALL_FOLDERS
 from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
+from .layer_parts import block_part_meter
 from .tensor_slices import SliceRecorder
 from .cross_attention import stable_audio_labels, stable_audio_3_labels, collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
@@ -245,16 +246,24 @@ class DenoiserObserver:
             call = self.calls
             self.calls += 1
             self._current = self._attention_context(call, arguments)
+            # On the first call, how large each block's attention and MLP outputs are next to the block's own.
+            meter = block_part_meter(self.core, self.paths) if call == 0 else None
             try:
                 latent_shape = self._latent_shape(arguments)
                 self._slices.text_tokens = self._text_token_count(arguments)
                 self._slices.reference_tokens = self._reference_token_count(arguments)
                 self._slices.conditional_batch = self._conditional_batch(arguments)
                 self._slices.sequence = self._token_sequence(latent_shape, self._slices.text_tokens)
-                output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
-                    max_tensor_elements=self.elements, max_events=len(self.paths),
-                    output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()},
-                    slices=self._slices, latent_shape=latent_shape)
+                try:
+                    output, trace = capture_forward(Invocation(), {}, ["denoiser" + ("." + p if p else "") for p in self.paths],
+                        max_tensor_elements=self.elements, max_events=len(self.paths),
+                        output_selectors={"denoiser" + ("." + p if p else ""): value for p, value in self.selectors.items()},
+                        slices=self._slices, latent_shape=latent_shape)
+                finally:
+                    if meter is not None:
+                        meter[1]()
+                if meter is not None:
+                    self.block_parts = meter[0]()
             except Exception as exc:
                 trace = getattr(exc, "trace", None)
                 if trace:
@@ -597,6 +606,8 @@ class DenoiserObserver:
             self.trace["capture"]["max_events_per_call"] = len(self.paths)
             self.trace["capture"]["max_events"] = len(self.paths) * self.max_calls
             self.trace["source"] = "comfyui_native_denoiser"
+            if getattr(self, "block_parts", None):
+                self.trace["block_parts"] = self.block_parts
             if self.attention_block is not None:
                 self.trace["cross_attention"] = new_section(self.attention_block, "comfyui_attention_override",
                                                             token_labels=self.token_labels, max_grid=self.attention_grid)
@@ -753,6 +764,28 @@ def application():
     return _application
 
 
+def source_images(graph, *, limit=4, side=384):
+    """Small PNGs of the images a workflow's Load Image nodes read, so a run shows its source beside its output."""
+    from PIL import Image, ImageOps
+    import folder_paths
+    from .comfy_instrument import media_inputs
+    found = []
+    for item in media_inputs(graph if isinstance(graph, dict) else {}):
+        if item["kind"] != "image" or len(found) >= limit:
+            continue
+        try:
+            with Image.open(folder_paths.get_annotated_filepath(item["file"])) as opened:
+                image = ImageOps.exif_transpose(opened).convert("RGB")
+            image.thumbnail((side, side))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+        except Exception:  # noqa: BLE001 - a missing or unreadable file only loses the thumbnail
+            continue
+        found.append({"title": str(item["title"])[:160], "file": str(item["file"])[:256], "mime": "image/png",
+                      "base64": base64.b64encode(buffer.getvalue()).decode()})
+    return found
+
+
 def encode_images(images, *, side=512, frame_side=256, max_frames=16):
     """PNG preview of the first image, plus evenly chosen smaller frames for a video batch."""
     import torch
@@ -839,9 +872,14 @@ class ModelRunObserve:
         clone = model.clone()
         app = application()
         last_id = [None]
+        sources = []
         def publish(trace):
             # Replace this run's snapshot; other runs remain in bounded history.
             trace["model_name"] = type(model.model.diffusion_model).__name__
+            if not sources and isinstance(workflow_graph, dict):
+                sources.append(source_images(workflow_graph))
+            if sources and sources[0]:
+                trace["source_images"] = sources[0]
             if isinstance(workflow_graph, dict) and unique_id is not None:
                 trace["native_rerun"] = True
             result = app.publish(trace, trace["model_name"], replace_id=last_id[0], note=prompt if isinstance(prompt, str) else None)

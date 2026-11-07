@@ -101,13 +101,14 @@ adds its own nodes for that run and queues it on ComfyUI. No ComfyUI tab needs t
 - **Choosing a workflow** fills the prompt bar with its prompt and the settings (the gear)
   with its seed, steps and size. Change any of them and press **Run**. Each image, video or
   audio file the workflow reads gets a picker beside the prompt, marked **needed** or
-  **optional**; your file goes to ComfyUI's input folder. A template's example file that is
-  not on this computer is left out, with the nodes that only process it, wherever the run
-  does not depend on it.
+  **optional**; your file goes to ComfyUI's input folder. An image's chip shows a thumbnail
+  of it, larger on hover, and your choice is kept when you come back while ComfyUI still has
+  the file. A template's example file that is not on this computer is left out, with the
+  nodes that only process it, wherever the run does not depend on it.
 - **While it runs**, the prompt bar shows ComfyUI's progress (each node, then each sampling
   step), and **Run** becomes **Cancel**, which stops it in ComfyUI. When it finishes, the
   capture opens: the denoiser's layers, every denoising step, the image, and where the image
-  reads the prompt. Observe's attention block is set to `auto`, which measures the first block
+  reads the prompt. An edit run shows its source picture beside the images being made. Observe's attention block is set to `auto`, which measures the first block
   whose attention reads the prompt.
 - **Open in ComfyUI ↗** shows the workflow on the canvas, in an open ComfyUI tab or a new one,
   to change it there.
@@ -323,7 +324,13 @@ tensor names in 3D.
 - **What each part added.** For a text layer, Model Run also records its attention and MLP
   outputs (256 features per token, each token's RMS exact). Run View draws the two parts
   above the field, as tall as their output is large next to the layer's output, and the
-  inspector lists them per token. Click a part to open its own grid.
+  inspector lists them per token. Click a part to open its own grid. An image classifier
+  (ViT) records each layer's attention the same way, per patch. A diffusion transformer's
+  blocks (Flux, Qwen-Image, Wan, SD3 and others whose blocks name an attention and an MLP)
+  have both parts measured on the first denoiser call. Those blocks scale each part by a
+  timestep gate before adding it, so the tiles show each part's own output size before that
+  gate, attention against MLP, with the block's total change beside them; they are not
+  shares of the block's change.
 - **Tensor Exploration Table** shows attention and activations as a navigable 3D matrix with
   a linked heatmap, 32 × 32 values per window. **Tensor Volume** stacks a tensor's recorded
   maps along one axis. Frames and channels can be stepped through and played.
@@ -339,7 +346,12 @@ tensor names in 3D.
   feature as a stripe, and each token's RMS beside it. The robust colour scale saturates at
   the 99th percentile so one huge channel does not wash out the rest; white ticks and the
   **Outlier channels** chips mark massive activations (over 10× their token's RMS). Click
-  anywhere, or use the arrow keys, to move the 3D window there.
+  anywhere, or use the arrow keys, to move the 3D window there. An image classifier's
+  layers get **Every patch × feature**: the class token and every patch by all of their
+  features, beside a map of each patch's RMS over the image the model received. The layer's
+  patch maps are kept as before.
+- **Recorded event replay** sits right under the visualizer, so the stage and its timeline
+  are read together.
 - **Layer Stack** and the timeline select a layer; the inspector shows paths, shapes, dtypes
   and values.
 - **What it predicted** shows the next-token distribution and a logit lens: the top token

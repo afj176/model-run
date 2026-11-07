@@ -1203,16 +1203,19 @@ export function frameDifferenceStory(means, indices) {
  * What a text layer's attention and MLP produced, beside the layer's output: each part's mean RMS over
  * tokens as a share of the output's, and per token. Null when the run did not record the parts.
  */
-export function layerParts(events, layerPath) {
+export function layerParts(events, layerPath, trace = null) {
   if (!layerPath) return null;
   const list = events || [];
   const output = list.find((e) => e.module === layerPath && !e.part);
   const found = ["attention", "mlp"]
     .map((kind) => list.find((e) => e.part_of === layerPath && e.part === kind))
     .filter(Boolean);
-  if (!found.length) return null;
+  if (!found.length) return blockParts(trace, layerPath, output);
+  // A text layer's grid, or an image layer's every-patch grid beside its maps.
+  const grid = (e) =>
+    e?.slices?.layout === "tokens" ? e.slices : (e?.slices?.patches ?? null);
   const rms = (e) =>
-    Array.isArray(e?.slices?.token_rms) ? e.slices.token_rms : null;
+    Array.isArray(grid(e)?.token_rms) ? grid(e).token_rms : null;
   const mean = (xs) => {
     const ok = (xs || []).filter(finite);
     return ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : null;
@@ -1228,7 +1231,7 @@ export function layerParts(events, layerPath) {
       share: base && m !== null ? m / base : null,
     };
   });
-  const labels = output?.slices?.row_labels || found[0].slices?.row_labels;
+  const labels = grid(output)?.row_labels || grid(found[0])?.row_labels;
   const rows = Math.max(...[output, ...found].map((e) => rms(e)?.length ?? 0));
   const tokens = Array.from({ length: rows }, (_, i) => ({
     label: labels?.[i] ?? `#${i}`,
@@ -1236,5 +1239,43 @@ export function layerParts(events, layerPath) {
     attention: rms(found.find((e) => e.part === "attention"))?.[i] ?? null,
     mlp: rms(found.find((e) => e.part === "mlp"))?.[i] ?? null,
   }));
-  return { layer: layerPath, output: output?.module ?? null, parts, tokens };
+  const patches = Boolean(
+    grid(output)?.patch_grid || grid(found[0])?.patch_grid,
+  );
+  return {
+    layer: layerPath,
+    output: output?.module ?? null,
+    parts,
+    tokens,
+    patches,
+  };
+}
+
+/**
+ * An image block's parts, measured once (no per-token table), from trace.block_parts. Image transformer
+ * blocks scale each part by a timestep gate before adding it, so a part's output is compared with the
+ * block's other part, not with the block's change: these are sizes before gating, not shares.
+ */
+function blockParts(trace, layerPath, output) {
+  const block = (trace?.block_parts || []).find((b) => b.block === layerPath);
+  if (!block) return null;
+  const largest = Math.max(...block.parts.map((part) => part.rms), 1e-12);
+  return {
+    layer: layerPath,
+    output: output?.module ?? layerPath,
+    measuredOnce: true,
+    basis: "before_gate",
+    change: block.update_rms ?? null,
+    parts: block.parts.map((part) => ({
+      path: part.path,
+      kind: part.kind,
+      label: part.kind === "mlp" ? "MLP" : "Attention",
+      rms: part.rms,
+      // Tile height: next to the block's larger part.
+      share: part.rms / largest,
+      // Only its size was measured: selecting it shows the block.
+      recorded: false,
+    })),
+    tokens: [],
+  };
 }

@@ -19,6 +19,8 @@ TRACE_VALUES = 262144
 MAX_TOKEN_ROWS = 128
 TOKEN_VALUES = 8388608  # per trace, across every layer
 ALL_FEATURES = 1 << 20
+# Image patches: a ViT's class token and every patch (a 32 x 32 grid and a few registers fit).
+MAX_PATCH_ROWS = 1040
 REFERENCE_ASSUMPTION = "Reference image tokens are assumed to follow the generated image and are not shown; the count matches the references this call received."
 PATCH_ASSUMPTION = "Patches are assumed to follow the class token in row order. The class token itself is not shown here."
 JOINT_ASSUMPTION = "This block carries text and image tokens together. Text is assumed to come first and is not shown; the count matches, and ComfyUI's Flux code uses this order."
@@ -105,7 +107,7 @@ class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
     def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False, token_features=None,
-                 parts=(), part_features=None):
+                 parts=(), part_features=None, patch_features=None):
         # Set when every tensor is known to be a convolutional block, such as inside a VAE.
         self.convolutional = convolutional
         self.remaining = max_values
@@ -123,6 +125,10 @@ class SliceRecorder:
         # A layer's attention and MLP outputs keep fewer features; their per-token RMS stays exact.
         self.parts, self.part_features = set(parts), part_features
         self._path = None
+        # Image patch layers also keep every patch by its features, from a budget of their own, so the
+        # patch maps they already record are unchanged.
+        self.patch_features = patch_features
+        self.patch_remaining = TOKEN_VALUES
 
     def _placed(self, tensor, latent_shape):
         # Some VAEs keep channels last in places; only name the axes when the shape really is the image's.
@@ -170,7 +176,7 @@ class SliceRecorder:
                 "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
                 "aggregate_measure": None, "aggregate": []}
 
-    def _token_record(self, tensor):
+    def _token_record(self, tensor, max_rows=MAX_TOKEN_ROWS, features=None, patch_grid=None):
         """Every token of a [B, T, D] (or [T, D]) text layer by the same evenly spaced features, exact, not averaged.
 
         Rows are the first tokens (up to MAX_TOKEN_ROWS): text comes first and padding last. Each row also
@@ -181,15 +187,16 @@ class SliceRecorder:
             state = state.unsqueeze(0)
         batch, length, depth = (int(n) for n in state.shape)
         chosen_batch = self.conditional_batch if self.conditional_batch is not None and self.conditional_batch < batch else 0
-        rows = min(length, MAX_TOKEN_ROWS)
-        budget = self.remaining if self.per_event is None else min(self.remaining, self.per_event)
-        limit = self.part_features if self.part_features and self._path in self.parts else self.token_features
+        rows = min(length, max_rows)
+        pool = "patch_remaining" if patch_grid is not None else "remaining"
+        budget = getattr(self, pool) if self.per_event is None else min(getattr(self, pool), self.per_event)
+        limit = features or (self.part_features if self.part_features and self._path in self.parts else self.token_features)
         cols = min(depth, limit, budget // rows)
         if cols < 1:
             return {"unavailable": "This trace's value budget was already spent on earlier layers."}
         features = _spaced(depth, cols)
         cols = len(features)
-        self.remaining -= rows * cols
+        setattr(self, pool, getattr(self, pool) - rows * cols)
         tokens = state[chosen_batch, :rows].to(dtype=torch.float32)
         values = tokens[:, torch.tensor(features, device=tokens.device)]
         magnitude = tokens.abs()
@@ -199,9 +206,30 @@ class SliceRecorder:
                 "values": _clean(values.reshape(-1).to(device="cpu").tolist()),
                 "token_rms": _clean(tokens.pow(2).mean(dim=-1).sqrt().to(device="cpu").tolist()),
                 "token_max_abs": _clean(magnitude.amax(dim=-1).to(device="cpu").tolist()),
-                "aggregate_axis": None, "aggregate_measure": None, "aggregate": []}
+                "aggregate_axis": None, "aggregate_measure": None, "aggregate": [],
+                **({"patch_grid": list(patch_grid), "row_labels": _patch_labels(rows, patch_grid)} if patch_grid else {})}
 
     def _record(self, tensor, latent_shape):
+        import torch
+        grid = self._patch_grid(tensor)
+        # A part of a patch layer (its attention, say): every patch, few features, each patch's RMS exact.
+        if grid is not None and self.part_features and self._path in self.parts:
+            return self._token_record(tensor, MAX_PATCH_ROWS, self.part_features, grid)
+        if grid is not None and self.patch_features:
+            record = self._record_placed(tensor, latent_shape)
+            if record is not None and "unavailable" not in record:
+                record["patches"] = self._token_record(tensor, MAX_PATCH_ROWS, self.patch_features, grid)
+            return record
+        return self._record_placed(tensor, latent_shape)
+
+    def _patch_grid(self, tensor):
+        """(prefix tokens, rows, cols) when this [B, T, D] tensor is a class token or two followed by image patches."""
+        if self.token_grid is None or tensor.ndim != 3:
+            return None
+        prefix, rows, cols = self.token_grid
+        return self.token_grid if int(tensor.shape[1]) == prefix + rows * cols and int(tensor.shape[1]) <= MAX_PATCH_ROWS else None
+
+    def _record_placed(self, tensor, latent_shape):
         import torch
         if self.token_features and (tensor.ndim == 2 or (tensor.ndim == 3 and self.sequence is None and self._placed(tensor, latent_shape) is None)):
             return self._token_record(tensor)
@@ -287,6 +315,17 @@ def validate_slices(record):
         if not isinstance(record["unavailable"], str) or len(record) != 1:
             raise ValueError("Invalid slice record")
         return
+    if "patches" in record:
+        # A patch layer's every-patch grid, beside its patch maps.
+        patches = record["patches"]
+        if not isinstance(patches, dict):
+            raise ValueError("Invalid patch grid")
+        if "unavailable" in patches:
+            validate_slices(patches)
+        elif patches.get("layout") != "tokens" or "patch_grid" not in patches:
+            raise ValueError("Invalid patch grid")
+        else:
+            validate_slices(patches)
     for field in ("row_axis", "col_axis", "assumption"):
         if record.get(field) is not None and not isinstance(record[field], str):
             raise ValueError("Invalid slice description")
@@ -354,8 +393,12 @@ def _validate_tokens(record):
     rows, cols, values = record.get("rows"), record.get("cols"), record.get("values")
     tokens, features = record.get("token_indices"), record.get("feature_indices")
     length, depth = record["source_rows"], record["source_cols"]
+    grid = record.get("patch_grid")
+    if grid is not None and (not isinstance(grid, list) or len(grid) != 3 or any(type(n) is not int or n < 0 for n in grid)
+                             or grid[1] < 1 or grid[2] < 1 or grid[0] + grid[1] * grid[2] != length):
+        raise ValueError("Invalid patch grid")
     if (record.get("axes") != [] or record.get("aggregate") != [] or type(rows) is not int or type(cols) is not int
-            or not 1 <= rows <= MAX_TOKEN_ROWS or not 1 <= cols <= depth or rows * cols > TOKEN_VALUES
+            or not 1 <= rows <= (MAX_PATCH_ROWS if grid else MAX_TOKEN_ROWS) or not 1 <= cols <= depth or rows * cols > TOKEN_VALUES
             or type(record.get("batch_index")) is not int or record["batch_index"] < 0):
         raise ValueError("Invalid token grid")
     if (not isinstance(tokens, list) or len(tokens) != rows or any(type(i) is not int or not 0 <= i < length for i in tokens)
@@ -373,3 +416,16 @@ def _validate_tokens(record):
     for value in (*values, *record["token_rms"], *record["token_max_abs"]):
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
             raise ValueError("Invalid slice value")
+
+
+def _patch_labels(rows, patch_grid):
+    """"CLS" for a class token (or "token N" for others), then "r3 c7" for each patch."""
+    prefix, _height, width = patch_grid
+    labels = []
+    for index in range(rows):
+        if index < prefix:
+            labels.append("CLS" if index == 0 else f"token {index}")
+        else:
+            row, col = divmod(index - prefix, width)
+            labels.append(f"r{row} c{col}")
+    return labels

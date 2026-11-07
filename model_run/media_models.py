@@ -267,10 +267,18 @@ class ImageClassifierAdapter(TorchModuleAdapter):
         grid = self.grid
         pixels = inputs["pixel_values"]
         token_grid = (1, grid[0], grid[1]) if grid else None
+        # Each layer keeps every patch by its features, and its attention is recorded beside it.
+        from .layer_parts import PART_FEATURES, layer_parts, order_parts
+        from .tensor_slices import ALL_FEATURES
+        parts = [p for p in layer_parts(self.model, module_paths) if p[2] == "attention"] if token_grid else []
+        watched = [*module_paths, *(p for p, _layer, _kind in parts)]
         def forward():
-            return capture_forward(self.model, {"pixel_values": pixels, "output_attentions": True}, module_paths, control=control,
-                                   max_tensor_elements=max_tensor_elements, slices=SliceRecorder(token_grid=token_grid))
+            return capture_forward(self.model, {"pixel_values": pixels, "output_attentions": True}, watched, control=control,
+                                   max_tensor_elements=max_tensor_elements, max_events=max(64, len(watched)),
+                                   slices=SliceRecorder(token_grid=token_grid, patch_features=ALL_FEATURES,
+                                                        parts=[p for p, _layer, _kind in parts], part_features=PART_FEATURES))
         output, trace = self._run(forward)
+        order_parts(trace, parts)
         logits = output.logits[0].detach().to(device="cpu", dtype=torch.float32)
         probabilities = torch.softmax(logits, dim=-1)
         values, indices = probabilities.topk(min(top_k, probabilities.numel()))

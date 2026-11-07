@@ -583,7 +583,8 @@ export default function Scene({
           }),
         );
         tile.position.set(x, baseY + h / 2, -5.8);
-        tile.userData.path = item.path;
+        // A part only measured for its size opens its block.
+        tile.userData.path = item.recorded === false ? flow.output : item.path;
         const edgeColor = picked ? C.outline : C.tileEdge;
         const edge = edges(geometry, edgeColor, 0.9);
         edge.position.copy(tile.position);
@@ -601,7 +602,9 @@ export default function Scene({
         add(name);
         if (!item.output && Number.isFinite(item.share)) {
           const size = makeLabel(
-            `${item.share >= 10 ? Math.round(item.share) : item.share.toFixed(2)}× the output's RMS`,
+            flow.basis === "before_gate"
+              ? `RMS ${Number(item.rms.toPrecision(3)).toLocaleString()} before gating`
+              : `${item.share >= 10 ? Math.round(item.share) : item.share.toFixed(2)}× the output's RMS`,
             { size: 24, color: "#b9b0dd", scale: 0.75 },
           );
           size.position.set(x, baseY - 0.82, -5.8);

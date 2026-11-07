@@ -138,6 +138,17 @@ export async function waitForPrompt(
   }
 }
 
+/** Where ComfyUI serves a file from its input folder, by the name a Load node takes ("sub/name.png"). */
+export function inputPreviewUrl(name) {
+  const cut = name.lastIndexOf("/");
+  const params = new URLSearchParams({
+    filename: cut >= 0 ? name.slice(cut + 1) : name,
+    subfolder: cut >= 0 ? name.slice(0, cut) : "",
+    type: "input",
+  });
+  return comfyUrl(`view?${params}`).href;
+}
+
 /** Put a file of yours into ComfyUI's input folder; the name a workflow's Load node takes. */
 export async function uploadInput(file) {
   const form = new FormData();

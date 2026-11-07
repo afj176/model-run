@@ -38,7 +38,12 @@ import Scene from "./Scene";
 import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
-import { Denoising, FeatureMaps, TextEncoderPanel } from "./ComfyPanels";
+import {
+  Denoising,
+  FeatureMaps,
+  SourceFigures,
+  TextEncoderPanel,
+} from "./ComfyPanels";
 import { AttentionLinks, LogitsPanel } from "./TextPanels";
 import Response from "./Response";
 import LocalLibrary from "./LocalLibrary";
@@ -66,6 +71,7 @@ import Unlock from "./Unlock";
 import WorkflowBar from "./WorkflowBar";
 import {
   cancelPrompt,
+  inputPreviewUrl,
   openInComfy,
   queuePrompt,
   textModelPrompt,
@@ -203,8 +209,10 @@ function PartsTable({ info, onPick }) {
     <section className="parts-table" aria-label="What each part added">
       <h3>What each part added</h3>
       <p>
-        RMS per token of what attention and the MLP produced, beside the layer's
-        output. A long bar means that part changed the token a lot.
+        RMS per {info.patches ? "patch" : "token"} of what{" "}
+        {info.parts.map((p) => p.label).join(" and ")} produced, beside the
+        layer's output. A long bar means that part changed the{" "}
+        {info.patches ? "patch" : "token"} a lot.
       </p>
       <div
         className="parts-grid"
@@ -315,6 +323,26 @@ export function App() {
           inputs: info.inputs || [],
         });
         setWorkflowSettings({ ...(saved.settings || {}), files: {} });
+        // Files you chose come back while their Load node is still there and ComfyUI still has them.
+        const nodes = new Set((info.inputs || []).map((input) => input.node));
+        Promise.all(
+          Object.entries(saved.settings?.files || {})
+            .filter(
+              ([node, name]) => nodes.has(node) && typeof name === "string",
+            )
+            .map(([node, name]) =>
+              fetch(inputPreviewUrl(name), { method: "HEAD" })
+                .then((r) => (r.ok ? [node, name] : null))
+                .catch(() => null),
+            ),
+        ).then((kept) => {
+          const files = Object.fromEntries(kept.filter(Boolean));
+          if (Object.keys(files).length)
+            setWorkflowSettings((s) => ({
+              ...s,
+              files: { ...files, ...(s.files || {}) },
+            }));
+        });
       })
       .catch(() => {});
   }, [state?.host]);
@@ -331,7 +359,7 @@ export function App() {
                   workflow: undefined,
                   inputs: undefined,
                 },
-                settings: { ...workflowSettings, files: undefined },
+                settings: workflowSettings,
                 prompt,
               }
             : null,
@@ -497,8 +525,8 @@ export function App() {
     const parent = nodes.find(
       (n) => n.path === selected || selected?.startsWith(n.path + "."),
     );
-    return layerParts(events, parent?.path);
-  }, [nodes, selected, events]);
+    return layerParts(events, parent?.path, trace);
+  }, [nodes, selected, events, trace]);
   const expandedComponents = useMemo(() => {
     const parent = nodes.find(
       (n) => n.path === selected || selected.startsWith(n.path + "."),
@@ -1862,11 +1890,17 @@ export function App() {
               >
                 {[
                   ...partsLayer.parts.map((part) => ({
-                    path: part.path,
+                    path:
+                      part.recorded === false ? partsLayer.output : part.path,
                     label: part.label,
-                    note: Number.isFinite(part.share)
-                      ? `${part.share.toFixed(2)}×`
-                      : null,
+                    // A part measured only for its size opens its block, so it is never the selection.
+                    summary: part.recorded === false,
+                    note:
+                      partsLayer.basis === "before_gate"
+                        ? `RMS ${Number(part.rms.toPrecision(3)).toLocaleString()}`
+                        : Number.isFinite(part.share)
+                          ? `${part.share.toFixed(2)}×`
+                          : null,
                   })),
                   partsLayer.output && {
                     path: partsLayer.output,
@@ -1877,11 +1911,15 @@ export function App() {
                   .map((c) => (
                     <button
                       key={c.path}
-                      className={selected === c.path ? "active" : ""}
+                      className={
+                        selected === c.path && !c.summary ? "active" : ""
+                      }
                       onClick={() => choose(c.path)}
                       title={
                         c.note
-                          ? `${c.label}: its output's RMS is ${c.note} the layer output's, averaged over tokens`
+                          ? partsLayer.basis === "before_gate"
+                            ? `${c.label}: its output's RMS on the first denoiser call, before the block's gate scales it`
+                            : `${c.label}: its output's RMS is ${c.note} the layer output's, averaged over tokens`
                           : "The layer's output: what it hands to the next layer"
                       }
                     >
@@ -1992,7 +2030,19 @@ export function App() {
                     </>
                   )}
                 </dl>
-                {partsLayer && <PartsTable info={partsLayer} onPick={choose} />}
+                {partsLayer?.tokens.length > 0 && (
+                  <PartsTable info={partsLayer} onPick={choose} />
+                )}
+                {partsLayer?.measuredOnce && (
+                  <p className="micro">
+                    Attention and MLP sizes are each part's output RMS on the
+                    first denoiser call, before the block's timestep gate scales
+                    it, so they compare with each other rather than with the
+                    block.
+                    {Number.isFinite(partsLayer.change) &&
+                      ` The whole block changed its image stream by RMS ${Number(partsLayer.change.toPrecision(3)).toLocaleString()}.`}
+                  </p>
+                )}
                 {activeNode?.parameters?.length > 0 && (
                   <>
                     <h3>Local parameters</h3>
@@ -2151,6 +2201,64 @@ export function App() {
           </aside>
         </div>
       )}
+      {/* The replay drives the visualizer, so it sits right under it. */}
+      {view !== "matrix" && view !== "compare" && (
+        <footer className="timeline panel">
+          <Button
+            icon={playing ? Pause : Play}
+            disabled={!events.length}
+            aria-label={playing ? "Pause replay" : "Play replay"}
+            onClick={() => {
+              if (eventIndex === events.length - 1) setEventIndex(0);
+              setPlaying((p) => !p);
+            }}
+          />
+          <span className="timeline-count">
+            {events.length ? eventIndex + 1 : 0} / {events.length}
+            <small>Recorded event replay</small>
+          </span>
+          <div className="scrubber">
+            <input
+              aria-label="Recorded event"
+              type="range"
+              min="0"
+              max={Math.max(0, events.length - 1)}
+              value={eventIndex}
+              disabled={!events.length}
+              onChange={(e) => {
+                const i = Number(e.target.value);
+                setEventIndex(i);
+                setSelected(eventPath(events[i]));
+                setPlaying(false);
+              }}
+            />
+            <div>
+              <span>{short(events[0]?.label ?? events[0]?.module)}</span>
+              <span>
+                {event?.denoiser_call !== undefined
+                  ? `Denoiser call ${event.denoiser_call}`
+                  : event?.step !== undefined
+                    ? `Diffusion step ${event.step}`
+                    : short(event?.label ?? event?.module)}
+              </span>
+              <span>
+                {short(events.at(-1)?.label ?? events.at(-1)?.module)}
+              </span>
+            </div>
+          </div>
+          <select
+            aria-label="Replay speed"
+            value={speed}
+            onChange={(e) => setSpeed(Number(e.target.value))}
+          >
+            {[0.5, 1, 2, 4].map((n) => (
+              <option key={n} value={n}>
+                {n}×
+              </option>
+            ))}
+          </select>
+        </footer>
+      )}
       <section className="output panel">
         {(() => {
           const inSession =
@@ -2206,12 +2314,27 @@ export function App() {
             panels.push(<FeatureMaps key="features" trace={trace} />);
           if (!panels.length && trace?.preview?.mime === "image/png")
             panels.push(
-              <img
-                key="preview"
-                className="output-image"
-                alt="Decoded pipeline output"
-                src={`data:image/png;base64,${trace.preview.base64}`}
-              />,
+              trace.source_images?.length ? (
+                <div key="preview" className="denoising-grid output-pair">
+                  <SourceFigures trace={trace} />
+                  <figure>
+                    <img
+                      alt="Decoded pipeline output"
+                      src={`data:image/png;base64,${trace.preview.base64}`}
+                    />
+                    <figcaption>
+                      <b>Output</b>
+                    </figcaption>
+                  </figure>
+                </div>
+              ) : (
+                <img
+                  key="preview"
+                  className="output-image"
+                  alt="Decoded pipeline output"
+                  src={`data:image/png;base64,${trace.preview.base64}`}
+                />
+              ),
             );
           if (!panels.length)
             return (
@@ -2347,63 +2470,6 @@ export function App() {
           </details>
         </div>
       </section>
-      {view !== "matrix" && view !== "compare" && (
-        <footer className="timeline panel">
-          <Button
-            icon={playing ? Pause : Play}
-            disabled={!events.length}
-            aria-label={playing ? "Pause replay" : "Play replay"}
-            onClick={() => {
-              if (eventIndex === events.length - 1) setEventIndex(0);
-              setPlaying((p) => !p);
-            }}
-          />
-          <span className="timeline-count">
-            {events.length ? eventIndex + 1 : 0} / {events.length}
-            <small>Recorded event replay</small>
-          </span>
-          <div className="scrubber">
-            <input
-              aria-label="Recorded event"
-              type="range"
-              min="0"
-              max={Math.max(0, events.length - 1)}
-              value={eventIndex}
-              disabled={!events.length}
-              onChange={(e) => {
-                const i = Number(e.target.value);
-                setEventIndex(i);
-                setSelected(eventPath(events[i]));
-                setPlaying(false);
-              }}
-            />
-            <div>
-              <span>{short(events[0]?.label ?? events[0]?.module)}</span>
-              <span>
-                {event?.denoiser_call !== undefined
-                  ? `Denoiser call ${event.denoiser_call}`
-                  : event?.step !== undefined
-                    ? `Diffusion step ${event.step}`
-                    : short(event?.label ?? event?.module)}
-              </span>
-              <span>
-                {short(events.at(-1)?.label ?? events.at(-1)?.module)}
-              </span>
-            </div>
-          </div>
-          <select
-            aria-label="Replay speed"
-            value={speed}
-            onChange={(e) => setSpeed(Number(e.target.value))}
-          >
-            {[0.5, 1, 2, 4].map((n) => (
-              <option key={n} value={n}>
-                {n}×
-              </option>
-            ))}
-          </select>
-        </footer>
-      )}
       {modal && (
         <Modal
           title={

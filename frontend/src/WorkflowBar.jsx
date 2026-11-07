@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { inputPreviewUrl } from "./comfyRun";
 import {
   FileAudio,
   FileImage,
@@ -14,7 +15,14 @@ const short = (name) =>
 /** One file a workflow reads: a chip that picks it, shows it, and clears it. */
 function FileChip({ input, chosen, onPick, onClear }) {
   const [uploading, setUploading] = useState(false);
+  const [broken, setBroken] = useState("");
   const Icon = ICONS[input.kind] || FileImage;
+  // The picture this chip stands for: the one you chose, or the workflow's own.
+  const shown = chosen || (input.present ? input.file : null);
+  const preview =
+    input.kind === "image" && shown && broken !== shown
+      ? inputPreviewUrl(shown)
+      : null;
   const label = input.kind[0].toUpperCase() + input.kind.slice(1);
   const state = chosen
     ? short(chosen.split("/").pop())
@@ -30,7 +38,16 @@ function FileChip({ input, chosen, onPick, onClear }) {
       className={`file-chip ${chosen ? "chosen" : ""} ${input.needed && !input.present && !chosen ? "needed" : ""}`}
     >
       <label title={`${input.title} (${input.node}) reads this ${input.kind}`}>
-        <Icon size={16} aria-hidden="true" />
+        {preview ? (
+          <img
+            className="chip-thumb"
+            src={preview}
+            alt=""
+            onError={() => setBroken(shown)}
+          />
+        ) : (
+          <Icon size={16} aria-hidden="true" />
+        )}
         <b>{label}</b>
         <span>{state}</span>
         <input
@@ -50,6 +67,11 @@ function FileChip({ input, chosen, onPick, onClear }) {
           }}
         />
       </label>
+      {preview && (
+        <span className="chip-preview" aria-hidden="true">
+          <img src={preview} alt="" />
+        </span>
+      )}
       {chosen && (
         <button
           className="chip-clear"

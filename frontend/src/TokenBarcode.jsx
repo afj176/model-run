@@ -45,6 +45,83 @@ function stageMid(node) {
   );
 }
 
+/** Where in the image a layer is strong: each patch tinted by its RMS over all features, over the input. */
+function PatchMap({ model, grid, image, selected, onPick }) {
+  const [prefix, rows, cols] = grid;
+  const ref = useRef(null);
+  const SIZE = 176;
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = SIZE * dpr;
+    cv.height = SIZE * dpr;
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const values = model.rms.slice(prefix, prefix + rows * cols);
+    const finite = values.filter(Number.isFinite);
+    const low = Math.min(...finite),
+      high = Math.max(...finite, low + 1e-9);
+    const cw = SIZE / cols,
+      ch = SIZE / rows;
+    const paint = () => {
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      ctx.fillStyle = "#261f42";
+      ctx.fillRect(0, 0, SIZE, SIZE);
+      if (picture?.complete && picture.naturalWidth)
+        ctx.drawImage(picture, 0, 0, SIZE, SIZE);
+      for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++) {
+          const v = values[r * cols + c];
+          const t = Number.isFinite(v) ? (v - low) / (high - low) : 0;
+          ctx.fillStyle = `rgba(31, 168, 140, ${(picture ? 0.08 : 0.25) + 0.72 * t})`;
+          ctx.fillRect(c * cw, r * ch, cw, ch);
+        }
+      const at = (selected?.row ?? -1) - prefix;
+      if (at >= 0 && at < rows * cols) {
+        ctx.strokeStyle = "#ff4fa3";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          (at % cols) * cw + 1,
+          Math.floor(at / cols) * ch + 1,
+          cw - 2,
+          ch - 2,
+        );
+      }
+    };
+    let picture = null;
+    if (image) {
+      picture = new Image();
+      picture.onload = paint;
+      picture.src = image;
+    }
+    paint();
+  }, [model, prefix, rows, cols, image, selected?.row]);
+  return (
+    <figure className="patch-map">
+      <canvas
+        ref={ref}
+        style={{ width: SIZE, height: SIZE }}
+        role="img"
+        aria-label={`Each of the ${rows} × ${cols} patches tinted by its RMS. Click a patch to select its row.`}
+        onClick={(e) => {
+          const b = e.currentTarget.getBoundingClientRect();
+          const c = Math.min(
+            cols - 1,
+            Math.floor(((e.clientX - b.left) / b.width) * cols),
+          );
+          const r = Math.min(
+            rows - 1,
+            Math.floor(((e.clientY - b.top) / b.height) * rows),
+          );
+          onPick(prefix + r * cols + c, selected?.col ?? 0);
+        }}
+      />
+      <figcaption>Patch RMS over the input · brighter is stronger</figcaption>
+    </figure>
+  );
+}
+
 function readScale() {
   try {
     const saved = localStorage.getItem(SCALE_KEY);
@@ -55,7 +132,16 @@ function readScale() {
 }
 
 /** Every token of a text layer as a row and every recorded feature as a stripe, linked to the 3D window. */
-export default function TokenBarcode({ event, view, selected, onPick }) {
+export default function TokenBarcode({
+  event,
+  view,
+  selected,
+  onPick,
+  image = null,
+}) {
+  // An image layer: [prefix tokens, patch rows, patch columns]. Rows are patches, not words.
+  const patchGrid = event?.patch_grid ?? null;
+  const unit = patchGrid ? "patches" : "tokens";
   const model = useMemo(() => barcodeModel(event), [event]);
   const channels = useMemo(
     () => (model ? outlierChannels(model) : []),
@@ -77,7 +163,7 @@ export default function TokenBarcode({ event, view, selected, onPick }) {
   }, [model !== null]);
 
   const rowH = model
-    ? Math.max(5, Math.min(22, Math.floor(380 / model.rows)))
+    ? Math.max(patchGrid ? 2 : 5, Math.min(22, Math.floor(380 / model.rows)))
     : 0;
   // Narrow screens give the stripes more of the width.
   const LABEL_W = width && width < 480 ? 72 : 104;
@@ -86,8 +172,26 @@ export default function TokenBarcode({ event, view, selected, onPick }) {
   const height = model ? model.rows * rowH : 0;
   const colAt = (x) => Math.floor(((x - LABEL_W) / plotW) * (model?.cols ?? 0));
   const xOf = (c) => LABEL_W + (c / model.cols) * plotW;
-  const showLabel = (r) =>
-    rowH >= 11 || r % Math.ceil(11 / rowH) === 0 || r === selected?.row;
+  // Patches are labelled once per row of the image (as often as labels fit); tokens while they fit.
+  const patchEvery = patchGrid
+    ? Math.max(1, Math.ceil(13 / (rowH * patchGrid[2])))
+    : 1;
+  const showLabel = (r) => {
+    if (!patchGrid)
+      return (
+        rowH >= 11 || r % Math.ceil(11 / rowH) === 0 || r === selected?.row
+      );
+    const [prefix, , cols] = patchGrid;
+    if (r < prefix) return r === 0;
+    const offset = r - prefix;
+    const row = offset / cols;
+    // The first patch row sits right under the class token; leave it unlabelled when they would touch.
+    return (
+      offset % cols === 0 &&
+      row % patchEvery === 0 &&
+      (row > 0 || prefix * rowH >= 13)
+    );
+  };
 
   // The stripes change with the data, the scale and the width; the overlays redraw without them.
   const stripes = useMemo(() => {
@@ -239,13 +343,21 @@ export default function TokenBarcode({ event, view, selected, onPick }) {
     <section className="token-barcode" aria-label="Every token by feature">
       <header>
         <div>
-          <h3>Every token × feature</h3>
+          <h3>
+            {patchGrid ? "Every patch × feature" : "Every token × feature"}
+          </h3>
           <p>
-            {model.rows} tokens · {model.cols.toLocaleString()}{" "}
+            {patchGrid
+              ? `${patchGrid[1]} × ${patchGrid[2]} patches${patchGrid[0] ? ` and ${patchGrid[0] === 1 ? "the class token" : `${patchGrid[0]} other tokens`}` : ""}`
+              : `${model.rows} tokens`}{" "}
+            · {model.cols.toLocaleString()}{" "}
             {subsampled
               ? `of ${event.source_shape.at(-1).toLocaleString()} features, evenly spaced`
               : "features"}{" "}
-            · exact values. Click to move the 3D window there.
+            · exact values.{" "}
+            {view
+              ? "Click to move the 3D window there."
+              : "Click a row or a patch on the map to follow it."}
           </p>
         </div>
         <div
@@ -280,72 +392,83 @@ export default function TokenBarcode({ event, view, selected, onPick }) {
             <button
               key={ch.col}
               onClick={() => onPick(ch.row, ch.col)}
-              title={`Feature #${ch.feature} is over 10× the token's RMS in ${ch.tokens} of ${model.rows} tokens. Click to select its largest value.`}
+              title={`Feature #${ch.feature} is over 10× the RMS in ${ch.tokens} of ${model.rows} ${unit}. Click to select its largest value.`}
             >
-              <b>#{ch.feature}</b> {ch.tokens} of {model.rows} tokens · peak{" "}
+              <b>#{ch.feature}</b> {ch.tokens} of {model.rows} {unit} · peak{" "}
               {fmt(ch.peak)}
             </button>
           ))}
         </div>
       )}
-      <div className="token-barcode-plot" ref={box}>
-        <canvas
-          ref={canvas}
-          style={{ height }}
-          tabIndex={0}
-          role="img"
-          aria-label={`${model.rows} tokens by ${model.cols} features. Arrow keys move the selected cell.`}
-          onMouseMove={(e) => setHover(pointAt(e))}
-          onMouseLeave={() => setHover(null)}
-          onClick={(e) => {
-            const p = pointAt(e);
-            if (p) onPick(p.row, p.col);
-          }}
-          onKeyDown={(e) => {
-            const step = e.shiftKey
-              ? Math.max(1, Math.round(model.cols / 32))
-              : 1;
-            const keys = {
-              ArrowLeft: [0, -step],
-              ArrowRight: [0, step],
-              ArrowUp: [-1, 0],
-              ArrowDown: [1, 0],
-            };
-            if (!keys[e.key]) return;
-            e.preventDefault();
-            move(...keys[e.key]);
-          }}
-        />
-        {hover && (
-          <div
-            className="token-barcode-tip"
-            style={{
-              left: Math.max(0, Math.min(hover.x + 14, width - 300)),
-              maxWidth: width,
-              top: Math.max(0, hover.y - 34),
-            }}
-          >
-            <b>“{model.labels[hover.row]}”</b> · #{model.features[hover.col]}{" "}
-            <b>{fmt(hv)}</b>
-            {model.rms[hover.row] > 0 &&
-              ` · ${fmt(Math.abs(hv) / model.rms[hover.row])}× its RMS`}
-            {hover.span &&
-              ` · strongest of #${model.features[hover.span[0]]}–#${model.features[hover.span[1]]}`}
-          </div>
+      <div className={`token-barcode-body ${patchGrid ? "with-map" : ""}`}>
+        {patchGrid && (
+          <PatchMap
+            model={model}
+            grid={patchGrid}
+            image={image}
+            selected={selected}
+            onPick={onPick}
+          />
         )}
-        <div
-          className="token-barcode-axis"
-          style={{ marginLeft: LABEL_W, width: plotW }}
-        >
-          {ticks.map((c, i) => (
-            <span
-              key={i}
-              style={{ left: `${(c / Math.max(1, model.cols - 1)) * 100}%` }}
+        <div className="token-barcode-plot" ref={box}>
+          <canvas
+            ref={canvas}
+            style={{ height }}
+            tabIndex={0}
+            role="img"
+            aria-label={`${model.rows} tokens by ${model.cols} features. Arrow keys move the selected cell.`}
+            onMouseMove={(e) => setHover(pointAt(e))}
+            onMouseLeave={() => setHover(null)}
+            onClick={(e) => {
+              const p = pointAt(e);
+              if (p) onPick(p.row, p.col);
+            }}
+            onKeyDown={(e) => {
+              const step = e.shiftKey
+                ? Math.max(1, Math.round(model.cols / 32))
+                : 1;
+              const keys = {
+                ArrowLeft: [0, -step],
+                ArrowRight: [0, step],
+                ArrowUp: [-1, 0],
+                ArrowDown: [1, 0],
+              };
+              if (!keys[e.key]) return;
+              e.preventDefault();
+              move(...keys[e.key]);
+            }}
+          />
+          {hover && (
+            <div
+              className="token-barcode-tip"
+              style={{
+                left: Math.max(0, Math.min(hover.x + 14, width - 300)),
+                maxWidth: width,
+                top: Math.max(0, hover.y - 34),
+              }}
             >
-              #{model.features[c]}
-            </span>
-          ))}
-          <em style={{ left: `calc(100% + ${RMS_W / 2}px)` }}>RMS</em>
+              <b>“{model.labels[hover.row]}”</b> · #{model.features[hover.col]}{" "}
+              <b>{fmt(hv)}</b>
+              {model.rms[hover.row] > 0 &&
+                ` · ${fmt(Math.abs(hv) / model.rms[hover.row])}× its RMS`}
+              {hover.span &&
+                ` · strongest of #${model.features[hover.span[0]]}–#${model.features[hover.span[1]]}`}
+            </div>
+          )}
+          <div
+            className="token-barcode-axis"
+            style={{ marginLeft: LABEL_W, width: plotW }}
+          >
+            {ticks.map((c, i) => (
+              <span
+                key={i}
+                style={{ left: `${(c / Math.max(1, model.cols - 1)) * 100}%` }}
+              >
+                #{model.features[c]}
+              </span>
+            ))}
+            <em style={{ left: `calc(100% + ${RMS_W / 2}px)` }}>RMS</em>
+          </div>
         </div>
       </div>
       <footer className="token-barcode-legend">
