@@ -2,7 +2,12 @@ import { useState } from "react";
 import { ArrowClockwise } from "@phosphor-icons/react";
 import { api } from "./api";
 import { formatBytes } from "./installData";
-import { formatCount, groupArtifacts, groupOf } from "./libraryData";
+import {
+  formatCount,
+  groupArtifacts,
+  groupOf,
+  withoutPackageFiles,
+} from "./libraryData";
 
 function InspectSummary({ report }) {
   const s = report.summary;
@@ -68,7 +73,7 @@ export default function LocalLibrary({
 }) {
   const [search, setSearch] = useState("");
   const [inspected, setInspected] = useState(null);
-  const artifacts = catalog.artifacts
+  const artifacts = withoutPackageFiles(catalog.artifacts)
     .filter(
       (a) =>
         !a.relative_path?.includes("/.cache/") &&

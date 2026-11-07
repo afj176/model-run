@@ -2539,7 +2539,7 @@ main {
 }
 @media (max-width: 900px) {
   .response-detail {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -3760,4 +3760,15 @@ i.after {
 }
 .inspect-summary details {
   margin-top: 10px;
+}
+
+/* Long values in Run Metrics stay clear of the scrollbar. */
+.metrics {
+  padding-right: 14px;
+}
+
+/* Grid items default to their widest content; the output panels shrink instead, and wide charts scroll in place. */
+.output > *,
+.output-stack > * {
+  min-width: 0;
 }

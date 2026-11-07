@@ -56,3 +56,29 @@ test("workflows fall into sections by how close they are to ready", () => {
   assert.equal(sectionOf({ missing: 3, installable: 3 }), "more");
   assert.equal(sectionOf({ missing: 2, installable: 1 }), "blocked");
 });
+
+import { withoutPackageFiles } from "../src/libraryData.js";
+
+test("a package folder stands for the files inside it", () => {
+  const artifacts = [
+    {
+      name: "Qwen3-0.6B",
+      format: "local_package",
+      relative_path: "text_encoders/Qwen3-0.6B",
+    },
+    {
+      name: "model.safetensors",
+      format: "safetensors",
+      relative_path: "text_encoders/Qwen3-0.6B/model.safetensors",
+    },
+    {
+      name: "Qwen3-0.6B-extra.safetensors",
+      format: "safetensors",
+      relative_path: "text_encoders/Qwen3-0.6B-extra.safetensors",
+    },
+  ];
+  assert.deepEqual(
+    withoutPackageFiles(artifacts).map((a) => a.name),
+    ["Qwen3-0.6B", "Qwen3-0.6B-extra.safetensors"],
+  );
+});

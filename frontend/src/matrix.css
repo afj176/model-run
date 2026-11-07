@@ -1344,3 +1344,20 @@ button.matrix-dot:hover i {
   color: var(--stage-muted, #c9c1e6);
   font-size: 11px;
 }
+
+/* Narrow screens: the stage's title line wraps and the layer timeline scrolls in its own row. */
+@media (max-width: 640px) {
+  .matrix-meta {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .matrix-meta span {
+    padding: 0 8px;
+  }
+  .matrix-track-dots {
+    padding: 0 4px;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+}

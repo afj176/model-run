@@ -60,3 +60,15 @@ export const sectionOf = (w) =>
       : w.missing === 1
         ? "one"
         : "more";
+
+/** Leave out files inside a listed package folder: the package row stands for them. */
+export function withoutPackageFiles(artifacts) {
+  const packages = artifacts
+    .filter((a) => a.format === "local_package" && a.relative_path)
+    .map((a) => `${a.relative_path}/`);
+  return artifacts.filter(
+    (a) =>
+      a.format === "local_package" ||
+      !packages.some((p) => (a.relative_path || "").startsWith(p)),
+  );
+}

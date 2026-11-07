@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { guardWheel } from "./wheelGuard";
 
 // All geometry is derived from the provided matrix; nulls are missing, not zero.
 // The container should provide a definite width and height.
@@ -44,7 +45,7 @@ export default function MatrixScene({
     renderer.domElement.setAttribute("role", "img");
     renderer.domElement.setAttribute(
       "aria-label",
-      "Interactive 3D matrix. Drag to orbit, right-drag to pan and scroll to zoom. Use the heatmap for keyboard selection.",
+      "Interactive 3D matrix. Drag to orbit, right-drag to pan, and Ctrl + scroll (or click first, then scroll) to zoom. Use the heatmap for keyboard selection.",
     );
     host.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
@@ -55,6 +56,7 @@ export default function MatrixScene({
     controls.dampingFactor = 0.09;
     controls.minDistance = 5;
     controls.maxDistance = 48;
+    const releaseWheel = guardWheel(renderer.domElement, controls);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.target.copy(TARGET);
     scene.add(new THREE.HemisphereLight(0xe9e4ff, 0x2a1f4d, 1.5));
@@ -156,6 +158,7 @@ export default function MatrixScene({
       renderer.domElement.removeEventListener("pointerdown", pointerDown);
       renderer.domElement.removeEventListener("pointerup", pointerUp);
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
+      releaseWheel();
       controls.dispose();
       disposeGroup(content);
       renderer.dispose();

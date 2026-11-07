@@ -194,7 +194,7 @@ test("module report covers prediction, lens, activations and cross-attention", (
   assert.match(html, /first became the top guess at layer 0/);
   assert.match(html, /How the answer formed/);
   assert.match(html, /Where the prompt is read/);
-  assert.match(html, /“␣cat” is read most at the top left/);
+  assert.match(html, /“cat” is read most at the top left/);
   assert.match(html, /Text share/);
   assert.match(html, /Activations/);
   assert.match(html, /Change between consecutive calls/);

@@ -458,6 +458,21 @@ export function App() {
     });
     setCompanions({ module: moduleTrace, generation: generationTrace });
   }
+  const loadedTask = state?.loaded?.task;
+  const settingsFor = {
+    text: !loadedTask || loadedTask === "text",
+    diffusion: !loadedTask || loadedTask === "diffusion",
+  };
+  // Run View draws layer outputs, so a Run's own layer capture opens there instead of its attention probe.
+  function showRunView() {
+    setView("model");
+    if (
+      session?.ids?.module &&
+      trace?.kind === "attention_capture" &&
+      Object.values(session.ids).includes(traceId)
+    )
+      openTrace(session.ids.module, layer);
+  }
   async function openTrace(id, atLayer = null) {
     selectedTrace.current = id;
     const t = await api(`traces/${id}`);
@@ -890,7 +905,7 @@ export function App() {
           <span className="toolbar-rule" />
           <button
             className={view !== "matrix" && view !== "compare" ? "active" : ""}
-            onClick={() => setView("model")}
+            onClick={showRunView}
             aria-pressed={view !== "matrix" && view !== "compare"}
           >
             <ArrowsClockwise size={19} /> Run View
@@ -1298,7 +1313,11 @@ export function App() {
                   <dt>Runtime</dt>
                   <dd>PyTorch {trace?.torch_version || "—"}</dd>
                   <dt>Host elapsed</dt>
-                  <dd>{num(trace?.elapsed_host_seconds)} s</dd>
+                  <dd>
+                    {Number.isFinite(trace?.elapsed_host_seconds)
+                      ? `${num(trace.elapsed_host_seconds)} s`
+                      : "—"}
+                  </dd>
                   <dt>Recorded events</dt>
                   <dd>{events.length}</dd>
                   <dt>Dropped events</dt>
@@ -1482,7 +1501,7 @@ export function App() {
                           : "Runtime containment · no activation captured"}
                   </span>
                   <span>
-                    Drag to orbit · right-drag to pan · scroll to zoom
+                    Drag to orbit · right-drag to pan · Ctrl + scroll to zoom
                   </span>
                 </div>
                 {event &&
@@ -2131,23 +2150,25 @@ export function App() {
                 at supported runtime boundaries.
               </p>
               <div className="settings-grid">
-                <Field label="Text input">
-                  <select
-                    value={inputMode}
-                    onChange={(e) => setInputMode(e.target.value)}
-                  >
-                    <option value="raw">Raw prompt</option>
-                    <option
-                      value="chat"
-                      disabled={state?.loaded?.chat_template === false}
+                {settingsFor.text && (
+                  <Field label="Text input">
+                    <select
+                      value={inputMode}
+                      onChange={(e) => setInputMode(e.target.value)}
                     >
-                      Tokenizer chat template
-                      {state?.loaded?.chat_template === false
-                        ? " (not available for this tokenizer)"
-                        : ""}
-                    </option>
-                  </select>
-                </Field>
+                      <option value="raw">Raw prompt</option>
+                      <option
+                        value="chat"
+                        disabled={state?.loaded?.chat_template === false}
+                      >
+                        Tokenizer chat template
+                        {state?.loaded?.chat_template === false
+                          ? " (not available for this tokenizer)"
+                          : ""}
+                      </option>
+                    </select>
+                  </Field>
+                )}
                 <Field label="Values per event">
                   <select
                     value={elements}
@@ -2158,48 +2179,56 @@ export function App() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Response length">
-                  <select
-                    value={responseTokens}
-                    onChange={(e) => setResponseTokens(Number(e.target.value))}
-                    aria-label="Response length"
-                  >
-                    {[32, 48, 96, 160, 256].map((n) => (
-                      <option key={n} value={n}>
-                        {n} tokens
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Diffusion steps">
-                  <input
-                    type="number"
-                    min="1"
-                    max="32"
-                    value={steps}
-                    onChange={(e) => setSteps(Number(e.target.value))}
-                  />
-                </Field>
-                <Field label="Image size">
-                  <select
-                    value={size}
-                    onChange={(e) => setSize(Number(e.target.value))}
-                  >
-                    {[64, 128, 256, 512].map((n) => (
-                      <option key={n}>{n}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Seed">
-                  <input
-                    type="number"
-                    min="0"
-                    max="2147483647"
-                    value={seed}
-                    onChange={(e) => setSeed(Number(e.target.value))}
-                  />
-                </Field>
-                {state?.loaded?.task !== "text" && (
+                {settingsFor.text && (
+                  <Field label="Response length">
+                    <select
+                      value={responseTokens}
+                      onChange={(e) =>
+                        setResponseTokens(Number(e.target.value))
+                      }
+                      aria-label="Response length"
+                    >
+                      {[32, 48, 96, 160, 256].map((n) => (
+                        <option key={n} value={n}>
+                          {n} tokens
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {settingsFor.diffusion && (
+                  <>
+                    <Field label="Diffusion steps">
+                      <input
+                        type="number"
+                        min="1"
+                        max="32"
+                        value={steps}
+                        onChange={(e) => setSteps(Number(e.target.value))}
+                      />
+                    </Field>
+                    <Field label="Image size">
+                      <select
+                        value={size}
+                        onChange={(e) => setSize(Number(e.target.value))}
+                      >
+                        {[64, 128, 256, 512].map((n) => (
+                          <option key={n}>{n}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Seed">
+                      <input
+                        type="number"
+                        min="0"
+                        max="2147483647"
+                        value={seed}
+                        onChange={(e) => setSeed(Number(e.target.value))}
+                      />
+                    </Field>
+                  </>
+                )}
+                {settingsFor.diffusion && (
                   <Field label="Cross-attention map">
                     <select
                       value={crossModule}
@@ -2218,17 +2247,19 @@ export function App() {
                   </Field>
                 )}
               </div>
-              <p>
-                Text captures accept up to 128 tokens.{" "}
-                {capturePaths.length
-                  ? `${capturePaths.length} components selected.`
-                  : "The first 32 numbered components are selected automatically."}{" "}
-                Use Layer Stack to choose modules.
-              </p>
+              {settingsFor.text && (
+                <p>
+                  Text captures accept up to 128 tokens.{" "}
+                  {capturePaths.length
+                    ? `${capturePaths.length} components selected.`
+                    : "The first 32 numbered components are selected automatically."}{" "}
+                  Use Layer Stack to choose modules.
+                </p>
+              )}
               <p className="micro">
                 3D shows up to 64 component groups and 2,048 values. Export
-                preserves all retained values. Downloads and remote model code
-                are disabled.
+                preserves all retained values. Remote model code is never run,
+                and nothing downloads without your click.
               </p>
             </>
           )}

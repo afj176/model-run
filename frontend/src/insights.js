@@ -339,11 +339,12 @@ export function pct(v) {
   return `${Math.round((finite(v) ? v : 0) * 100)}%`;
 }
 
-/** Readable token text for narrative sentences. */
+/** Readable token text for sentences and labels: real spaces inside, none at the ends; a token of only spaces shows as \u2423. */
 export function tokenText(text) {
   if (text === undefined || text === null) return "?";
   if (text === "") return "\u2205";
-  return text.replace(/\n/g, "\u23ce").replace(/ /g, "\u2423");
+  const shown = text.replace(/\n/g, "\u23ce");
+  return shown.trim() || shown.replace(/ /g, "\u2423");
 }
 
 /** What a head ablation sweep says about one head and about the layer as a whole. */

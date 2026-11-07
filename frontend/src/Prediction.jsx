@@ -1,14 +1,7 @@
 import { useMemo, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
-import { lensStory, pct, tokenLabel } from "./insights";
+import { lensStory, pct, tokenLabel, tokenText as show } from "./insights";
 import { ResidualStream } from "./TextPanels";
-
-const show = (text) =>
-  text === undefined || text === null
-    ? "?"
-    : text === ""
-      ? "∅"
-      : text.replace(/\n/g, "⏎").replace(/ /g, "␣");
 
 /** What the model predicted next, how sure it was, and how that answer formed layer by layer. */
 export default function Prediction({ trace }) {

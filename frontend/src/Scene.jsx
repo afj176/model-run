@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { guardWheel } from "./wheelGuard";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { eventPath } from "./api";
 import { activationStats, layerLabels } from "./insights";
@@ -11,6 +12,33 @@ import { activationStats, layerLabels } from "./insights";
 
 const HOME = new THREE.Vector3(-4.2, 10.5, 22);
 const TARGET = new THREE.Vector3(0.6, 1.4, 0);
+
+/** Point the camera at everything drawn, from the usual angle, far enough back to show all of it. */
+function frameContent(rt) {
+  const box = new THREE.Box3().setFromObject(rt.content);
+  if (box.isEmpty()) {
+    rt.camera.position.copy(HOME);
+    rt.controls.target.copy(TARGET);
+    rt.controls.update();
+    return;
+  }
+  const sphere = box.getBoundingSphere(new THREE.Sphere());
+  const vertical = THREE.MathUtils.degToRad(rt.camera.fov);
+  const fit = Math.min(
+    vertical,
+    2 * Math.atan(Math.tan(vertical / 2) * rt.camera.aspect),
+  );
+  const distance = THREE.MathUtils.clamp(
+    (sphere.radius / Math.sin(fit / 2)) * 1.05,
+    rt.controls.minDistance,
+    rt.controls.maxDistance,
+  );
+  rt.controls.target.copy(sphere.center);
+  rt.camera.position
+    .copy(sphere.center)
+    .addScaledVector(HOME.clone().sub(TARGET).normalize(), distance);
+  rt.controls.update();
+}
 const STACK_X = -5.6;
 const FIELD_X = 4.2;
 const FIELD_Y = 1.7;
@@ -143,7 +171,7 @@ export default function Scene({
     renderer.domElement.setAttribute("role", "img");
     renderer.domElement.setAttribute(
       "aria-label",
-      "Interactive model map. Click a slab to select a block or step, click a bar to select a value. Drag to orbit, right-drag to pan, scroll to zoom.",
+      "Interactive model map. Click a slab to select a block or step, click a bar to select a value. Drag to orbit, right-drag to pan, Ctrl + scroll to zoom.",
     );
     const scene = new THREE.Scene(),
       camera = new THREE.PerspectiveCamera(27, 1, 0.1, 200);
@@ -153,6 +181,7 @@ export default function Scene({
     controls.dampingFactor = 0.09;
     controls.minDistance = 5;
     controls.maxDistance = 60;
+    const releaseWheel = guardWheel(renderer.domElement, controls);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.target.copy(TARGET);
     scene.add(new THREE.HemisphereLight(0xe9e4ff, 0x2a1f4d, 1.5));
@@ -267,6 +296,7 @@ export default function Scene({
       renderer.domElement.removeEventListener("pointerup", pointerUp);
       renderer.domElement.removeEventListener("pointermove", pointerMove);
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
+      releaseWheel();
       controls.dispose();
       disposeGroup(content);
       renderer.dispose();
@@ -292,12 +322,7 @@ export default function Scene({
             : THREE.MOUSE.ROTATE;
   }, [cameraMode]);
   useEffect(() => {
-    const r = runtime.current;
-    if (r) {
-      r.camera.position.copy(HOME);
-      r.controls.target.copy(TARGET);
-      r.controls.update();
-    }
+    if (runtime.current) frameContent(runtime.current);
   }, [resetKey]);
 
   useEffect(() => {
@@ -717,6 +742,12 @@ export default function Scene({
       }
     }
   }, [nodes, selected, event, view, spread, logScale, events, components]);
+
+  // Frame what is drawn when the content itself changes (a new trace, model or view), not on selection.
+  const contentKey = `${view}|${nodes.length}|${nodes[0]?.path ?? ""}|${events.length}|${events[0]?.module ?? ""}`;
+  useEffect(() => {
+    if (runtime.current) frameContent(runtime.current);
+  }, [contentKey]);
 
   // Selection overlay: recolour bars and rebuild only the bands, outline and callout anchor.
   useEffect(() => {

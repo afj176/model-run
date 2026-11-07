@@ -418,10 +418,10 @@ test("layerReactions, lensDivergence and promptCompareStory read both traces", (
     [1, 1, "layer 0"],
   );
   const story = promptCompareStory(traceA, traceB);
-  assert.match(story.text, /changed “␣cat” to “␣dog” after 1 shared token\./);
+  assert.match(story.text, /changed “cat” to “dog” after 1 shared token\./);
   assert.match(
     story.text,
-    /answer changes from “␣sat” \(50%\) to “␣ran” \(60%\); the old answer keeps 10%/,
+    /answer changes from “sat” \(50%\) to “ran” \(60%\); the old answer keeps 10%/,
   );
   assert.match(story.text, /first disagrees at layer 0/);
   assert.match(
@@ -469,7 +469,7 @@ test("patchStory reports flips and the strongest layer", () => {
   const story = patchStory(block);
   assert.equal(story.best.layer, 1);
   assert.deepEqual(story.flips, [1]);
-  assert.match(story.text, /flips the answer to “␣Paris” at layer 1/);
+  assert.match(story.text, /flips the answer to “Paris” at layer 1/);
   assert.match(story.text, /recovers 90% of the gap/);
   const same = patchStory({
     ...block,
@@ -513,10 +513,10 @@ test("stepDeltas, tokenMassShift and diffusionCompareStory read the two runs", (
     deltas,
     shift,
   });
-  assert.match(story.text, /“␣cat” masked out/);
+  assert.match(story.text, /“cat” masked out/);
   assert.match(story.text, /most at the top right/);
   assert.match(story.text, /diverge from step 1/);
-  assert.match(story.text, /Attention moved most for “␣cat”/);
+  assert.match(story.text, /Attention moved most for “cat”/);
   assert.equal(diffusionCompareStory({}), null);
 });
 
@@ -565,8 +565,8 @@ test("responseStory summarises confidence and where tokens settled", () => {
     ],
   };
   const story = responseStory(trace);
-  assert.match(story.text, /wrote “Paris,␣the␣city”/);
-  assert.match(story.text, /surest of “␣the” \(90%\)/);
+  assert.match(story.text, /wrote “Paris, the city”/);
+  assert.match(story.text, /surest of “the” \(90%\)/);
   assert.match(story.text, /least sure of “,” \(30%, 3.3 bits\)/);
   assert.match(
     story.text,
@@ -925,4 +925,14 @@ test("the attention story opens on a word even when a start token leads", () => 
     ]).index,
     0,
   );
+});
+
+import { tokenText } from "../src/insights.js";
+
+test("token text reads as words: real spaces inside, none at the ends", () => {
+  assert.equal(tokenText(" Also"), "Also");
+  assert.equal(tokenText("Paris, the city"), "Paris, the city");
+  assert.equal(tokenText(" "), "␣");
+  assert.equal(tokenText("\n"), "⏎");
+  assert.equal(tokenText(""), "∅");
 });
