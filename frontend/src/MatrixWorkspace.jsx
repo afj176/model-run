@@ -90,6 +90,7 @@ export default function MatrixWorkspace({
   setLayer,
   head,
   setHead,
+  startPanel = null,
 }) {
   const [rowOffset, setRowOffset] = useState(0),
     [colOffset, setColOffset] = useState(0);
@@ -670,6 +671,8 @@ export default function MatrixWorkspace({
               </span>
             </div>
           </>
+        ) : !trace && !events.length && startPanel ? (
+          startPanel
         ) : (
           <div className="matrix-empty">
             <GridFour size={44} />
@@ -1092,43 +1095,51 @@ export default function MatrixWorkspace({
             )}
           </section>
         )}
-        <h3>{data ? title : "Tensor"}</h3>
-        <dl className="matrix-facts">
-          <dt>Source</dt>
-          <dd>{attention ? "layer output (Q × K)" : data?.source || "—"}</dd>
-          <dt>Axes</dt>
-          <dd>{data ? `${rowName} × ${colName}` : "—"}</dd>
-          {event?.slice_label && (
-            <>
-              <dt>Slice</dt>
-              <dd>
-                <div>
-                  {event.slice_label}
-                  <small className="slice-of">
-                    of {event.source_shape.join(" × ")}
-                  </small>
-                  {event.slice_note && (
-                    <small className="slice-of">{event.slice_note}</small>
-                  )}
-                </div>
-              </dd>
-            </>
-          )}
-          <dt>Shape</dt>
-          <dd>{data?.shape.join(" × ") || "—"}</dd>
-          <dt className="selection">Selection</dt>
-          <dd className="selection">
-            {data
-              ? tokens
-                ? `“${rowToken}” (${rowIndex}) → “${colToken}” (${colIndex})`
-                : `${rowName} ${rowIndex}, ${colName} ${colIndex}`
-              : "—"}
-          </dd>
-          <dt>{valueLabel}</dt>
-          <dd>
-            <span className="matrix-badge">{valueText}</span>
-          </dd>
-        </dl>
+        {!data && (
+          <p className="matrix-note">
+            After a capture, select a cell to see its value, where it sits and
+            what was recorded.
+          </p>
+        )}
+        {data && <h3>{title}</h3>}
+        {data && (
+          <dl className="matrix-facts">
+            <dt>Source</dt>
+            <dd>{attention ? "layer output (Q × K)" : data?.source || "—"}</dd>
+            <dt>Axes</dt>
+            <dd>{data ? `${rowName} × ${colName}` : "—"}</dd>
+            {event?.slice_label && (
+              <>
+                <dt>Slice</dt>
+                <dd>
+                  <div>
+                    {event.slice_label}
+                    <small className="slice-of">
+                      of {event.source_shape.join(" × ")}
+                    </small>
+                    {event.slice_note && (
+                      <small className="slice-of">{event.slice_note}</small>
+                    )}
+                  </div>
+                </dd>
+              </>
+            )}
+            <dt>Shape</dt>
+            <dd>{data?.shape.join(" × ") || "—"}</dd>
+            <dt className="selection">Selection</dt>
+            <dd className="selection">
+              {data
+                ? tokens
+                  ? `“${rowToken}” (${rowIndex}) → “${colToken}” (${colIndex})`
+                  : `${rowName} ${rowIndex}, ${colName} ${colIndex}`
+                : "—"}
+            </dd>
+            <dt>{valueLabel}</dt>
+            <dd>
+              <span className="matrix-badge">{valueText}</span>
+            </dd>
+          </dl>
+        )}
         {data && (
           <>
             <h3>
@@ -1336,22 +1347,24 @@ export default function MatrixWorkspace({
             </p>
           </>
         )}
-        <div className="matrix-capture">
-          <label>
-            Head
-            <input
-              aria-label="Attention head"
-              type="number"
-              min="0"
-              max="1024"
-              value={head}
-              onChange={(e) => setHead(Number(e.target.value))}
-            />
-          </label>
-          <button disabled={busy || !canAttention} onClick={onCapture}>
-            <Eye size={16} /> Capture L{layer} · H{head}
-          </button>
-        </div>
+        {canAttention && (
+          <div className="matrix-capture">
+            <label>
+              Head
+              <input
+                aria-label="Attention head"
+                type="number"
+                min="0"
+                max="1024"
+                value={head}
+                onChange={(e) => setHead(Number(e.target.value))}
+              />
+            </label>
+            <button disabled={busy || !canAttention} onClick={onCapture}>
+              <Eye size={16} /> Capture L{layer} · H{head}
+            </button>
+          </div>
+        )}
         <p className="matrix-footnote">Measured values</p>
       </aside>
     </div>

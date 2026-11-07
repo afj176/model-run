@@ -72,3 +72,23 @@ export function withoutPackageFiles(artifacts) {
       !packages.some((p) => (a.relative_path || "").startsWith(p)),
   );
 }
+
+/** Which start panel to show before a capture: comfyui, loading, ready or choose. */
+export function startStage(state) {
+  if (state?.host === "comfyui") return "comfyui";
+  if (state?.job?.status === "running" && state.job.action === "load")
+    return "loading";
+  if (state?.loaded) return "ready";
+  return "choose";
+}
+
+const KINDS = {
+  text: "Language model",
+  embedding: "Embedding model",
+  image: "Image classifier",
+  audio: "Speech recognition",
+  diffusion: "Diffusion pipeline",
+};
+
+/** A plain name for what a package that runs here is, from the task the app detected. */
+export const kindOf = (artifact) => KINDS[artifact.task] || null;

@@ -34,6 +34,18 @@ def bounded_int(value, low, high, name):
 
 
 NOT_MODEL_FOLDERS = {"configs", "custom_nodes"}
+MAX_FOLDER_FILES = 10000
+
+
+def folder_size(directory):
+    """Bytes in a package folder, from file sizes only; None when it holds too many files to count quickly."""
+    total = 0
+    for count, path in enumerate(Path(directory).rglob("*")):
+        if count >= MAX_FOLDER_FILES:
+            return None
+        if path.is_file() and not path.is_symlink():
+            total += path.stat().st_size
+    return total
 
 
 class Application:
@@ -146,7 +158,7 @@ class Application:
                     continue
                 identifier = sha256(str(directory).encode()).hexdigest()[:24]
                 paths[identifier] = directory
-                result["artifacts"].insert(0, {"id": identifier, "name": display,
+                result["artifacts"].insert(0, {"id": identifier, "name": display, "size_bytes": folder_size(directory),
                     "relative_path": self._relative(directory), "format": "local_package", "status": "candidate",
                     "task": task, "configured_categories": [], "capabilities": {},
                     "limitations": ["Local configuration candidate; load verifies runtime compatibility."]})

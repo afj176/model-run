@@ -35,6 +35,7 @@ import { Denoising, FeatureMaps, TextEncoderPanel } from "./ComfyPanels";
 import { AttentionLinks, LogitsPanel } from "./TextPanels";
 import Response from "./Response";
 import LocalLibrary from "./LocalLibrary";
+import StartPanel from "./StartPanel";
 import { ActivationInsight, HeadInsight, MetricsTable } from "./RunInsights";
 import {
   attentionPastAudio,
@@ -166,6 +167,7 @@ export function App() {
   // A capture session: the companion traces produced by one Run (outputs, response, attention).
   const sessionRef = useRef(null);
   const [session, setSession] = useState(null);
+  const [loadingName, setLoadingName] = useState("");
   const [companions, setCompanions] = useState({});
   const sessionRun = useRef(null);
   const runKeys = useRef(new Map());
@@ -360,7 +362,7 @@ export function App() {
       ? "ComfyUI connected"
       : trace
         ? modelName
-        : "Local workspace";
+        : "";
   const layerOptions = layerIndices.length
     ? layerIndices
     : Array.from(
@@ -463,6 +465,15 @@ export function App() {
     text: !loadedTask || loadedTask === "text",
     diffusion: !loadedTask || loadedTask === "diffusion",
   };
+  const startPanel = (
+    <StartPanel
+      state={state}
+      loadingName={loadingName}
+      onOpenLibrary={() => setModal("models")}
+      onRun={() => (textModel ? runSession() : run(false))}
+      onImport={() => importRef.current?.click()}
+    />
+  );
   // Run View draws layer outputs, so a Run's own layer capture opens there instead of its attention probe.
   function showRunView() {
     setView("model");
@@ -891,7 +902,7 @@ export function App() {
         <span className="tagline">
           A model data observatory for tensors, activations, and events
         </span>
-        <span className="host-badge">{modelFacts}</span>
+        {modelFacts && <span className="host-badge">{modelFacts}</span>}
       </header>
       <nav className="toolbar" aria-label="Workspace">
         <div className="toolbar-tabs">
@@ -919,7 +930,11 @@ export function App() {
             <GitDiff size={19} /> Compare
           </button>
           <span className="toolbar-rule" />
-          <button disabled={!trace} onClick={exportTrace}>
+          <button
+            disabled={!trace}
+            onClick={exportTrace}
+            title="Save this capture as JSON. Exports include captured values, decoded input tokens, and any input image or audio."
+          >
             <DownloadSimple size={19} /> Export
           </button>
           <span className="toolbar-rule" />
@@ -1116,6 +1131,7 @@ export function App() {
       ) : view === "matrix" ? (
         <ErrorBoundary label="the tensor table" resetKey={traceId}>
           <MatrixWorkspace
+            startPanel={startPanel}
             trace={viewTrace}
             event={event}
             sliceNav={sliceNav}
@@ -1182,19 +1198,6 @@ export function App() {
             <h2 className="eyebrow">Workspace</h2>
             <Button icon={FolderOpen} onClick={() => setModal("models")}>
               Model Library
-            </Button>
-            <Button
-              icon={UploadSimple}
-              onClick={() => importRef.current.click()}
-            >
-              Import Trace
-            </Button>
-            <Button
-              icon={DownloadSimple}
-              disabled={!trace}
-              onClick={exportTrace}
-            >
-              Export Trace
             </Button>
             <hr />
             <h2 className="eyebrow">Display</h2>
@@ -1463,28 +1466,7 @@ export function App() {
                   </div>
                 )}
                 {!nodes.length && !event && (
-                  <div className="empty-stage">
-                    <Cube size={56} weight="light" />
-                    <h3>Step inside a model.</h3>
-                    <p>
-                      Open a local model, observe a ComfyUI run, or import a
-                      capture. Explore the structure and see the values behind
-                      each result.
-                    </p>
-                    <Button
-                      icon={FolderOpen}
-                      className="primary"
-                      onClick={() => setModal("models")}
-                    >
-                      Open model library
-                    </Button>
-                    <button
-                      className="text-button"
-                      onClick={() => importRef.current.click()}
-                    >
-                      Import an existing trace
-                    </button>
-                  </div>
+                  <div className="empty-stage">{startPanel}</div>
                 )}
                 <div className="scene-caption">
                   <span>
@@ -1844,17 +1826,11 @@ export function App() {
             if (!panels.length)
               return (
                 <>
-                  <h2>
-                    {trace?.preview ? "Generated output" : "Capture history"}
-                    <small>
-                      Local session · up to {state?.retention?.max_runs ?? 16}{" "}
-                      runs in memory
-                    </small>
-                  </h2>
+                  <h2>{trace?.preview ? "Generated output" : "Results"}</h2>
                   <p className="muted">
                     {state?.host === "comfyui"
-                      ? "Connect Model Run · Observe between a model loader and sampler. Captures appear here while ComfyUI runs."
-                      : "Captures stay in memory until exported. Use the history controls to reopen a trace."}
+                      ? "Results from Model Run's nodes appear here while ComfyUI runs."
+                      : "After a Run, what the model predicted and what it wrote appear here. Earlier runs stay in Capture history until the app restarts."}
                   </p>
                 </>
               );
@@ -1933,13 +1909,6 @@ export function App() {
             )}
             <div className="history-actions">
               <Button
-                icon={DownloadSimple}
-                disabled={!trace}
-                onClick={exportTrace}
-              >
-                Export
-              </Button>
-              <Button
                 icon={Trash}
                 disabled={!traceId}
                 aria-label="Delete this run"
@@ -1976,16 +1945,7 @@ export function App() {
                   )
                 }
               />
-              <Button
-                icon={UploadSimple}
-                aria-label="Import trace"
-                onClick={() => importRef.current.click()}
-              />
             </div>
-            <p className="micro">
-              Exports include captured values, decoded input tokens, and any
-              input image or audio.
-            </p>
           </details>
         </div>
       </section>
@@ -2098,6 +2058,7 @@ export function App() {
                   }
                   onLoad={(a) =>
                     action(async () => {
+                      setLoadingName(a.name);
                       await api("load", { id: a.id, device });
                       setModal(null);
                     })

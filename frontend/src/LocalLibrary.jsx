@@ -6,6 +6,7 @@ import {
   formatCount,
   groupArtifacts,
   groupOf,
+  kindOf,
   withoutPackageFiles,
 } from "./libraryData";
 
@@ -131,11 +132,12 @@ export default function LocalLibrary({
                     <b>{a.name}</b>
                     <span>
                       {[
+                        kindOf(a),
                         a.size_bytes ? formatBytes(a.size_bytes) : null,
                         a.tensor_count
                           ? `${a.tensor_count.toLocaleString()} tensors`
                           : null,
-                        a.format === "local_package" ? "folder" : a.format,
+                        a.format === "local_package" ? null : a.format,
                       ]
                         .filter(Boolean)
                         .join(" · ")}

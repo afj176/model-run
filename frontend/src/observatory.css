@@ -3772,3 +3772,109 @@ i.after {
 .output-stack > * {
   min-width: 0;
 }
+
+/* The start panel: what to do before there is a capture, on the dark stage of either view. */
+.start-panel {
+  position: absolute;
+  inset: 18% 12% auto;
+  margin: 0 auto;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  color: #d9d0ea;
+}
+.empty-stage .start-panel {
+  position: static;
+}
+.start-panel h3 {
+  margin: 0;
+  font-size: 24px;
+  color: #fff;
+}
+.start-panel p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #c7bbd5;
+}
+.start-panel b {
+  color: #fff;
+}
+.start-panel button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.start-panel .text-button {
+  color: #c7bbd5;
+}
+.start-steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+.start-steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 4px 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #ffffff12;
+  border: 1px solid #ffffff1f;
+}
+.start-steps li::before {
+  content: counter(step);
+  grid-row: span 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  background: #ffffff1f;
+  color: #fff;
+}
+.start-steps li span {
+  font-size: 13px;
+  color: #c7bbd5;
+}
+.start-steps li button {
+  justify-self: start;
+  margin-top: 6px;
+}
+.start-spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid #ffffff2e;
+  border-top-color: #7fd9c2;
+  animation: start-spin 0.9s linear infinite;
+}
+@keyframes start-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .start-spinner {
+    animation-duration: 3s;
+  }
+}
+@media (max-width: 640px) {
+  .start-panel {
+    inset: 12% 16px auto;
+  }
+  .start-panel h3 {
+    font-size: 19px;
+  }
+}

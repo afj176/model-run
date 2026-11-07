@@ -48,6 +48,7 @@ class ApplicationTests(unittest.TestCase):
                 catalog = app.catalog()
                 package = next(a for a in catalog["artifacts"] if a["task"] == "text")
                 self.assertNotIn("path", package)
+                self.assertEqual(package["size_bytes"], sum(p.stat().st_size for p in root.iterdir()))
                 self.assertEqual(app.inspect(package["id"])["config"]["model_type"], "fixture")
                 with self.assertRaises(ValueError): app.inspect("../config.json")
                 ids = [app.publish(trace())["id"] for _ in range(18)]

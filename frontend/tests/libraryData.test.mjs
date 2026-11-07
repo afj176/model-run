@@ -82,3 +82,39 @@ test("a package folder stands for the files inside it", () => {
     ["Qwen3-0.6B", "Qwen3-0.6B-extra.safetensors"],
   );
 });
+
+import { kindOf, startStage } from "../src/libraryData.js";
+
+test("the start panel follows what the app is doing", () => {
+  assert.equal(startStage(null), "choose");
+  assert.equal(
+    startStage({ host: "standalone", job: { status: "idle" } }),
+    "choose",
+  );
+  assert.equal(
+    startStage({
+      host: "standalone",
+      job: { status: "running", action: "load" },
+    }),
+    "loading",
+  );
+  assert.equal(
+    startStage({
+      host: "standalone",
+      job: { status: "running", action: "observe" },
+      loaded: { name: "q" },
+    }),
+    "ready",
+  );
+  assert.equal(
+    startStage({ host: "standalone", loaded: { name: "q" } }),
+    "ready",
+  );
+  assert.equal(startStage({ host: "comfyui", loaded: null }), "comfyui");
+});
+
+test("packages that run here say what kind of model they are", () => {
+  assert.equal(kindOf({ task: "text" }), "Language model");
+  assert.equal(kindOf({ task: "audio" }), "Speech recognition");
+  assert.equal(kindOf({ task: "inventory" }), null);
+});
