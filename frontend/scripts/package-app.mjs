@@ -1,9 +1,9 @@
 import { cp, mkdir, readdir, unlink, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 await mkdir("../model_run/web", { recursive: true });
-await cp("dist/client", "../model_run/web", { recursive: true });
+await cp("dist", "../model_run/web", { recursive: true });
 const assets = resolve("../model_run/web/assets");
-const current = new Set(await readdir("dist/client/assets"));
+const current = new Set(await readdir("dist/assets"));
 // Remove only obsolete hashed build assets in this explicit output directory.
 for (const file of await readdir(assets)) {
   if (/^index-[\w-]+\.(js|css)$/.test(file) && !current.has(file))

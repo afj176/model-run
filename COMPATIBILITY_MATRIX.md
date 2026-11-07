@@ -1,27 +1,34 @@
 # Compatibility evidence
 
-The [application release report](reports/application-release-2026-11-04.md) adds standalone HTTP/UI checks and an actual native ComfyUI sampler workflow. The extension reads the live host's model-path registry; standalone mode uses explicitly configured paths. Historical limitations below describe the earlier campaigns, not the current host integration. Full-workflow evidence currently covers FLUX.2 Klein; other families retain their separately documented forward/capture scope.
+What Model Run has actually been checked against, and how. Each row is a tested configuration, not a promise for every variant: a model that is not listed should still load and record layers, because anything Model Run does not understand is reported rather than guessed.
 
-The broader 2026-11-04 native-checkpoint campaign is documented in `reports/local-model-campaign-2026-11-04.md`. It adds native loading of all six local diffusion models and all six encoders, decode/capture comparisons for all six VAEs, a latent-upscaler forward comparison, and native LoRA registration for both local adapters. The exact remaining inference gaps are listed there.
+**Summary (2026-11-06).** ComfyUI lists 108 model detection configs, 104 of which sample (the other four are segmentation and depth models that `Observe` does not apply to). 94 of those 104 ran on real weights through ComfyUI with Model Run's nodes in the graph, and every run matched the same graph without the nodes: pixel for pixel, byte for byte or bit for bit. 3 more ran at tiny size with random weights. The remaining 7 have no file ComfyUI can load (see [Same-network configs](#same-network-configs-on-real-weights)). On Civitai's most downloaded and newest models, every base model is either one of those real-weights families or a closed service.
 
-Subsequent gates are recorded in `reports/runtime-gates-2026-11-04.md`: all six diffusion models and all six encoders passed short forward/capture comparisons; both LoRAs passed numerical patch-application checks. Those later results supersede the earlier report's corresponding pending gates, within the stated test scope.
+**How a check works.** A plain run and a second plain run must match first, since ComfyUI's first run after a model load can differ on its own. The run with Model Run's nodes must then match the plain run. Where a model reads a prompt, attention maps and their token labels are checked, and words are masked to see that the picture changes the way the word says. Labels are also checked by swapping one word and finding the first text key that changes.
 
-This is a record of tested configurations, not a claim of general support for every variant. Capture means selected module outputs are compared against an uninstrumented forward pass; metadata inventory does not execute a model. All observed inference tests below use float32 on CUDA, PyTorch 2.12.0.dev20260312+cu128 and Transformers 5.13.0 unless otherwise stated. Synthetic inputs are explicitly identified.
+## Early runtime checks
+
+Standalone captures compared against an uninstrumented forward pass, in float32 on CUDA with PyTorch 2.12.0.dev20260312+cu128 and Transformers 5.13.0 unless stated.
 
 | Artifact | Revision | Test | Result and scope |
 | --- | --- | --- | --- |
-| Qwen/Qwen3-0.6B | c1899de289a04d12100db370d81485cdf75e47ca | Local safetensors, real tokenizer, short text, first/last layer; eager attention head | Pass on CPU and CUDA; captured logits match baseline; selected attention matches reference. See VALIDATION.md. |
-| HuggingFaceTB/SmolLM2-135M | 93efa2f097d58c2a74874c7e644dbc9b0cee75a2 | Synthetic token IDs; first transformer layer | Pass on CUDA; captured logits match baseline. Tokenization and text generation not covered. |
-| google/vit-base-patch16-224 | 3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3 | Synthetic image tensor; first transformer layer | Pass on CUDA; classification logits match baseline. Image preprocessing and real images not covered. |
-| openai/whisper-tiny | 169d4a4341b33bc18d8881c4b69c2e104e1cc0af | Synthetic audio feature tensor; first encoder layer | Pass on CUDA; logits match baseline. Audio preprocessing and transcription not covered. |
-| hf-internal-testing/tiny-stable-diffusion-pipe | Local converted safetensors copy; original revision not recorded | Three denoising steps, same seed | Pass on CUDA with Diffusers 0.37.0; latent output matches baseline. Original checkpoint conversion used pickle-based files; see VALIDATION.md. |
-| Local ComfyUI safetensors, including LTX 2.5 video/audio VAE and transformer, FLUX, Qwen Image, LoRAs and text encoders | Local files; content hashes not recorded | Header and tensor index inspection only | 21 files inventoried successfully. No loading, inference or runtime capture is implied. |
+| Qwen/Qwen3-0.6B | c1899de289a04d12100db370d81485cdf75e47ca | Local safetensors, real tokenizer, short text, first/last layer; eager attention head | Pass on CPU and CUDA; captured logits match the baseline, the selected attention head matches a reference forward pass, rows sum to 1 and the causal mask holds. |
+| HuggingFaceTB/SmolLM2-135M | 93efa2f097d58c2a74874c7e644dbc9b0cee75a2 | Synthetic token IDs; first transformer layer | Pass on CUDA; captured logits match the baseline. |
+| google/vit-base-patch16-224 | 3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3 | Synthetic image tensor; first transformer layer | Pass on CUDA; classification logits match the baseline. Real images were checked later through the image task. |
+| openai/whisper-tiny | 169d4a4341b33bc18d8881c4b69c2e104e1cc0af | Synthetic audio features; first encoder layer | Pass on CUDA; logits match the baseline. Real audio was checked later through the speech task. |
+| hf-internal-testing/tiny-stable-diffusion-pipe | Local safetensors conversion | Three denoising steps, same seed | Pass on CUDA with Diffusers 0.37.0; the latent output matches the baseline. |
 
-Hugging Face downloads and Ollama are test sources, not the planned primary discovery surface. An initial explicit extra-path YAML reader has been checked against the Open Cinema runtime configuration: it identified 10 configured model directories, all present, while excluding custom-node paths. Built-in paths, runtime-added paths, automatic configuration discovery and host integration are not yet covered. Do not modify the user's models.
+## What the measurements showed
 
-The bounded catalog scanner was manually checked against those 10 directories and inventoried 21 safetensors files without errors or truncation. Automated discovery tests use temporary generated fixtures and do not depend on personal Hugging Face, Ollama or ComfyUI paths. Real-checkpoint smoke scripts take their model directory as an explicit argument and are opt-in.
+These are results from specific runs. They explain how to read a map or a mask on these models; they are not guarantees for other prompts or settings.
 
-The catalog CLI was subsequently checked with the shared ComfyUI models root and the Open Cinema extra-path configuration together: it deduplicated their overlap and inventoried 21 safetensors files without scan errors. Standard categories are a static mapping based on the locally inspected ComfyUI version, not live introspection; extensions may add or alter paths.
+**Word labels.** Checked on Flux2 Klein, Qwen-Image 2.1 and HiDream-O1 by swapping one word and finding where the model's real text input first changes: all four swapped words changed exactly the labelled position. On LTX 2.5 the connector lets positions see each other, so each word's own position was among the three largest changes. Labels held on prompts with accents, emoji, Japanese and very long words; an emoji can show as broken characters because it spans several tokens.
+
+**Masks read differently by model** (two prompts, two seeds). Masking the subject on Flux2 Klein moved the output 9 to 15%, against 1 to 3% for unrelated tokens. On Qwen-Image (1 to 4% against 3 to 5%) and HiDream (1 to 4% against 3 to 4%), masking a subject did no more than masking unrelated tokens. Masking every text token erases the prompt on Qwen-Image and destroys the image on HiDream, and with all prompt words masked Qwen-Image still drew the cube, dog and man, so its text tokens hold the prompt redundantly.
+
+**Attention share is not importance.** On HiDream-O1 (one prompt, 4 steps), masking "red" and "cube" kept the cube (1% of full scale), masking the two blank trailing tokens that hold 35% of the attention changed it most for any small set (18%), and masking every text token destroyed the image (35%). On LTX 2.5 the positions after the prompt are learned registers repeating every 128 positions; they receive about 99% of the attention to text but do not carry most of the prompt. Across four prompts and two seeds, the mean difference between prompts' outputs was 24% unmasked, 18% with all registers masked and 3% with the real tokens masked. Small mask effects need a yardstick: unmasked repeats are pixel-identical, but masking one LTX register already moves the output about 2.5% (1.4 to 5.4%), against 18% for a different seed.
+
+**Speech (Whisper).** On one synthetic spoken clip, splicing 3 s of silence after "dog" left no token peaking inside the gap and moved "Model" from 3.70 s to 6.69 s. On synthetic speech (two voices, three speeds, added noise), word error was 2 to 7% down to 10 dB of noise, 15% at 0 dB, and the transcript was wrong at -5 dB. Whisper invents text on silence, a tone and noise, and peak order stays perfect even when the words are wrong, so order is not evidence of accuracy. Over half of the final layer's attention landing past the audio's end (0.63 to 0.85 on those inputs, 0.12 to 0.18 on speech) is flagged, but a low share proves nothing. No real recording has been tested, and these maps show where a layer read, not word timings.
 
 ## ComfyUI model families
 
@@ -93,7 +100,7 @@ Checked by `tools/check_comfy_families.py`, which builds each family's real Comf
 
 Where a map exists, the check also changes only the text and confirms the map reads text where the keys really changed; a mismatch prints `WRONG`. Word labels are a separate check that needs real weights, and the app says when a family's have not been checked.
 
-How much is still unchecked, including which models people use most, is in [the coverage baseline](reports/model-family-baseline-2026-11-05.md).
+How much has run on real weights is in the [summary](#compatibility-evidence) at the top.
 
 Not in this table:
 
