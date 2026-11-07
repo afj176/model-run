@@ -35,6 +35,24 @@ def _json(data):
         raise InventoryError(f"Invalid JSON: {exc}") from exc
 
 
+MAX_GGUF_COUNT = 1_000_000  # far above any real model's tensors or metadata entries
+
+
+def check_gguf(path: Path) -> dict:
+    """Read a GGUF file's fixed 24-byte header, never its tensors; raise InventoryError if it is not GGUF."""
+    path = Path(path)
+    with path.open("rb") as stream:
+        head = stream.read(24)
+    if len(head) < 24 or head[:4] != b"GGUF":
+        raise InventoryError("It does not start with the GGUF signature")
+    version, tensors, entries = struct.unpack("<IQQ", head[4:])
+    if version not in (2, 3):
+        raise InventoryError(f"GGUF version {version} is not one ComfyUI-GGUF reads")
+    if not 1 <= tensors <= MAX_GGUF_COUNT or entries > MAX_GGUF_COUNT:
+        raise InventoryError(f"Its header counts are not plausible ({tensors} tensors, {entries} metadata entries)")
+    return {"format": "gguf", "version": version, "tensor_count": tensors, "metadata_count": entries, "size_bytes": path.stat().st_size}
+
+
 def inspect_file(path: Path) -> dict:
     path = Path(path)
     size = path.stat().st_size

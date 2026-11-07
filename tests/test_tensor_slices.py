@@ -1,5 +1,8 @@
 import unittest
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 from model_run.capture import capture_forward
 from model_run.tensor_slices import SliceRecorder, MAX_SLICES, SIDE, validate_slices
 from model_run.trace_store import encode_trace

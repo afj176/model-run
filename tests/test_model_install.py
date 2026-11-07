@@ -21,6 +21,10 @@ def safetensors(size=64):
     return struct.pack("<Q", len(header)) + header + b"x" * size
 
 
+def gguf(version=3, tensors=1, entries=0, size=64):
+    return b"GGUF" + struct.pack("<IQQ", version, tensors, entries) + b"x" * size
+
+
 class Response(io.BytesIO):
     def __init__(self, code, data=b"", headers=None):
         super().__init__(data)
@@ -227,6 +231,37 @@ class Install(Base):
         job = self.wait(installer, installer.start([self.request(len(data))])["jobs"][0])
         self.assertEqual(job["status"], "failed")
         self.assertIn("not a valid safetensors", job["error"])
+        self.assertEqual(list(self.vae.iterdir()), [])
+
+    def test_search_finds_gguf_repos_too_and_merges_them(self):
+        answers = {"safetensors": [{"id": "org/both", "downloads": 50}, {"id": "org/plain", "downloads": 900}],
+                   "gguf": [{"id": "org/both", "downloads": 50}, {"id": "org/quantised", "downloads": 300}]}
+        class Hub:
+            asked = []
+            def open(self, url, **_):
+                tag = dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))["filter"]
+                Hub.asked.append(tag)
+                return Response(200, json.dumps(answers[tag]).encode())
+        repos = self.installer(Hub()).hub_search("flux")["repos"]
+        self.assertEqual(Hub.asked, ["safetensors", "gguf"])
+        self.assertEqual([(r["repo"], r["formats"]) for r in repos],
+                         [("org/plain", ["safetensors"]), ("org/quantised", ["gguf"]), ("org/both", ["safetensors", "gguf"])])
+
+    def test_a_gguf_download_is_checked_as_gguf_and_kept(self):
+        data = gguf()
+        installer = self.installer(FakeHub(data))
+        request = {**self.request(len(data)), "url": URL.replace(".safetensors", ".gguf"), "filename": "a.gguf"}
+        job = self.wait(installer, installer.start([request])["jobs"][0])
+        self.assertEqual(job["status"], "installed", job.get("error"))
+        self.assertEqual((self.vae / "a.gguf").read_bytes(), data)
+
+    def test_a_file_named_gguf_that_is_not_gguf_leaves_nothing_behind(self):
+        data = safetensors()
+        installer = self.installer(FakeHub(data))
+        request = {**self.request(len(data)), "url": URL.replace(".safetensors", ".gguf"), "filename": "a.gguf"}
+        job = self.wait(installer, installer.start([request])["jobs"][0])
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("not a valid GGUF", job["error"])
         self.assertEqual(list(self.vae.iterdir()), [])
 
     def test_a_cut_download_resumes_and_the_whole_file_is_checked(self):

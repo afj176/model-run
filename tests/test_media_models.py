@@ -6,7 +6,10 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 
 from model_run.media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image,
                                     load_local_media_model, task_for_config, validate_image_classification)

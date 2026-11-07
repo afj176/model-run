@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 
 from model_run.embedding_models import EmbeddingAdapter, is_embedding_package, load_local_embedding_model
 from model_run.trace_store import encode_trace

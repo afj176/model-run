@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from model_run.inventory import InventoryError, inspect, inspect_file, inspect_index
+from model_run.inventory import InventoryError, check_gguf, inspect, inspect_file, inspect_index
 
 
 def write_tensor(path, header, payload=b"1234"):
@@ -24,6 +24,15 @@ class InventoryTests(unittest.TestCase):
         report = inspect(path)
         self.assertEqual(report["artifact"]["tensors"][0]["shape"], [1])
         self.assertEqual(report["capabilities"]["execution"]["status"], "unsupported")
+
+    def test_gguf_header_is_read_without_its_tensors(self):
+        path = self.root / "model.gguf"
+        path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 291, 24) + b"x" * 32)
+        self.assertEqual((check_gguf(path)["version"], check_gguf(path)["tensor_count"]), (3, 291))
+        for bad in (b"GGUG" + struct.pack("<IQQ", 3, 1, 0), b"GGUF" + struct.pack("<IQQ", 1, 1, 0), b"GGUF" + struct.pack("<IQQ", 3, 0, 0),
+                    b"GGUF" + struct.pack("<IQQ", 3, 2**40, 0), b"GGUF"):
+            path.write_bytes(bad)
+            with self.assertRaises(InventoryError, msg=bad[:12]): check_gguf(path)
 
     def test_bad_header_and_overlap(self):
         path = self.root / "bad.safetensors"

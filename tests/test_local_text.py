@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 
 from model_run.local_text import fitting_dtype
 

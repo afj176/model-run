@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode, urlsplit
 import urllib.request
 from uuid import uuid4
 
-from .inventory import InventoryError, inspect_file
+from .inventory import InventoryError, check_gguf, inspect_file
 from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index
 
 API = "https://huggingface.co/api/models"
@@ -169,10 +169,18 @@ class ModelInstaller:
     def hub_search(self, query):
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 200:
             raise ValueError("Enter something to search for")
-        query = urlencode({"search": query.strip(), "filter": "safetensors", "sort": "downloads", "direction": "-1", "limit": 24})
-        repos = self._api(f"{API}?{query}")
-        return {"repos": [{"repo": r.get("id"), "downloads": r.get("downloads"), "likes": r.get("likes"), "gated": bool(r.get("gated")), "task": r.get("pipeline_tag")}
-                          for r in repos if isinstance(r, dict) and isinstance(r.get("id"), str)]}
+        # Hugging Face filters by one tag at a time, so repos with GGUF files are asked for separately.
+        found = {}
+        for tag in ("safetensors", "gguf"):
+            params = urlencode({"search": query.strip(), "filter": tag, "sort": "downloads", "direction": "-1", "limit": 24})
+            for r in self._api(f"{API}?{params}"):
+                if not isinstance(r, dict) or not isinstance(r.get("id"), str):
+                    continue
+                entry = found.setdefault(r["id"], {"repo": r["id"], "downloads": r.get("downloads"), "likes": r.get("likes"),
+                                                   "gated": bool(r.get("gated")), "task": r.get("pipeline_tag"), "formats": []})
+                entry["formats"].append(tag)
+        ranked = sorted(found.values(), key=lambda r: -(r["downloads"] if isinstance(r["downloads"], int) else 0))
+        return {"repos": ranked[:24]}
 
     def hub_files(self, repo, *, names=frozenset()):
         if not isinstance(repo, str) or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or ".." in repo:
@@ -451,11 +459,12 @@ class ModelInstaller:
                 part.unlink(missing_ok=True)
                 raise ValueError("The file's SHA-256 does not match the published one; it was deleted")
             checked = True
+        gguf = target.name.lower().endswith(".gguf")
         try:
-            inspect_file(part)
+            (check_gguf if gguf else inspect_file)(part)
         except (InventoryError, ValueError, OSError) as exc:
             part.unlink(missing_ok=True)
-            raise ValueError(f"This is not a valid safetensors file, so it was deleted: {exc}") from exc
+            raise ValueError(f"This is not a valid {'GGUF' if gguf else 'safetensors'} file, so it was deleted: {exc}") from exc
         if target.exists():
             raise ValueError("A file with this name appeared during the download; it was left alone")
         # Neither call replaces an existing file.

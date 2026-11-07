@@ -2,7 +2,10 @@ import copy
 import sys
 import unittest
 
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 
 from model_run.comfy_bridge import DenoiserObserver
 from model_run.wrapper_packs import OBSERVER_KEY, call_arguments, route_transformer

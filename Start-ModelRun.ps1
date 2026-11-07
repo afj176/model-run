@@ -1,4 +1,5 @@
 param(
+    [string]$ComfyDir,
     [string]$ModelsDir,
     [string[]]$ExtraPaths = @(),
     [int]$Port = 8766,
@@ -6,6 +7,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $arguments = @("-m", "model_run.server", "--port", "$Port")
+if ($ComfyDir) { $arguments += @("--comfy-dir", ('"' + $ComfyDir + '"')) }
 if ($ModelsDir) { $arguments += @("--models-dir", ('"' + $ModelsDir + '"')) }
 foreach ($config in $ExtraPaths) { $arguments += @("--extra-paths", ('"' + $config + '"')) }
 $logDirectory = Join-Path $PSScriptRoot ".tmp"
@@ -17,8 +19,14 @@ $ready = $false
 for ($attempt = 0; $attempt -lt 30; $attempt++) {
     if ($process.HasExited) { throw "Model Run exited. Check .tmp/app-server.stderr.log." }
     try {
-        $response = Invoke-WebRequest "http://127.0.0.1:$Port/api/session" -TimeoutSec 1 -NoProxy
-        if ($response.StatusCode -eq 200) { $ready = $true; break }
+        # Works in Windows PowerShell 5.1 and PowerShell 7, and never goes through a proxy.
+        $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$Port/api/session")
+        $request.Proxy = $null
+        $request.Timeout = 1000
+        $response = $request.GetResponse()
+        $status = [int]$response.StatusCode
+        $response.Close()
+        if ($status -eq 200) { $ready = $true; break }
     } catch { Start-Sleep -Milliseconds 200 }
 }
 if (-not $ready) { throw "Server did not become reachable. PID $($process.Id); check the local logs." }

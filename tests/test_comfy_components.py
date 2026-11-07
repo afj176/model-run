@@ -1,6 +1,9 @@
 import unittest
 
-import torch
+try:
+    import torch
+except ImportError:  # these tests build PyTorch modules at import, so the whole module skips
+    raise unittest.SkipTest("optional PyTorch dependency unavailable")
 
 from model_run.comfy_components import encoder_section, readable_piece, real_tokens, stage_paths
 from model_run.denoising import DenoisingRecorder

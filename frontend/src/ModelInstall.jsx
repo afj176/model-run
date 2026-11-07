@@ -426,6 +426,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
                     <span>
                       {(r.downloads || 0).toLocaleString()} downloads
                       {r.task ? ` · ${r.task}` : ""}
+                      {r.formats?.length === 1 && r.formats[0] === "gguf" ? " · GGUF" : ""}
                       {r.gated ? " · needs licence acceptance" : ""}
                     </span>
                   </div>
