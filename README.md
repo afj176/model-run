@@ -85,24 +85,49 @@ Clone or copy this repository into ComfyUI's `custom_nodes` folder and restart C
 nodes need nothing beyond what ComfyUI installs. Model Run then loads every time ComfyUI
 does, Desktop included.
 
+### Run any model from Model Run
+
+Inside ComfyUI, Model Run runs ComfyUI's models itself: it converts the workflow on the server,
+adds its own nodes for that run and queues it on ComfyUI. No ComfyUI tab needs to be open.
+
+- **Text model files** in the library are marked **Writes text** or **Reads prompts**. **Use**
+  one, write a prompt and press **Run**: Model Run queues a small graph (Load CLIP, then Model
+  Run · Generate Text or Text Encode) the way ComfyUI's own templates load that file, and
+  shows the response, each token's alternatives and every layer.
+- **Image, video and audio models** in the library have **Run** when a workflow template that
+  is ready with your models uses them; with several, you choose which. A model a workflow
+  is still missing files for has **Get files**, which opens that workflow in Get models.
+  **Get models › By workflow** has **Use** on every ready template as well.
+- **Choosing a workflow** fills the prompt bar with its prompt and the settings (the gear)
+  with its seed, steps and size. Change any of them and press **Run**. Each image, video or
+  audio file the workflow reads gets a picker beside the prompt, marked **needed** or
+  **optional**; your file goes to ComfyUI's input folder. A template's example file that is
+  not on this computer is left out, with the nodes that only process it, wherever the run
+  does not depend on it.
+- **While it runs**, the prompt bar shows ComfyUI's progress (each node, then each sampling
+  step), and **Run** becomes **Cancel**, which stops it in ComfyUI. When it finishes, the
+  capture opens: the denoiser's layers, every denoising step, the image, and where the image
+  reads the prompt. Observe's attention block is set to `auto`, which measures the first block
+  whose attention reads the prompt.
+- **Open in ComfyUI ↗** shows the workflow on the canvas, in an open ComfyUI tab or a new one,
+  to change it there.
+
+The workflow conversion follows ComfyUI's own: subgraphs are flattened, reroutes and primitive
+nodes are followed, muted nodes drop out and bypassed nodes pass their input on. All 313 local
+workflow templates ComfyUI ships were converted and checked with ComfyUI's own validation;
+293 pass as they are, and the rest are templates whose preview-only nodes have nothing
+connected or whose nodes have changed since the template was saved.
+
 ### Back and forth with the canvas
 
 ![ComfyUI's canvas with the Model Run sidebar: Open Model Run, Observe this workflow and the recent captures](screenshots/comfyui-sidebar.png)
 
 - **The Model Run sidebar** in ComfyUI opens Model Run, lists the recent captures and has
-  **Observe this workflow**: it queues the open canvas with Model Run's nodes added for that
-  run only. Your canvas is not changed. **Model Run → Observe this workflow in Model Run** in
-  the menu does the same.
-- **ComfyUI ↗** in Model Run's header goes back to the canvas.
-- **Text model files** in the library are marked **Writes text** or **Reads prompts**. **Use**
-  one, write a prompt and press **Run**: Model Run queues a small graph on ComfyUI (Load CLIP,
-  then Model Run · Generate Text or Text Encode) the way ComfyUI's own templates load that
-  file, and shows the response, each token's alternatives and every layer.
-- **Workflows**: in **Get models › By workflow**, press **Run** on a template that is ready
-  with your models. Model Run hands it to the ComfyUI tab, which opens it on the canvas and
-  queues it with Model Run's nodes added. Keep a ComfyUI tab open in the same browser for
-  this. The capture opens in Model Run when ComfyUI finishes, and the workflow stays on the
-  canvas to change and run again.
+  **Observe this workflow**: it queues whatever is on the canvas with Model Run's nodes added
+  for that run only, the same way Model Run does. Your canvas is not changed. **Model Run →
+  Observe this workflow in Model Run** in the menu does the same.
+- **ComfyUI ↗** in Model Run's header goes back to the canvas, and **Open in ComfyUI ↗** takes
+  the chosen workflow there.
 - **Runs here packages** load inside ComfyUI too, through ComfyUI's Python. ComfyUI lets go
   of its own models first, so both share one GPU.
 
@@ -134,7 +159,8 @@ The nodes are built to leave the output unchanged, and every model under
   is not always one sampling step (guidance can call twice).
 - **attention_block** maps where the image reads its prompt in one block: `double:N` or
   `single:N` for DiT models, `input:N` / `middle:0` / `output:N` for UNets, `audio:N` for
-  an audio stream, and `call:N` for models that do not name their blocks. Wire **clip** and
+  an audio stream, and `call:N` for models that do not name their blocks. `auto` measures
+  the first block whose attention reads the prompt and keeps it. Wire **clip** and
   **prompt** to label the tokens.
 - **ablate_tokens** masks token positions out of every attention call (for example `4, 5`).
   Compare with a run that leaves it empty to see what those tokens did.
@@ -529,8 +555,10 @@ from stdin.
 | `model_run/model_packages.py` | Runs here: whether a Hugging Face repository runs in Model Run, and which of its files make a package. |
 | `model_run/launch.py` | Starts ComfyUI with Model Run registered, without changing the ComfyUI folder. |
 | `model_run/trace_store.py` | Validates every trace section on import and export. |
-| `frontend/src/` | The React interface; build and package it into `model_run/web`. `comfyRun.js` queues text models and hands workflows to ComfyUI. |
-| `__init__.py`, `comfy_web/` | ComfyUI's entry point, the Model Run sidebar and menu, and `instrument.js`, which adds Model Run's nodes to a queued workflow. |
+| `frontend/src/` | The React interface; build and package it into `model_run/web`. `comfyRun.js` queues runs on ComfyUI, follows their progress and opens workflows on the canvas. |
+| `model_run/comfy_workflow.py` | Turns a saved ComfyUI workflow (subgraphs included) into the prompt ComfyUI queues, from ComfyUI's own node definitions. |
+| `model_run/comfy_instrument.py` | Adds Model Run's nodes to a queued workflow and applies a run's prompt, seed, steps, size and input files. |
+| `__init__.py`, `comfy_web/` | ComfyUI's entry point, and the Model Run sidebar and menu. |
 
 New views read recorded values only, and `trace_store.py` must validate any new trace
 section. When checking that a node leaves output unchanged, compare with a second plain run

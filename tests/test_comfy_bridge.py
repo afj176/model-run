@@ -209,6 +209,25 @@ class CrossAttentionOverrideTests(unittest.TestCase):
         self.assertIsNone(observer._current)
         self.assertEqual(len(published), 2)
 
+    def test_auto_measures_the_first_block_that_reads_the_prompt_and_keeps_it(self):
+        patcher = Patcher()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=2, elements=3, attention_block="auto", attention_grid=4, token_labels=["a", "b", "c"])
+        def kernel(q, k, v, heads, *args, **kwargs):
+            return v
+        def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
+            q = torch.randn(2, 2, 3 + 16, 4)
+            for index in range(2):
+                observer.attention_override(kernel, q, q, q, 2, transformer_options={"block_type": "double", "block_index": index}, skip_reshape=True)
+            return patcher.model.diffusion_model(x)
+        context = torch.zeros(2, 3, 8)
+        for call in range(3):  # as above, a call's record is kept when the next one starts
+            observer(denoiser, {"input": torch.ones(2, 4, 4, 4), "timestep": None,
+                                "c": {"c_crossattn": context, "transformer_options": {}}, "cond_or_uncond": [1, 0]})
+        section = observer.trace["cross_attention"]
+        self.assertEqual(section["selection"], "double:0")
+        self.assertEqual([e["block"] for e in section["events"]], ["double:0", "double:0"])
+        self.assertTrue(any("chosen automatically" in item for item in section["limitations"]))
+
     def test_override_reports_unsupported_geometry(self):
         patcher = Patcher()
         observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="output:1")

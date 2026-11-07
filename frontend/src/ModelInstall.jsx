@@ -154,10 +154,10 @@ function WorkflowCard({ workflow: w, onInstall, onRun }) {
         {!w.missing && onRun ? (
           <button
             className="primary"
-            title="Opens it on the ComfyUI canvas with Model Run's nodes added for this run, and queues it"
+            title="Choose it: its prompt and settings fill in, then Run sends it to ComfyUI with Model Run's nodes added"
             onClick={() => onRun(w)}
           >
-            Run
+            Use
           </button>
         ) : !w.missing ? (
           <span className="install-have">Ready</span>
@@ -363,6 +363,7 @@ export default function ModelInstall({
   packages,
   host,
   onRunWorkflow,
+  start,
 }) {
   // ComfyUI's lists get ComfyUI's models; on its own, Model Run cannot run them, so it keeps to packages.
   const standalone = host === "standalone";
@@ -371,11 +372,12 @@ export default function ModelInstall({
       (id !== "runs" || packages) &&
       !(standalone && ["workflows", "models"].includes(id)),
   );
-  const [tab, setTab] = useState(tabs[0][0]);
+  // Opened for one model file: its workflows, nearest to ready first.
+  const [tab, setTab] = useState(start?.tab || tabs[0][0]);
   const [starters, setStarters] = useState(null);
   const [packagePlan, setPackagePlan] = useState(null);
   const [kind, setKind] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(start?.query || "");
   const [category, setCategory] = useState("");
   const [missingOnly, setMissingOnly] = useState(false);
   const [results, setResults] = useState(null);

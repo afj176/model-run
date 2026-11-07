@@ -16,7 +16,7 @@ from .host import ModelHost
 from .embedding_models import EmbeddingAdapter, is_embedding_package, load_local_embedding_model
 from .inventory import inspect_file, inspect_index, summarize
 from .model_install import ModelInstaller
-from .model_sources import recipe_for
+from .model_sources import read_template, recipe_for
 from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name, decode_audio, decode_image, encode_wav,
                            load_local_media_model, read_config, task_for_config)
 from .trace_store import encode_trace
@@ -127,13 +127,76 @@ class Application:
                 recipes = self.installer.index().get("text_recipes") or {}
             except (OSError, ValueError):
                 recipes = {}
+            try:
+                every = self.installer.workflows("", names=self.installed_names())["workflows"]
+            except (OSError, ValueError):
+                every = []
+            # Each model file lists the ready workflows that run it, or how near the nearest one is.
+            by_file, nearest = {}, {}
+            for workflow in every:
+                for model in workflow["models"]:
+                    if not workflow["missing"]:
+                        by_file.setdefault(model["filename"], []).append({"name": workflow["name"], "title": workflow["title"], "kind": workflow["kind"]})
+                    elif model["filename"] not in nearest or workflow["missing"] < nearest[model["filename"]]["missing"]:
+                        nearest[model["filename"]] = {"title": workflow["title"], "missing": workflow["missing"]}
             for artifact in catalog["artifacts"]:
+                if artifact["name"] in by_file:
+                    artifact["comfy_workflows"] = by_file[artifact["name"]][:12]
+                elif artifact["name"] in nearest:
+                    artifact["comfy_nearest"] = nearest[artifact["name"]]
                 categories = {o.get("category") for o in artifact.get("origins", []) if isinstance(o, dict)}
                 if categories & TEXT_CATEGORIES and artifact.get("format") == "safetensors":
                     recipe = recipe_for(recipes, artifact["name"])
                     if recipe:
                         artifact["comfy_text"] = recipe
         return catalog
+
+    def comfy_workflow(self, body):
+        """A ComfyUI workflow template, ready to queue: converted on the server, Model Run's nodes added, the run's settings applied.
+
+        Returns the template's own settings too, so Model Run can show them before a run."""
+        if self.host_kind != "comfyui":
+            raise ValueError("Workflows run inside ComfyUI; start Model Run with ComfyUI to run them")
+        from .comfy_instrument import SETTINGS, drop_optional, instrument, media_inputs, read_settings
+        from .comfy_workflow import to_prompt
+        body = body if isinstance(body, dict) else {}
+        name = body.get("name")
+        template = read_template(name, self.installer._comfy_dir)
+        definitions = self._node_definitions()
+        converted = to_prompt(template, definitions)
+        defaults = read_settings(converted)
+        settings = {k: body[k] for k in SETTINGS if body.get(k) not in (None, "")}
+        given = settings.get("files") if isinstance(settings.get("files"), dict) else {}
+        # The files the workflow reads. A template's example file is often not on this computer:
+        # an optional one is left out, a needed one waits for a file of yours.
+        import folder_paths
+        inputs = [{**item, "present": bool(given.get(item["node"])) or folder_paths.exists_annotated_filepath(item["file"])} for item in media_inputs(converted)]
+        needed = drop_optional(converted, [i["node"] for i in inputs if not i["present"]], definitions)
+        for item in inputs:
+            item["needed"] = item["node"] in needed
+        done = instrument(converted, settings)
+        title = next((w["title"] for w in self.installer.index()["workflows"] if w["name"] == name), name)
+        return {"name": name, "title": title, "defaults": defaults, "inputs": inputs,
+                "missing_inputs": [i for i in inputs if i["needed"] and not i["present"]],
+                "prompt": done["prompt"], "changes": done["changes"], "observed": done["observed"], "workflow": template}
+
+    def comfy_instrument(self, body):
+        """Model Run's nodes added to a prompt from the canvas (Observe this workflow)."""
+        from .comfy_instrument import SETTINGS, instrument
+        body = body if isinstance(body, dict) else {}
+        if not isinstance(body.get("prompt"), dict):
+            raise ValueError("Send the prompt ComfyUI would queue")
+        return instrument(body["prompt"], {k: body[k] for k in SETTINGS if body.get(k) not in (None, "")})
+
+    def _node_definitions(self):
+        # Reading every node's inputs lists model folders, so it is kept briefly.
+        now = time.monotonic()
+        cached = getattr(self, "_definitions", None)
+        if cached is None or now - cached[0] > 60:
+            from .comfy_workflow import node_definitions
+            cached = (now, node_definitions())
+            self._definitions = cached
+        return cached[1]
 
     def installed_names(self):
         with self._lock:

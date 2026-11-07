@@ -86,6 +86,12 @@ def all_layer_plan(paths, max_calls, elements):
             "slice_values": ALL_LAYER_SLICE_VALUES, "slice_per_event": ALL_LAYER_SLICE_VALUES // events}
 
 
+# attention_block "auto": the first block in the first denoiser call whose attention reads the prompt.
+AUTO_BLOCK = "auto"
+AUTO_LIMITATION = ("The block was chosen automatically: the first one in the first denoiser call whose attention reads the prompt. "
+                   "Name a block in Model Run · Observe to measure another.")
+
+
 @contextmanager
 def reach_attention(core, override):
     """Send a bypassing model's attention through ``override`` for one call, then put it back.
@@ -167,6 +173,7 @@ class DenoiserObserver:
         if attention_block is not None and (not isinstance(attention_block, str) or not 1 <= len(attention_block) <= 64):
             raise ValueError("attention_block must name a block such as double:0 or output:1")
         self.attention_block = attention_block or None
+        self._auto_block = self.attention_block == AUTO_BLOCK
         self.attention_grid = bounded_int(attention_grid, 4, 64, "attention_grid")
         if token_labels is not None and (not isinstance(token_labels, list) or len(token_labels) > 1024):
             raise ValueError("token_labels must be a bounded list")
@@ -483,7 +490,8 @@ class DenoiserObserver:
                     seen = current.setdefault("seen", [])
                     if label not in seen and len(seen) < 64:
                         seen.append(label)
-                if self.attention_block in (label, audio_label):
+                # auto takes the first block whose attention reads the prompt, then keeps it.
+                if self.attention_block == AUTO_BLOCK or self.attention_block in (label, audio_label):
                     mask = kwargs.get("mask", args[0] if args else None)
                     known, lead = self._image_layout(current["latent_shape"], current["text_tokens"])
                     if self._audio_only and is_audio:
@@ -502,6 +510,11 @@ class DenoiserObserver:
                         current["reason"] = "Self-attention in this block has no text keys"
                     else:
                         self._mixes_text = self._mixes_text or bool(measurement.get("text_spreads"))
+                        if self.attention_block == AUTO_BLOCK:
+                            self.attention_block = audio_label or label
+                            section = (self.trace or {}).get("cross_attention")
+                            if section is not None:
+                                section["selection"] = self.attention_block
                         current["record"] = block_record(self.attention_block, denoiser_call=current["call"], batch_label=current["batch_label"],
                                                          measurement=measurement, block_label=audio_label or label)
             except Exception as exc:  # measurement must never break sampling
@@ -587,6 +600,8 @@ class DenoiserObserver:
                 self.trace["cross_attention"] = new_section(self.attention_block, "comfyui_attention_override",
                                                             token_labels=self.token_labels, max_grid=self.attention_grid)
                 self.trace["cross_attention"]["max_calls"] = MAX_ATTENTION_CALLS
+                if self._auto_block:
+                    self.trace["cross_attention"]["limitations"].append(AUTO_LIMITATION)
                 self.trace["cross_attention"]["limitations"].append("Text token labels come from the node's optional clip and prompt inputs; without them tokens are numbered.")
                 if self._labels_dropped:
                     self.trace["cross_attention"]["limitations"].append("Token labels were dropped because the tokenised prompt does not line up with this model's text keys; tokens are numbered instead.")
@@ -800,7 +815,7 @@ class ModelRunObserve:
                 "elements": ("INT", {"default": 1024, "min": 1, "max": 4096})},
                 "optional": {"output_selectors": ("STRING", {"default": "{}", "multiline": True,
                     "tooltip": "JSON mapping from module path to output tensor path, e.g. {\"transformer_blocks.0\": [1]} selects the audio tensor in an LTX block tuple."}),
-                    "attention_block": ("STRING", {"default": "", "tooltip": "Measure attention to text in one block: audio:0 for the audio stream of an audio+video model, double:0 or single:3 for DiT models, input:4 / middle:0 / output:1 for UNets. Empty disables."}),
+                    "attention_block": ("STRING", {"default": "", "tooltip": "Measure attention to text in one block: audio:0 for the audio stream of an audio+video model, double:0 or single:3 for DiT models, input:4 / middle:0 / output:1 for UNets, or auto for the first block that reads the prompt. Empty disables."}),
                     "attention_grid": ("INT", {"default": 32, "min": 4, "max": 64, "tooltip": "Longest side of the recorded attention grid."}),
                     "clip": ("CLIP", {"tooltip": "Optional: with prompt, labels text tokens in the attention maps."}),
                     "prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The positive prompt, only used to label tokens."}),

@@ -56,9 +56,11 @@ import Compare from "./Compare";
 import ModelInstall from "./ModelInstall";
 import Unlock from "./Unlock";
 import {
+  cancelPrompt,
+  openInComfy,
   queuePrompt,
-  runTemplateInComfy,
   textModelPrompt,
+  uploadInput,
   waitForPrompt,
 } from "./comfyRun";
 import { buildReport } from "./report";
@@ -178,8 +180,12 @@ export function App() {
   const [headView, setHeadView] = useState(null);
   const inComfy = state?.host === "comfyui";
   const native = inComfy && !state?.loaded;
-  // A ComfyUI text model chosen in the library: Run queues it on ComfyUI.
+  // What Run sends to ComfyUI: a text model file ({kind: "text"}) or a workflow template ({kind: "workflow"}).
   const [comfyModel, setComfyModel] = useState(null);
+  const [workflowSettings, setWorkflowSettings] = useState({});
+  const [installStart, setInstallStart] = useState(null);
+  const [comfyProgress, setComfyProgress] = useState("");
+  const comfyJob = useRef(null);
   useEffect(() => {
     if (state?.host) document.documentElement.dataset.host = state.host;
   }, [state?.host]);
@@ -803,41 +809,81 @@ export function App() {
       }),
     );
   }
-  /** ComfyUI: run the chosen text model file through a small graph, and wait while ComfyUI works. */
-  function runComfyText() {
+  /** ComfyUI: choose a workflow template to run, filling in its prompt and settings. */
+  function useComfyWorkflow(workflow) {
+    action(async () => {
+      if (state?.loaded) await api("unload", {});
+      const info = await api("comfy/workflow", { name: workflow.name });
+      setComfyModel({
+        kind: "workflow",
+        name: info.title,
+        template: info.name,
+        workflow: info.workflow,
+        inputs: info.inputs || [],
+      });
+      if (typeof info.defaults.prompt === "string" && info.defaults.prompt)
+        setPrompt(info.defaults.prompt);
+      setWorkflowSettings({
+        seed: info.defaults.seed ?? "",
+        steps: info.defaults.steps ?? "",
+        width: info.defaults.width ?? "",
+        height: info.defaults.height ?? "",
+        files: {},
+      });
+      setModal(null);
+    });
+  }
+  /** ComfyUI: queue the chosen text model or workflow with Model Run's nodes in it, and follow it to the end. */
+  function runComfy() {
     if (!comfyModel || nativeQueued) return;
     setError("");
     setNativeQueued(true);
+    setComfyProgress("Queued in ComfyUI");
     (async () => {
       try {
-        const id = await queuePrompt(
-          textModelPrompt({
+        let queued;
+        if (comfyModel.kind === "workflow") {
+          const files = workflowSettings.files || {};
+          const waiting = comfyModel.inputs.filter(
+            (i) => i.needed && !i.present && !files[i.node],
+          );
+          if (waiting.length)
+            throw new Error(
+              `Choose ${waiting.map((i) => `an ${i.kind} for ${i.title}`).join(" and ")} first: this workflow needs ${waiting.length === 1 ? "it" : "them"}.`,
+            );
+          const number = (v) =>
+            v === "" || v === null || v === undefined ? undefined : Number(v);
+          const built = await api("comfy/workflow", {
+            name: comfyModel.template,
+            prompt,
+            seed: number(workflowSettings.seed),
+            steps: number(workflowSettings.steps),
+            width: number(workflowSettings.width),
+            height: number(workflowSettings.height),
+            files,
+          });
+          queued = built.prompt;
+        } else {
+          queued = textModelPrompt({
             ...comfyModel,
             text: prompt,
             maxLength: responseTokens,
-          }),
+          });
+        }
+        const id = await queuePrompt(queued);
+        comfyJob.current = id;
+        const nodes = Object.fromEntries(
+          Object.entries(queued).map(([key, node]) => [
+            key,
+            node._meta?.title || node.class_type,
+          ]),
         );
-        await waitForPrompt(id);
+        await waitForPrompt(id, { onProgress: setComfyProgress, nodes });
       } catch (e) {
         setError(e.message);
       } finally {
-        setNativeQueued(false);
-      }
-    })();
-  }
-  /** ComfyUI: hand one of ComfyUI's workflow templates to the ComfyUI tab, observed, and wait for it. */
-  function runComfyWorkflow(workflow) {
-    setError("");
-    setModal(null);
-    setComfyModel(null); // the workflow brings its own models
-    setNativeQueued(true);
-    (async () => {
-      try {
-        const queued = await runTemplateInComfy(workflow.name);
-        await waitForPrompt(queued.promptId);
-      } catch (e) {
-        setError(e.message);
-      } finally {
+        comfyJob.current = null;
+        setComfyProgress("");
         setNativeQueued(false);
       }
     })();
@@ -1084,15 +1130,16 @@ export function App() {
             icon={busy ? Stop : Play}
             className="primary run-button"
             disabled={
-              (native && comfyModel && nativeQueued) ||
-              (!native &&
-                !busy &&
-                (!state?.loaded || tree?.kind === "artifact_tensor_namespace"))
+              !native &&
+              !busy &&
+              (!state?.loaded || tree?.kind === "artifact_tensor_namespace")
             }
             onClick={() =>
               native
                 ? comfyModel
-                  ? runComfyText()
+                  ? nativeQueued
+                    ? comfyJob.current && cancelPrompt(comfyJob.current)
+                    : runComfy()
                   : window.open(new URL("../", window.location.href), "comfyui")
                 : busy
                   ? action(() => api("cancel", {}))
@@ -1104,7 +1151,7 @@ export function App() {
             {native
               ? comfyModel
                 ? nativeQueued
-                  ? "Running…"
+                  ? "Cancel"
                   : "Run"
                 : "ComfyUI ↗"
               : busy
@@ -1140,7 +1187,7 @@ export function App() {
             id="prompt"
             value={
               native && !comfyModel
-                ? "Choose a text model in the library, run a ready workflow from Get models, or use Observe this workflow in ComfyUI's Model Run sidebar."
+                ? "Choose a model or workflow in the library, or use Observe this workflow in ComfyUI's Model Run sidebar."
                 : prompt
             }
             readOnly={native && !comfyModel}
@@ -1148,10 +1195,59 @@ export function App() {
             maxLength={8192}
           />
         )}
+        {native &&
+          comfyModel?.kind === "workflow" &&
+          comfyModel.inputs.map((input) => (
+            <label
+              key={input.node}
+              className="workflow-input"
+              title={`${input.title} (${input.node}) reads this file`}
+            >
+              <span>
+                {input.kind[0].toUpperCase() + input.kind.slice(1)}
+                {workflowSettings.files?.[input.node]
+                  ? ""
+                  : input.needed && !input.present
+                    ? " (needed)"
+                    : !input.present
+                      ? " (optional)"
+                      : ""}
+              </span>
+              <input
+                type="file"
+                accept={`${input.kind}/*`}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  uploadInput(file)
+                    .then((name) =>
+                      setWorkflowSettings((s) => ({
+                        ...s,
+                        files: { ...(s.files || {}), [input.node]: name },
+                      })),
+                    )
+                    .catch((err) => setError(err.message));
+                }}
+              />
+            </label>
+          ))}
+        {native && comfyModel?.kind === "workflow" && (
+          <button
+            className="host-link"
+            title="Show this workflow on the ComfyUI canvas, to change it there"
+            onClick={() =>
+              openInComfy(comfyModel.workflow, comfyModel.template).catch((e) =>
+                setError(e.message),
+              )
+            }
+          >
+            Open in ComfyUI ↗
+          </button>
+        )}
         <div className="tokens">
           <span className={busy ? "muted working" : "muted"}>
             {nativeQueued
-              ? "Running in ComfyUI…"
+              ? `${comfyProgress || "Running in ComfyUI"}…`
               : busy
                 ? sessionRef.current
                   ? `Capturing ${{ module: "layer outputs", generation: "the response", attention: "attention" }[sessionRef.current.pending[0]] || "…"} (${Object.keys(sessionRef.current.ids).length + 1} of ${Object.keys(sessionRef.current.ids).length + sessionRef.current.pending.length})…`
@@ -2146,9 +2242,11 @@ export function App() {
               </div>
               {libraryTab === "install" ? (
                 <ModelInstall
+                  key={installStart?.query || "all"}
+                  start={installStart}
                   packages={!!state?.packages}
                   host={state?.host}
-                  onRunWorkflow={inComfy ? runComfyWorkflow : null}
+                  onRunWorkflow={inComfy ? useComfyWorkflow : null}
                   jobs={state?.install?.jobs || []}
                   onInstalled={refreshCatalog}
                 />
@@ -2157,11 +2255,18 @@ export function App() {
                   catalog={catalog}
                   host={state?.host}
                   packages={!!state?.packages}
-                  onGetModels={() => setLibraryTab("install")}
+                  onGetModels={(file) => {
+                    setInstallStart(
+                      file ? { tab: "workflows", query: file } : null,
+                    );
+                    setLibraryTab("install");
+                  }}
+                  onUseWorkflow={inComfy ? useComfyWorkflow : null}
                   onUseComfy={(a) =>
                     action(async () => {
                       if (state?.loaded) await api("unload", {});
                       setComfyModel({
+                        kind: "text",
                         name: a.name.replace(/\.safetensors$/, ""),
                         file: a.name,
                         type: a.comfy_text.type,
@@ -2220,6 +2325,58 @@ export function App() {
                     </Button>
                   </footer>
                 )}
+            </>
+          ) : native && comfyModel ? (
+            <>
+              <p className="muted">
+                {comfyModel.kind === "workflow"
+                  ? `Run sends ${comfyModel.name} to ComfyUI with these settings; empty keeps the workflow's own. The prompt is the one in the prompt bar.`
+                  : `Run sends ${comfyModel.name} to ComfyUI with the prompt in the prompt bar.`}
+              </p>
+              <div className="settings-grid">
+                {comfyModel.kind === "workflow" ? (
+                  [
+                    ["seed", "Seed"],
+                    ["steps", "Steps"],
+                    ["width", "Width"],
+                    ["height", "Height"],
+                  ].map(([key, label]) => (
+                    <Field key={key} label={label}>
+                      <input
+                        type="number"
+                        min={key === "seed" ? 0 : 1}
+                        value={workflowSettings[key] ?? ""}
+                        onChange={(e) =>
+                          setWorkflowSettings((s) => ({
+                            ...s,
+                            [key]: e.target.value,
+                          }))
+                        }
+                      />
+                    </Field>
+                  ))
+                ) : (
+                  <Field label="Response length">
+                    <select
+                      value={responseTokens}
+                      onChange={(e) =>
+                        setResponseTokens(Number(e.target.value))
+                      }
+                    >
+                      {[32, 48, 96, 160, 256, 512].map((n) => (
+                        <option key={n} value={n}>
+                          {n} tokens
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+              </div>
+              <p className="micro">
+                Model Run adds Observe (attention found automatically), Text
+                Encode and VAE Decode for this run only. The workflow on the
+                canvas is not changed.
+              </p>
             </>
           ) : native ? (
             <>

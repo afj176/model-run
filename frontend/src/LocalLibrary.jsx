@@ -74,9 +74,12 @@ export default function LocalLibrary({
   packages,
   onGetModels,
   onUseComfy,
+  onUseWorkflow,
 }) {
   const [search, setSearch] = useState("");
   const [inspected, setInspected] = useState(null);
+  // A model in several ready workflows lists them to choose from.
+  const [choosing, setChoosing] = useState(null);
   const artifacts = withoutPackageFiles(catalog.artifacts)
     .filter(
       (a) =>
@@ -105,7 +108,7 @@ export default function LocalLibrary({
               package, such as Qwen3 0.6B (1.4 GB), and it loads here.
             </span>
           </div>
-          <button className="primary" onClick={onGetModels}>
+          <button className="primary" onClick={() => onGetModels()}>
             Get a model that runs here
           </button>
         </div>
@@ -115,7 +118,7 @@ export default function LocalLibrary({
           ? "Files in your ComfyUI model folders and the packages Model Run downloaded."
           : "Files in your ComfyUI model folders."}{" "}
         {inComfy &&
-          "Text models marked Writes text or Reads prompts run from here through ComfyUI; image and video models run from Get models › By workflow. "}
+          "Run any model here: text models on their own, image, video and audio models in a workflow that is ready with your models. "}
         {standalone
           ? "Files marked Runs here load in this app. The rest need ComfyUI: start Model Run inside ComfyUI to run them; here you can read their headers and explore their tensor names."
           : "Inspect and Explore read any file's header and tensor names without loading it."}
@@ -172,20 +175,31 @@ export default function LocalLibrary({
                   <span
                     className={`run-badge ${(groupOf(a) === "here" && canLoad) || (inComfy && a.comfy_text) ? "here" : ""}`}
                     title={
-                      a.comfy_text
-                        ? a.comfy_text.workflow
-                          ? `Loaded the way ComfyUI's “${a.comfy_text.workflow}” template loads it`
-                          : `No template uses it; loaded like ${a.comfy_text.like}`
-                        : undefined
+                      inComfy &&
+                      !a.comfy_text &&
+                      !a.comfy_workflows?.length &&
+                      !a.comfy_nearest
+                        ? "No ComfyUI template uses this file. Put it in a workflow on the canvas, then use Observe this workflow in the Model Run sidebar."
+                        : a.comfy_text
+                          ? a.comfy_text.workflow
+                            ? `Loaded the way ComfyUI's “${a.comfy_text.workflow}” template loads it`
+                            : `No template uses it; loaded like ${a.comfy_text.like}`
+                          : undefined
                     }
                   >
                     {groupOf(a) === "here" && canLoad
                       ? "Runs here"
-                      : inComfy && a.comfy_text
-                        ? a.comfy_text.mode === "generate"
-                          ? "Writes text"
-                          : "Reads prompts"
-                        : "Runs in ComfyUI"}
+                      : inComfy && a.comfy_workflows?.length && !a.comfy_text
+                        ? `In ${a.comfy_workflows.length} ready workflow${a.comfy_workflows.length === 1 ? "" : "s"}`
+                        : inComfy && a.comfy_nearest && !a.comfy_text
+                          ? `${a.comfy_nearest.missing} file${a.comfy_nearest.missing === 1 ? "" : "s"} from a workflow`
+                          : inComfy && a.comfy_text
+                            ? a.comfy_text.mode === "generate"
+                              ? "Writes text"
+                              : "Reads prompts"
+                            : inComfy
+                              ? "In your own workflows"
+                              : "Runs in ComfyUI"}
                   </span>
                   <button
                     aria-expanded={inspected?.id === a.id}
@@ -205,6 +219,39 @@ export default function LocalLibrary({
                   {["safetensors", "safetensors_index"].includes(a.format) &&
                     a.status === "metadata_inspected" && (
                       <button onClick={() => onExplore(a)}>Explore</button>
+                    )}
+                  {inComfy &&
+                    onUseWorkflow &&
+                    !a.comfy_text &&
+                    a.comfy_workflows?.length > 0 && (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        aria-expanded={
+                          a.comfy_workflows.length > 1
+                            ? choosing === a.id
+                            : undefined
+                        }
+                        title="Run it in a workflow that is ready with your models"
+                        onClick={() =>
+                          a.comfy_workflows.length === 1
+                            ? onUseWorkflow(a.comfy_workflows[0])
+                            : setChoosing(choosing === a.id ? null : a.id)
+                        }
+                      >
+                        Run
+                      </button>
+                    )}
+                  {inComfy &&
+                    !a.comfy_text &&
+                    !a.comfy_workflows?.length &&
+                    a.comfy_nearest && (
+                      <button
+                        title={`${a.comfy_nearest.title} needs ${a.comfy_nearest.missing} more file${a.comfy_nearest.missing === 1 ? "" : "s"} to run`}
+                        onClick={() => onGetModels(a.name)}
+                      >
+                        Get files
+                      </button>
                     )}
                   {inComfy && a.comfy_text && (
                     <button
@@ -226,6 +273,20 @@ export default function LocalLibrary({
                     </button>
                   )}
                 </div>
+                {choosing === a.id && (
+                  <div
+                    className="workflow-choice"
+                    role="group"
+                    aria-label={`Workflows that run ${a.name}`}
+                  >
+                    <span>Run it in:</span>
+                    {a.comfy_workflows.map((w) => (
+                      <button key={w.name} onClick={() => onUseWorkflow(w)}>
+                        {w.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {inspected?.id === a.id && (
                   <InspectSummary report={inspected.report} />
                 )}

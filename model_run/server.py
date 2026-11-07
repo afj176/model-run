@@ -56,6 +56,8 @@ def dispatch(app, method, route, body=None):
         if route == "install/plan": return app.installer.plan(body.get("items"))
         if route == "install/sizes": return app.installer.sizes(body.get("ids"))
         if route == "install/starters": return app.installer.starters()
+        if route == "comfy/workflow": return app.comfy_workflow(body)
+        if route == "comfy/instrument": return app.comfy_instrument(body)
         if route == "install/package-plan": return app.installer.package_plan(body.get("repo"))
         if route == "install/package-start": return app.installer.package_start(body.get("repo"), body.get("confirmed_bytes"))
         if route == "install/start": return app.installer.start(body.get("items"))

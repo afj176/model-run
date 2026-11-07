@@ -1,28 +1,34 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { instrument } from "./instrument.js";
 
-// Model Run beside the canvas: a sidebar, an Observe command, and the runs the Model Run page asks this tab for.
+// Model Run beside the canvas: a sidebar, an Observe command, and the workflows Model Run asks this tab to show.
 const MODEL_RUN = "./model-run/";
 const CHANNEL = "model-run";
 const tabId = Math.random().toString(36).slice(2);
 
 const openModelRun = () => window.open(MODEL_RUN, "model-run");
 
-async function modelRunApi(route) {
+async function modelRunApi(route, body) {
   const session = await api.fetchApi("/model-run/api/session");
   const { token } = await session.json();
   const response = await api.fetchApi(`/model-run/api/${route}`, {
-    headers: { "X-Model-Run-Token": token },
+    method: body ? "POST" : "GET",
+    headers: {
+      "X-Model-Run-Token": token,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  return response.json();
+  const value = await response.json();
+  if (!response.ok) throw new Error(value.error || response.statusText);
+  return value;
 }
 
-/** Queue the open canvas with Model Run's nodes added. The canvas itself is not changed. */
-async function observeAndQueue({ promptText } = {}) {
+/** Queue the open canvas with Model Run's nodes added, by the server, for this run only. The canvas is not changed. */
+async function observeAndQueue() {
   const graph = await app.graphToPrompt();
-  const { prompt, changes, observed } = instrument(graph.output, {
-    promptText,
+  const { prompt, changes, observed } = await modelRunApi("comfy/instrument", {
+    prompt: graph.output,
   });
   if (!observed)
     throw new Error(
@@ -48,25 +54,16 @@ async function observeAndQueue({ promptText } = {}) {
   return { changes, promptId: result.prompt_id };
 }
 
-/** Open a ComfyUI workflow template on the canvas, then queue it observed. */
-async function runTemplate(name, promptText) {
-  // Templates are served beside ComfyUI's page, not under its /api.
-  const path = `/templates/${encodeURIComponent(name)}.json`;
-  const response = await fetch(api.fileURL ? api.fileURL(path) : `.${path}`);
-  if (!response.ok) throw new Error(`ComfyUI has no template called ${name}`);
-  await app.loadGraphData(await response.json(), true, true, name);
-  return observeAndQueue({ promptText });
-}
-
-// The Model Run page finds this tab and hands it workflows to run; any open ComfyUI tab answers.
+// Model Run finds an open ComfyUI tab and shows the workflow it ran on the canvas, to change and run again.
 const channel = new BroadcastChannel(CHANNEL);
 channel.onmessage = async ({ data }) => {
   if (data?.type === "ping")
     channel.postMessage({ type: "pong", id: data.id, tab: tabId });
-  if (data?.type !== "run-template" || data.tab !== tabId) return;
+  if (data?.type !== "open-workflow" || data.tab !== tabId) return;
   try {
-    const done = await runTemplate(data.name, data.prompt);
-    channel.postMessage({ type: "result", id: data.id, ok: true, ...done });
+    await app.loadGraphData(data.workflow, true, true, data.name);
+    window.focus();
+    channel.postMessage({ type: "result", id: data.id, ok: true });
   } catch (error) {
     channel.postMessage({
       type: "result",

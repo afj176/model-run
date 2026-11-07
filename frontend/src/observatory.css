@@ -4196,3 +4196,37 @@ i.after {
     margin-left: 0;
   }
 }
+
+/* A model in several ready workflows: choose which one runs it. */
+.workflow-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.workflow-choice button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.input-bar .host-link {
+  margin-left: 0;
+  align-self: center;
+}
+
+/* A file a workflow reads, chosen beside the prompt. */
+.workflow-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.workflow-input input {
+  max-width: 190px;
+  font-size: 12px;
+}

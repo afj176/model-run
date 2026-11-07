@@ -165,6 +165,17 @@ def read_templates(comfy_dir, notes):
 TEMPLATE_NAME = re.compile(r"[A-Za-z0-9][\w.-]{0,199}")
 
 
+def read_template(name, comfy_dir=None):
+    """A ComfyUI workflow template as saved (the canvas format), or ValueError."""
+    if not isinstance(name, str) or not TEMPLATE_NAME.fullmatch(name):
+        raise ValueError("Invalid workflow template name")
+    for package in _package_dirs("comfyui_workflow_templates_json", comfy_dir):
+        path = os.path.join(package, "templates", f"{name}.json")
+        if os.path.isfile(path):
+            return _read(path)
+    raise ValueError(f"ComfyUI has no workflow template called {name}")
+
+
 def template_thumbnail(name, comfy_dir=None):
     """The installed preview image for a workflow template, or None. ComfyUI ships them in its template media packages."""
     if not isinstance(name, str) or not TEMPLATE_NAME.fullmatch(name):
