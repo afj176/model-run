@@ -98,7 +98,7 @@ How much is still unchecked, including which models people use most, is in [the 
 Not in this table:
 
 - LTX 2.5 with audio, HiDream-O1 and SeedVR2 are checked on real weights below instead.
-- SVD, Stable Zero123, SV3D, Lotus, SD x4 upscaler, instruct-pix2pix, SSD-1B, LongCat Image, Ming Image, Hunyuan Video 1.5 and the other subclasses use a network class listed above with a different config. They have not been run themselves.
+- Subclasses that use a network class listed above with a different config, such as SVD, Lotus, SSD-1B, LongCat Image, Ming Image and Hunyuan Video 1.5, ran on real weights where a file could be found; see [Same-network configs](#same-network-configs-on-real-weights).
 - SAM 3, Depth Anything 3, RT-DETR, MoGe and SAM 3D Body do not sample, so `Observe`, which records sampler calls, does not apply to them.
 - YuE 2, MiniMax Music 3 and SenseNova U1.5 were built from their fixed sizes with fewer layers or smaller settings, and SenseNova's text path was not exercised.
 
@@ -212,6 +212,41 @@ ComfyUI-WanVideoWrapper's sampler calls its transformer directly, so ComfyUI's M
 | Setup | Result |
 |---|---|
 | Kijai's Wan 2.1 T2V 1.3B `bf16` through WanVideo Model Loader and WanVideo Sampler, SDPA attention, 480x320, 9 frames, 10 steps | Frame pixel-identical with every block recorded (124 events over 4 calls) and with two chosen blocks; a plain run afterwards still matched. Token-grid and frame views work. Its attention is routed through Observe's hook: maps on `double:2` and `double:15` stayed pixel-identical in `sdpa` and `comfy` modes, labels from the pack's T5 tokenizer matched its 8 text tokens, and masking "red" gave a white cube while "wooden" removed the table |
+
+## Same-network configs on real weights
+
+ComfyUI detection configs whose network class had already run on real weights, each run with its own released file. Every row: two plain runs matched, and Model Run · Observe on two blocks matched the plain run pixel for pixel (audio byte for byte). Word test: the attention to "red" or "wooden" masked, then the picture checked by eye. With a start image or a control, the picture is mostly set by that, so a weak word test there says little.
+
+| Config and file | Result |
+|---|---|
+| SD 2.x: SD 2.1 768 `v2-1_768-ema-pruned` (sd2-community mirror; Stability's repo is gone) | Maps and labels on `output:4` and `input:8`. Masking changed little, so labels stay unchecked |
+| SD 2.1 unCLIP-H, with a reference image | Maps and labels; word test inconclusive |
+| SDXL Refiner | Its `output:1` has no cross-attention (it has 11 attention blocks, `input:4` to `output:8`); maps on `input:7`. Word test inconclusive |
+| Segmind Vega | Maps and labels on `output:1` and `input:7`; word test inconclusive |
+| SSD-1B (Segmind, single file) | Maps and labels on `output:1` and `input:7`; masking changed little |
+| KOALA 700M and 1B (Diffusers UNets with the SDXL encoders) | Maps and labels on `output:1`; the 700M has no attention in its middle block. Masking "wooden" removed the table in both; "red" changed little |
+| SD x4 upscaler | Maps on `output:4` and `input:8`; no word test, the input picture sets the result |
+| Lotus depth | Maps; it reads one fixed embedding, so there are no words |
+| SVD XT, 576x320, 9 frames | Frame pixel-identical, layers and steps recorded. Its cross-attention reads one CLIP image token, so the map is all on that token and there are no words |
+| PixArt Alpha 1024 | Maps and labels on `call:1` (`call:14` is self-attention); word test passed |
+| Flux Schnell | Maps and labels on `double:0` and `single:10`; masking "red" passed |
+| Flux Fill (`flux1-fill-dev`), repainting the middle of a picture | Maps and labels; masking "red" gave a white cube and "wooden" a drawn, unpainted table |
+| LongCat Image | Its encoder drops the template's opening and its closing turn; labels now line up with that, and the word test passed |
+| Kandinsky 5 Image | Its keys come from the shorter of its two token lists (Qwen, not CLIP-L); labels now read from that list. Masking "red" passed |
+| Ming Image 0.1 Design `int8`, its `int8` Ling encoder | Maps on `double:0` and `double:15`. Its 256 text keys are learned query tokens the language model reads the prompt into, not the prompt's tokens, so they are numbered and the app says so |
+| Stable Audio 3 Medium, t5gemma encoder, 8 seconds | Output identical. Time-strip maps on `call:10`; its keys are the prompt, a learned padding embedding up to 256, then the seconds number, and labels now follow that. Not checked by ear |
+| Wan 2.1 T2V 1.3B | Frame pixel-identical, maps and labels. Masking "red" gave a white cube, "wooden" removed the table |
+| Wan 2.1 I2V 480p 14B `fp8`, start image | Same; masking "wooden" removed the table, the figure comes from the start image |
+| Wan 2.1 Fun Control 1.3B, canny control | Same; the control sets the scene, so masking changed little |
+| Wan 2.2 Fun Camera low noise 14B `fp8`, zoom-in path | Same; masking "red" turned the figure blue, "wooden" removed the table |
+| Cosmos 1 7B Video2World, 1280x704, 33 frames | Same, on `call:1` and `call:15`; at this size only the first two calls fit the map budget. Masking "wooden" removed the wood floor |
+| Cosmos Predict 2 2B Video2World | Same, on `call:15` and `call:41`; masking "wooden" removed the table, "red" did not change the cube's colour |
+| Hunyuan Video I2V 720p, LLaVA image prompt, `v1 (concat)` | Same, on `double:0` and `single:10`. Its keys start with 288 LLaVA image tokens, now labelled `<image>` before the prompt; masking changed little |
+| Hunyuan Video 1.5 720p T2V | Same, on `double:0` and `double:30`. Masking "red" gave a brown cube, "wooden" a plain table |
+| Hunyuan Video 1.5 720p I2V, SigCLIP image prompt | Same. Its image prompt's 729 tokens come before the text, which left maps out until the text start was moved past them. Masking "wooden" removed the wood |
+| Hunyuan Video 1.5 1080p SR distilled `fp8`, with the 1080p latent upsampler | Same; no word test, the input picture sets the result |
+
+No usable file was found for the rest: Stable Zero123 and SD 2.1 unCLIP-L are published only as `.ckpt` pickles, which the installer refuses, and InstructPix2Pix, SV3D, Hunyuan Image 2.1 and its refiner, SkyReels I2V, Wan FlowRVS, Hunyuan3D 2 mini and the CogVideoX T2V and I2V configs had no file found in a form ComfyUI loads.
 
 ## Language models in ComfyUI
 

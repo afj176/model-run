@@ -260,6 +260,30 @@ class PublishSafetyTests(unittest.TestCase):
         del arguments["c"]["num_tokens"]
         self.assertEqual(observer._attention_context(0, arguments)["text_tokens"], 256)
 
+    def test_hunyuan_video_15_image_prompt_tokens_come_before_the_text(self):
+        class HunyuanVideo(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer = torch.nn.Linear(4, 4)
+                self.vision_in = torch.nn.Identity()
+            def forward(self, value):
+                return self.layer(value)
+        patcher = Patcher()
+        patcher.model.diffusion_model = HunyuanVideo().eval()
+        observer = DenoiserObserver(patcher, ["layer"], max_calls=1, elements=3, attention_block="double:0")
+        arguments = {"input": torch.zeros(1, 32, 1, 4, 4), "c": {"c_crossattn": torch.zeros(1, 2, 8), "clip_fea": torch.zeros(1, 3, 8)}}
+        current = observer._attention_context(0, arguments)
+        self.assertEqual((current["text_tokens"], current["text_lead"]), (2, 3))
+        # Keys run three SigCLIP tokens, two prompt tokens, then a 2x2 image.
+        q = torch.zeros(1, 1, 9, 4)
+        k = torch.zeros(1, 1, 9, 4)
+        k[0, 0, 4, 0] = 8.0  # the second prompt token
+        q[0, 0, 5:, 0] = 1.0
+        observer._current = current
+        observer.attention_override(lambda *args, **kwargs: None, q, k, k, 1, transformer_options={"block_type": "double", "block_index": 0})
+        self.assertIsNone(current["reason"])
+        self.assertIsNotNone(current["record"])
+
     def test_publish_failure_never_breaks_sampling(self):
         patcher = Patcher()
         attempts = []

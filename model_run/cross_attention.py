@@ -302,9 +302,15 @@ def align_labels(labels, text_tokens):
     if len(labels) > text_tokens and labels[-text_tokens] == "<|im_start|>":
         return list(labels[-text_tokens:])
     # Others, as Kandinsky 5, also drop the user header and its line break.
-    header = [label.strip(" ").replace("⏎", "\n") for label in labels[-text_tokens - 3:-text_tokens]] if len(labels) >= text_tokens + 3 else None
+    plain = [str(label).strip(" ").replace("⏎", "\n") for label in labels]
+    header = plain[-text_tokens - 3:-text_tokens] if len(labels) >= text_tokens + 3 else None
     if header == ["<|im_start|>", "user", "\n"]:
         return list(labels[-text_tokens:])
+    # LongCat also drops the closing turn: what is left runs from after the user header to the last <|im_end|>.
+    starts = [i + 3 for i in range(len(plain) - 2) if plain[i:i + 3] == ["<|im_start|>", "user", "\n"]]
+    end = max((i for i, label in enumerate(plain) if label == "<|im_end|>"), default=None)
+    if starts and end is not None and end - starts[-1] == text_tokens:
+        return list(labels[starts[-1]:end])
     return None
 
 
@@ -313,6 +319,13 @@ def stable_audio_labels(labels, text_tokens):
     if not labels or len(labels) + 2 != text_tokens:
         return None
     return [*labels, "<seconds start>", "<seconds total>"]
+
+
+def stable_audio_3_labels(labels, text_tokens):
+    """Stable Audio 3 pads the prompt with one learned embedding, then adds its seconds-total number; None if the prompt does not fit."""
+    if not labels or len(labels) >= text_tokens:
+        return None
+    return [*labels, *["<pad>"] * (text_tokens - 1 - len(labels)), "<seconds total>"]
 
 
 def key_mask(ablated, key_count, *, start=0, existing=None, device=None, dtype=None):

@@ -72,6 +72,8 @@ class EncoderLabelTests(unittest.TestCase):
         self.assertIsNone(labels_from_encoders("Flux", sets, 3))
         llama = {"llama": ["system", "x", "user", "h", "n", "a", "red", "eot", "more"]}
         self.assertEqual(labels_from_encoders("HunyuanVideo", llama, 3), ["a", "red", "eot"])
+        i2v = {"llama": ["system", "x", "user", "h", "n", "a", "red", "eot"]}
+        self.assertEqual(labels_from_encoders("HunyuanVideo", i2v, 5), ["<image>", "<image>", "a", "red", "eot"])
         hydit = {"hydit_clip": ["[CLS]", "red", "[SEP]"], "mt5xl": ["red", "</s>", "<pad>", "<pad>"]}
         self.assertEqual(labels_from_encoders("HunYuanDiT", hydit, 7), ["[CLS]", "red", "[SEP]", "red", "</s>", "<pad>", "<pad>"])
         self.assertIsNone(labels_from_encoders("HunYuanDiT", hydit, 3))

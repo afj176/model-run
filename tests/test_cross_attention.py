@@ -5,7 +5,7 @@ try:
 except ImportError:
     torch = None
 
-from model_run.cross_attention import image_grid, pooled_grid, measure, stable_audio_labels, text_key_range, MAX_MAP_VALUES
+from model_run.cross_attention import image_grid, pooled_grid, measure, stable_audio_labels, stable_audio_3_labels, text_key_range, MAX_MAP_VALUES
 
 
 class GridTests(unittest.TestCase):
@@ -132,6 +132,11 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(stable_audio_labels(["a", "</s>"], 4), ["a", "</s>", "<seconds start>", "<seconds total>"])
         self.assertIsNone(stable_audio_labels(["a", "</s>"], 3))
 
+    def test_stable_audio_3_labels_name_its_padding_and_seconds(self):
+        self.assertEqual(stable_audio_3_labels(["a", "dog"], 5), ["a", "dog", "<pad>", "<pad>", "<seconds total>"])
+        self.assertEqual(stable_audio_3_labels(["a", "dog"], 3), ["a", "dog", "<seconds total>"])
+        self.assertIsNone(stable_audio_3_labels(["a", "dog"], 2))
+
     def test_image_can_start_after_padded_text(self):
         # Z-Image: 5 words, 3 padding, 16 image tokens.
         joined = torch.zeros(1, 2, 24, 8)
@@ -254,6 +259,10 @@ class LabelAlignmentTests(unittest.TestCase):
         self.assertIsNone(align_labels(header_cut, 4))
         shown = [label.replace("\n", "⏎") for label in header_cut]  # how readable_piece shows line breaks
         self.assertEqual(align_labels(shown, 3), ["a", "cat", "<|im_end|>"])
+        # LongCat keeps only the prompt, padded, between the user header and the closing <|im_end|>.
+        both_cut = ["<|im_start|>", "system", "x", "<|im_end|>", "\n", "<|im_start|>", "user", "\n", "a", "cat", "<pad>", "<|im_end|>", "\n", "<|im_start|>", "assistant"]
+        self.assertEqual(align_labels(both_cut, 3), ["a", "cat", "<pad>"])
+        self.assertIsNone(align_labels(both_cut, 4))
         self.assertIsNone(align_labels(["a", "b", "c"], 2))
         self.assertIsNone(align_labels(["a"], 2))
         self.assertIsNone(align_labels(None, 2))

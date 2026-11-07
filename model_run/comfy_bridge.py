@@ -14,7 +14,7 @@ from .comfy_paths import NOT_INSTALL_FOLDERS
 from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
 from .tensor_slices import SliceRecorder
-from .cross_attention import stable_audio_labels, collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
+from .cross_attention import stable_audio_labels, stable_audio_3_labels, collapse_padding, UNCHECKED_LABEL_LIMITATION, joint_by_geometry, REGISTER_LIMITATION, TEXT_MIXING_LIMITATION, place_registers, measure, block_record, new_section, key_mask, text_key_range, parse_token_list, align_labels, ABLATION_LIMITATIONS
 
 MAX_ATTENTION_CALLS = 4
 MAX_SECTION_VALUES = 524288  # aggregate cross-attention map values per trace
@@ -41,6 +41,9 @@ REBUILT_PROMPT_LIMITATION = ("This model's text node adds settings such as bpm a
 SHAPE_MODELS = {"HunYuanDiTPlain", "Hunyuan3Dv2", "LatentSeqMMFlowModel", "Trellis2"}
 SHAPE_LIMITATION = ("This model makes a 3D shape from a picture. The tokens on this map are that picture's features, not words, "
                     "and a voxel model's frames are depth slices through the shape.")
+QUERY_TEXT_MODELS = {"MingImage"}  # by the ComfyUI model, since its denoiser is Lumina 2's NextDiT
+QUERY_TEXT_LIMITATION = ("This model's text keys are learned query tokens that its language model reads the prompt into, not the prompt's own "
+                         "tokens. They are numbered, and masking one masks a query, not a word.")
 LABELS_CHECKED = {"Anima", "AsymmDiTJoint", "GeneralDIT", "Kandinsky5", "CogVideoXTransformer3DModel", "LTXVModel", "MMDiT", "MiniTrainDIT", "HumoWanModel", "WanModel_S2V", "BooguTransformer2DModel", "Chroma", "ChromaRadiance", "ErnieImageModel", "Ideogram4Transformer2DModel", "JoyImageTransformer3DModel", "LensTransformer2DModel", "MageFlowTransformer2DModel", "OmniGen2Transformer2DModel", "PixDiT_T2I", "Flux", "HiDreamImageTransformer2DModel", "HunyuanVideo", "OpenAISignatureMMDITWrapper", "VaceWanModel", "MiniMaxH3Model", "MOSSImage", "NextDiT", "PixArtMS", "WanModel", "QwenImage21Transformer2DModel", "HiDreamO1Transformer", "LTXAVModel", "SingleStreamDiT"}
 LABELS_CHECKED_UNET_TEXT = {768, 2048}  # SD 1.5 and SDXL
 MAX_LAYER_PATHS = 65
@@ -376,8 +379,16 @@ class DenoiserObserver:
         if type(self.core).__name__ in SCAIL_MODELS and isinstance(reference, torch.Tensor) and reference.ndim == 5:
             patch = self.core.patch_size
             scail_lead = (int(reference.shape[-3]) // patch[0]) * (int(reference.shape[-2]) // patch[1]) * (int(reference.shape[-1]) // patch[2])
+        text_lead = 0
+        if type(self.core).__name__ == "HunyuanVideo":
+            # Hunyuan Video 1.5 puts an image prompt's SigCLIP tokens, then any byT5 glyph tokens, before the prompt's.
+            fea, byt5 = conditioning.get("clip_fea"), conditioning.get("txt_byt5")
+            if getattr(self.core, "vision_in", None) is not None and isinstance(fea, torch.Tensor) and fea.ndim == 3:
+                text_lead += int(fea.shape[1])
+            if getattr(self.core, "cond_type_embedding", None) is not None and getattr(self.core, "byt5_in", None) is not None and isinstance(byt5, torch.Tensor) and byt5.ndim == 3:
+                text_lead += int(byt5.shape[1])
         return {"call": call, "latent_shape": latent_shape, "audio_steps": audio_steps, "reference_tokens": self._reference_token_count(arguments), "text_tokens": text_tokens,
-                "scail_lead": scail_lead, "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
+                "text_lead": text_lead, "scail_lead": scail_lead, "batch_index": batch_index, "batch_label": batch_label, "record": None, "reason": None,
                 "measure": measure_call}
 
     def _skip(self, call, reason):
@@ -413,6 +424,7 @@ class DenoiserObserver:
         current = self._current
         if current is not None:
             current["override_seen"] = True
+        text_start = self._text_start if self._text_start == -1 or current is None else self._text_start + int(current.get("text_lead") or 0)
         if current is not None and self.ablate_tokens:
             try:
                 options = kwargs.get("transformer_options") or {}
@@ -424,7 +436,7 @@ class DenoiserObserver:
                 known, lead = self._image_layout(current["latent_shape"], current["text_tokens"])
                 # A known layout says it is joint attention where the lengths alone cannot.
                 joint = joint or bool(known and not lead and query_count == key_count and query_count > known)
-                span = text_key_range(query_count, key_count, current["text_tokens"], allow_joint=joint, text_start=self._text_start)
+                span = text_key_range(query_count, key_count, current["text_tokens"], allow_joint=joint, text_start=text_start)
                 if self._image_first:
                     start = self._image_layout(current["latent_shape"], current["text_tokens"])[0] or query_count
                     span = (start, start + current["text_tokens"]) if key_count >= start + current["text_tokens"] else None
@@ -481,7 +493,7 @@ class DenoiserObserver:
                     # Z-Image pads its text to a multiple, so the image starts where the queries' length says.
                     image_at = query_count - known if known and type(self.core).__name__ in ("NextDiT", "NextDiTPixelSpace") else None
                     measurement = measure(q, k, heads=heads, text_tokens=current["text_tokens"], latent_shape=current["latent_shape"],
-                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=self._text_start, reference_tokens=current.get("reference_tokens", 0),
+                                          mask=mask, batch_index=current["batch_index"], max_grid=self.attention_grid, stream="audio" if is_audio else None, text_start=text_start, reference_tokens=current.get("reference_tokens", 0),
                                           image_first=self._image_first, known_image_tokens=known, query_lead=lead, image_at=image_at)
                     if "unavailable" in measurement:
                         current["reason"] = measurement["unavailable"]
@@ -539,12 +551,18 @@ class DenoiserObserver:
             self._registers = bool(getattr(connector, "num_learnable_registers", None))
             aligned = (place_registers if self._registers else align_labels)(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ == "AudioDiffusionTransformer":
-                aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
+                if getattr(self.base_model, "padding_embedding", None) is not None:
+                    aligned = stable_audio_3_labels(self.token_labels, current["text_tokens"])
+                else:
+                    aligned = stable_audio_labels(self.token_labels, current["text_tokens"])
             if aligned is None and type(self.core).__name__ in ZERO_PADDED_MODELS | {"AsymmDiTJoint"} and len(self.token_labels) > current["text_tokens"]:
                 # Mochi keeps the front of its padded prompt, as the zero-padded models do.
                 aligned = list(self.token_labels[:current["text_tokens"]])
             if aligned is None:
                 aligned = labels_from_encoders(type(self.core).__name__, self.token_label_sets, current["text_tokens"])
+            if aligned is None:
+                # With several encoders the longest list is read first; Kandinsky 5 Image's keys come from its shorter Qwen list.
+                aligned = next((found for found in (align_labels(own, current["text_tokens"]) for own in self.token_label_sets.values()) if found), None)
             if aligned is None and type(self.core).__name__ in TAIL_TEXT_MODELS and len(self.token_labels) > current["text_tokens"]:
                 # These encoders keep only what follows the template's opening, ending with the same tokens.
                 aligned = list(self.token_labels[-current["text_tokens"]:])
@@ -617,6 +635,8 @@ class DenoiserObserver:
             self.trace["cross_attention"]["limitations"].append(SECOND_TEXT_LIMITATION)
         if type(self.core).__name__ in SHAPE_MODELS and "cross_attention" in self.trace and SHAPE_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(SHAPE_LIMITATION)
+        if type(self.base_model).__name__ in QUERY_TEXT_MODELS and "cross_attention" in self.trace and QUERY_TEXT_LIMITATION not in self.trace["cross_attention"]["limitations"]:
+            self.trace["cross_attention"]["limitations"].append(QUERY_TEXT_LIMITATION)
         if self._mixes_text and "cross_attention" in self.trace and TEXT_MIXING_LIMITATION not in self.trace["cross_attention"]["limitations"]:
             self.trace["cross_attention"]["limitations"].append(TEXT_MIXING_LIMITATION)
         if "cross_attention" in self.trace and self._skipped:
@@ -853,9 +873,10 @@ def labels_from_encoders(model, sets, text_tokens):
         return [*first, *t5] if first and t5 and len(first) + len(t5) == text_tokens else None
     if model == "HunyuanVideo" and "user" in sets.get("llama", []):
         # Its encoder cuts the template's opening: the keys start after the user header and its line break.
+        # With an image prompt (Hunyuan Video I2V), its LLaVA image tokens come first, so they are the shortfall.
         start = sets["llama"].index("user") + 3
         kept = sets["llama"][start:start + text_tokens]
-        return kept if len(kept) == text_tokens else None
+        return [*["<image>"] * (text_tokens - len(kept)), *kept] if kept else None
     if model == "HunYuanDiT":
         # Its keys are its BERT encoder's tokens, then mT5's.
         bert, mt5 = sets.get("hydit_clip", []), sets.get("mt5xl", [])
