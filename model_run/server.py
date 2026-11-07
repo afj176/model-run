@@ -55,6 +55,9 @@ def dispatch(app, method, route, body=None):
         if route == "install/hub-files": return app.installer.hub_files(body.get("repo"), names=app.installed_names())
         if route == "install/plan": return app.installer.plan(body.get("items"))
         if route == "install/sizes": return app.installer.sizes(body.get("ids"))
+        if route == "install/starters": return app.installer.starters()
+        if route == "install/package-plan": return app.installer.package_plan(body.get("repo"))
+        if route == "install/package-start": return app.installer.package_start(body.get("repo"), body.get("confirmed_bytes"))
         if route == "install/start": return app.installer.start(body.get("items"))
         if route == "install/cancel": return app.installer.cancel(body.get("id"), discard=bool(body.get("discard")))
         if route == "load": return app.load(body.get("id"), body.get("device", "cpu"))
@@ -139,6 +142,7 @@ def main():
     parser.add_argument("--models-dir", help="ComfyUI models root")
     parser.add_argument("--extra-paths", action="append", default=[])
     parser.add_argument("--comfy-dir", help="ComfyUI folder, for its model lists and model folders")
+    parser.add_argument("--packages-dir", help="Where complete Hugging Face packages are downloaded (default: packages beside the app)")
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
     from .comfy_paths import NOT_INSTALL_FOLDERS, comfy_folder_paths, standard_model_paths, read_extra_paths
@@ -154,7 +158,9 @@ def main():
     folders = [entry for entry in entries if entry["category"] not in NOT_INSTALL_FOLDERS]
     entries = [entry for entry in entries if entry.get("exists", True)]
     comfy_dir = args.comfy_dir or (str(Path(args.models_dir).resolve().parent) if args.models_dir else None)
-    app = Application(entries, install_folders=folders, comfy_dir=comfy_dir)
+    packages_dir = Path(args.packages_dir) if args.packages_dir else Path(__file__).resolve().parent.parent / "packages"
+    packages_dir.mkdir(parents=True, exist_ok=True)
+    app = Application(entries, install_folders=folders, comfy_dir=comfy_dir, packages_dir=packages_dir)
     server = make_server(app, args.port)
     print(f"Model Run: http://127.0.0.1:{server.server_port}", flush=True)
     app.scan()

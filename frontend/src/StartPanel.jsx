@@ -77,7 +77,7 @@ export default function StartPanel({
         <li>
           <b>Choose a model</b>
           <span>
-            From your ComfyUI folders. Models marked Runs here load in this app.
+            One marked Runs here, or a starter from Get models › Runs here.
           </span>
           <button className="primary" onClick={onOpenLibrary}>
             <FolderOpen aria-hidden="true" /> Open the model library

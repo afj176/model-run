@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { formatBytes, installProgress, planTotals } from "./installData";
+import {
+  formatBytes,
+  groupJobs,
+  installProgress,
+  planTotals,
+} from "./installData";
 import { SECTIONS, sectionOf } from "./libraryData";
+import { PackageConfirm, RepoRow, StarterRow } from "./Packages";
 
 const SOURCES = { templates: "ComfyUI templates", manager: "ComfyUI Manager" };
 const ACTIVE = ["queued", "downloading", "verifying"];
 const TABS = [
+  ["runs", "Runs here"],
   ["workflows", "By workflow"],
   ["models", "All files"],
   ["hub", "Hugging Face"],
@@ -287,8 +294,12 @@ function Confirm({ plan, onFolder, onCancel, onConfirm, working }) {
 
 function Jobs({ jobs, onRetry, onError }) {
   if (!jobs.length) return null;
-  const cancel = (id, discard) =>
-    api("install/cancel", { id, discard }).catch((e) => onError(e.message));
+  const cancel = (row, discard) =>
+    Promise.all(
+      (row.members || [row])
+        .filter((j) => ACTIVE.includes(j.status))
+        .map((j) => api("install/cancel", { id: j.id, discard })),
+    ).catch((e) => onError(e.message));
   const finished = jobs.filter((j) => !ACTIVE.includes(j.status)).length;
   return (
     <div className="install-jobs" aria-label="Downloads">
@@ -304,7 +315,7 @@ function Jobs({ jobs, onRetry, onError }) {
           </button>
         )}
       </div>
-      {jobs.map((job) => {
+      {groupJobs(jobs).map((job) => {
         const progress = installProgress(job);
         const active = ACTIVE.includes(job.status);
         return (
@@ -322,10 +333,10 @@ function Jobs({ jobs, onRetry, onError }) {
               {job.error && <small className="install-note">{job.error}</small>}
             </div>
             {active && (
-              <button onClick={() => cancel(job.id, false)}>Pause</button>
+              <button onClick={() => cancel(job, false)}>Pause</button>
             )}
             {active && (
-              <button onClick={() => cancel(job.id, true)}>Cancel</button>
+              <button onClick={() => cancel(job, true)}>Cancel</button>
             )}
             {["failed", "cancelled"].includes(job.status) && (
               <button onClick={() => onRetry(job)}>Retry</button>
@@ -338,8 +349,12 @@ function Jobs({ jobs, onRetry, onError }) {
 }
 
 /** Find models in the lists ComfyUI ships or on Hugging Face, and install them into ComfyUI's folders. */
-export default function ModelInstall({ jobs, onInstalled }) {
-  const [tab, setTab] = useState("workflows");
+export default function ModelInstall({ jobs, onInstalled, packages }) {
+  // Inside ComfyUI, ComfyUI loads the models, so there are no packages to get for this app.
+  const tabs = packages ? TABS : TABS.filter(([id]) => id !== "runs");
+  const [tab, setTab] = useState(tabs[0][0]);
+  const [starters, setStarters] = useState(null);
+  const [packagePlan, setPackagePlan] = useState(null);
   const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
@@ -385,6 +400,18 @@ export default function ModelInstall({ jobs, onInstalled }) {
     if (installedCount) onInstalled?.();
   }, [installedCount, onInstalled]);
 
+  // Starter sizes and access come from Hugging Face, asked when this tab opens and after each install.
+  useEffect(() => {
+    if (tab !== "runs") return undefined;
+    let alive = true;
+    api("install/starters", {})
+      .then((r) => alive && setStarters(r))
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [tab, installedCount]);
+
   async function guarded(fn) {
     setError("");
     setWorking(true);
@@ -418,6 +445,20 @@ export default function ModelInstall({ jobs, onInstalled }) {
       setFiles(null);
       setRepos((await api("install/hub", { query })).repos);
     });
+  const checkPackage = (repo) =>
+    guarded(async () => {
+      setPlan(null);
+      setPackagePlan(await api("install/package-plan", { repo }));
+    });
+  const startPackage = () =>
+    guarded(async () => {
+      await api("install/package-start", {
+        repo: packagePlan.repo,
+        confirmed_bytes: packagePlan.download_bytes,
+      });
+      setPackagePlan(null);
+    });
+  const runnable = repos?.filter((r) => r.verdict === "runs_here");
   const openRepo = (repo) =>
     guarded(async () => {
       setFiles(await api("install/hub-files", { repo }));
@@ -433,13 +474,16 @@ export default function ModelInstall({ jobs, onInstalled }) {
   return (
     <div className="model-install">
       <div className="tabs" role="tablist" aria-label="Where to look">
-        {TABS.map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button
             key={id}
             role="tab"
             aria-selected={tab === id}
             className={tab === id ? "active" : ""}
-            onClick={() => setTab(id)}
+            onClick={() => {
+              setTab(id);
+              setFiles(null);
+            }}
           >
             {label}
           </button>
@@ -453,12 +497,19 @@ export default function ModelInstall({ jobs, onInstalled }) {
               ? "Search workflows…"
               : tab === "hub"
                 ? "Search Hugging Face…"
-                : "Search every file ComfyUI lists: models, VAEs, LoRAs…"
+                : tab === "runs"
+                  ? "Search Hugging Face for models that run here…"
+                  : "Search every file ComfyUI lists: models, VAEs, LoRAs…"
           }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
-            if (tab === "hub" && e.key === "Enter" && query.trim()) searchHub();
+            if (
+              ["hub", "runs"].includes(tab) &&
+              e.key === "Enter" &&
+              query.trim()
+            )
+              searchHub();
           }}
         />
         {tab === "models" && (
@@ -483,7 +534,7 @@ export default function ModelInstall({ jobs, onInstalled }) {
             </label>
           </>
         )}
-        {tab === "hub" && (
+        {["hub", "runs"].includes(tab) && (
           <button disabled={working || !query.trim()} onClick={searchHub}>
             Search online
           </button>
@@ -509,6 +560,14 @@ export default function ModelInstall({ jobs, onInstalled }) {
         </div>
       )}
       {error && <p className="install-note">{error}</p>}
+      {packagePlan && (
+        <PackageConfirm
+          plan={packagePlan}
+          working={working}
+          onCancel={() => setPackagePlan(null)}
+          onConfirm={startPackage}
+        />
+      )}
       {plan && (
         <Confirm
           plan={plan}
@@ -527,17 +586,56 @@ export default function ModelInstall({ jobs, onInstalled }) {
         jobs={jobs}
         onError={setError}
         onRetry={(job) =>
-          check([
-            {
-              url: job.url,
-              category: job.category,
-              filename: job.filename,
-              ...(job.sha256 ? { sha256: job.sha256 } : {}),
-            },
-          ])
+          job.package
+            ? checkPackage(job.package)
+            : check([
+                {
+                  url: job.url,
+                  category: job.category,
+                  filename: job.filename,
+                  ...(job.sha256 ? { sha256: job.sha256 } : {}),
+                },
+              ])
         }
       />
       <div className="library-list">
+        {tab === "runs" && (
+          <>
+            <p className="muted install-count">
+              Complete packages this app loads and runs: weights, config and
+              tokenizer together. They download to{" "}
+              {starters?.folder || "the packages folder"}.
+            </p>
+            {runnable && (
+              <section className="workflow-section">
+                <h3>
+                  Runs here, from your search <span>{runnable.length}</span>
+                </h3>
+                {runnable.map((r) => (
+                  <RepoRow key={r.repo} repo={r} onPackage={checkPackage} />
+                ))}
+                {!runnable.length && (
+                  <p className="muted">
+                    None of the {repos.length} results runs here as published.
+                    The Hugging Face tab lists them all and says why.
+                  </p>
+                )}
+              </section>
+            )}
+            <section className="workflow-section">
+              <h3>
+                Checked in Model Run{" "}
+                <span>{starters?.starters.length ?? ""}</span>
+              </h3>
+              {!starters && (
+                <p className="muted">Asking Hugging Face for sizes…</p>
+              )}
+              {starters?.starters.map((s) => (
+                <StarterRow key={s.repo} starter={s} onPackage={checkPackage} />
+              ))}
+            </section>
+          </>
+        )}
         {tab === "models" && results && (
           <>
             <p className="muted install-count">
@@ -610,20 +708,12 @@ export default function ModelInstall({ jobs, onInstalled }) {
             )}
             {!files &&
               repos?.map((r) => (
-                <div className="artifact" key={r.repo}>
-                  <div>
-                    <b>{r.repo}</b>
-                    <span>
-                      {(r.downloads || 0).toLocaleString()} downloads
-                      {r.task ? ` · ${r.task}` : ""}
-                      {r.formats?.length === 1 && r.formats[0] === "gguf"
-                        ? " · GGUF"
-                        : ""}
-                      {r.gated ? " · needs licence acceptance" : ""}
-                    </span>
-                  </div>
-                  <button onClick={() => openRepo(r.repo)}>Files</button>
-                </div>
+                <RepoRow
+                  key={r.repo}
+                  repo={r}
+                  onPackage={packages ? checkPackage : null}
+                  onFiles={openRepo}
+                />
               ))}
             {files && (
               <>

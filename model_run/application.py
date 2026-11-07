@@ -49,11 +49,17 @@ def folder_size(directory):
 
 
 class Application:
-    def __init__(self, entries=(), *, host_kind="standalone", install_folders=None, comfy_dir=None):
+    def __init__(self, entries=(), *, host_kind="standalone", install_folders=None, comfy_dir=None, packages_dir=None):
         # ComfyUI's configs and custom_nodes folders hold no models, so the catalog does not list them.
         self.entries = [e for e in entries if e.get("category") not in NOT_MODEL_FOLDERS]
-        folders = install_folders if callable(install_folders) else (lambda: list(install_folders if install_folders is not None else self.entries))
-        self.installer = ModelInstaller(folders, comfy_dir=comfy_dir)
+        comfy_entries = list(self.entries)
+        folders = install_folders if callable(install_folders) else (lambda: list(install_folders if install_folders is not None else comfy_entries))
+        if packages_dir is not None and host_kind == "standalone":
+            # Complete Hugging Face packages the app downloads for itself, apart from ComfyUI's folders.
+            self.entries.append({"category": "packages", "path": str(Path(packages_dir).resolve())})
+        else:
+            packages_dir = None
+        self.installer = ModelInstaller(folders, comfy_dir=comfy_dir, packages_dir=packages_dir)
         self.host_kind = host_kind
         self.host = ModelHost(max_models=1)
         self._lock = RLock()
@@ -104,7 +110,7 @@ class Application:
             loaded = None if self._loaded is None else {k: self._loaded.get(k) for k in ("id", "name", "task", "device", "dtype")}
             if loaded is not None:
                 loaded["chat_template"] = bool(getattr(self._loaded.get("tokenizer"), "chat_template", None))
-            return {"host": self.host_kind, "job": deepcopy(self._state), "loaded": loaded,
+            return {"host": self.host_kind, "packages": self.installer.packages_dir is not None, "job": deepcopy(self._state), "loaded": loaded,
                     "observation": self.host.snapshot(), "models": self.host.models(), "install": self.installer.status(),
                     "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision", "run", "step", "pinned", "note")} for t in self._traces],
                     "retention": {"runs": len({t["run"] for t in self._traces}), "max_runs": MAX_RUNS,

@@ -51,6 +51,7 @@ Open **http://127.0.0.1:8766/**. The server listens on this computer only.
 | `--comfy-dir DIR` | A ComfyUI folder: its `models` folder, its `extra_model_paths.yaml`, Comfy Desktop's shared folders, and the model lists ComfyUI ships. |
 | `--models-dir DIR` | A ComfyUI `models` folder on its own. |
 | `--extra-paths FILE` | An `extra_model_paths.yaml`; may be repeated. |
+| `--packages-dir DIR` | Where **Get models › Runs here** downloads complete packages. Default: a `packages` folder beside the app. |
 | `--port N` | Default 8766. |
 
 With no folders the app still imports and replays traces. It only looks where you point
@@ -154,7 +155,8 @@ the same access controls you use for ComfyUI.
 
 The **Model library** has two tabs.
 
-**On this computer** lists the files in your ComfyUI model folders, grouped by folder. Each
+**On this computer** lists the files in your ComfyUI model folders, and in the standalone app
+the packages it downloaded, grouped by folder. Each
 one says whether it **runs here** (a Transformers, Sentence Transformers or Diffusers
 folder) or **runs in ComfyUI** (single-file checkpoints, diffusion models, text encoders,
 VAEs and LoRAs, which Model Run · Observe records there). **Inspect** reads a file's header
@@ -162,15 +164,24 @@ without loading it: parameter count, storage by precision, repeated block stacks
 ComfyUI workflow templates that use it, with the full header below. **Explore** shows its
 tensor names in 3D.
 
-**Get models** installs into ComfyUI's folders from three places:
+**Get models** finds models in four places:
 
-- **By workflow** (the default) lists every workflow template ComfyUI ships, with its
+- **Runs here** (standalone app only, and the default there) gets complete Hugging Face
+  packages that this app loads: weights, config and tokenizer together, into the packages
+  folder. It lists the models checked end to end in this app (Qwen3, SmolLM2, Whisper, ViT,
+  EmbeddingGemma, Gemma 3 and 4) with their size, and its search shows only the Hugging Face
+  results that run here as published. ComfyUI's single files need ComfyUI to run, so when
+  nothing in your library runs here, **On this computer** says so and links here.
+- **By workflow** lists every workflow template ComfyUI ships, with its
   preview, nearest to ready first: templates your installed models already complete, then
   those one file away. Filter by kind (Image, Video, Audio, 3D, LLM and more) and get a
   template's missing files in one step.
 - **All files** searches every file in ComfyUI's template lists and ComfyUI Manager's list.
 - **Hugging Face** searches Hugging Face, only when you ask, including repos that only have
-  GGUF files.
+  GGUF files. Each result says whether it **runs here** (a complete Transformers, Sentence
+  Transformers or Diffusers package, read from its config without downloading it), is **for
+  ComfyUI** (single files or GGUF) or is **inspect only**, and why. One that runs here downloads
+  as a package; the rest list their files for ComfyUI's folders.
 
 - Nothing downloads without a click. The confirmation shows the size, source, destination
   and free space.
@@ -179,6 +190,10 @@ tensor names in 3D.
   listed but refused. GGUF files load through the ComfyUI-GGUF custom node.
 - Each file is checked against its published SHA-256 where there is one, never replaces an
   existing file, and resumes if stopped.
+- A package takes only safetensors weights and plain settings files (`.json`, `.txt`,
+  `.model`, `.jinja`), never code; repositories that need their own code are refused.
+  Settings files are checked against Hugging Face's file hashes and parsed before they are
+  kept. Its config arrives last, so a package appears in the library only once complete.
 - For a gated model, accept its licence on Hugging Face and log in with its CLI. The app uses
   that login, never stores it, and sends it only to huggingface.co.
 - Inside ComfyUI, installing works only from the computer running ComfyUI.

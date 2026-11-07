@@ -2057,6 +2057,7 @@ export function App() {
               </div>
               {libraryTab === "install" ? (
                 <ModelInstall
+                  packages={!!state?.packages}
                   jobs={state?.install?.jobs || []}
                   onInstalled={refreshCatalog}
                 />
@@ -2064,6 +2065,8 @@ export function App() {
                 <LocalLibrary
                   catalog={catalog}
                   host={state?.host}
+                  packages={!!state?.packages}
+                  onGetModels={() => setLibraryTab("install")}
                   busy={busy}
                   action={action}
                   onExplore={(a) =>

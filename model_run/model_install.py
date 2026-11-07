@@ -1,7 +1,7 @@
 """Download model files into ComfyUI's folders, one explicit request at a time."""
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from hashlib import sha256
+from hashlib import sha1, sha256
 import io
 import json
 import os
@@ -14,7 +14,8 @@ from urllib.parse import quote, urlencode, urlsplit
 import urllib.request
 from uuid import uuid4
 
-from .inventory import InventoryError, check_gguf, inspect_file
+from .inventory import InventoryError
+from .model_packages import STARTERS, check_file, classify, is_installed, package_files, package_folder
 from .model_sources import INSTALLABLE_SUFFIXES, blocked_reason, file_url, guess_folder, huggingface_parts, install_note, load_index, template_thumbnail
 
 API = "https://huggingface.co/api/models"
@@ -104,13 +105,21 @@ def _match_tier(terms, names, tags, prose):
     return None
 
 
+def _expected(name):
+    lower = name.lower()
+    return ("GGUF" if lower.endswith(".gguf") else "JSON" if lower.endswith(".json") else "text" if lower.endswith((".txt", ".jinja"))
+            else "SentencePiece" if lower.endswith(".model") else "safetensors")
+
+
 class _Cancelled(Exception):
     pass
 
 
 class ModelInstaller:
-    def __init__(self, folders, *, comfy_dir=None, on_installed=None, transport=None, index=None):
+    def __init__(self, folders, *, comfy_dir=None, on_installed=None, transport=None, index=None, packages_dir=None):
         self._folders, self._comfy_dir, self._on_installed = folders, comfy_dir, on_installed
+        self.packages_dir = Path(packages_dir).resolve() if packages_dir else None
+        self._starters = None
         self._transport = transport or Transport()
         self._index = index
         self._lock = Lock()
@@ -260,15 +269,123 @@ class ModelInstaller:
         # Hugging Face filters by one tag at a time, so repos with GGUF files are asked for separately.
         found = {}
         for tag in ("safetensors", "gguf"):
-            params = urlencode({"search": query.strip(), "filter": tag, "sort": "downloads", "direction": "-1", "limit": 24})
+            params = urlencode({"search": query.strip(), "filter": tag, "sort": "downloads", "direction": "-1", "limit": 24, "full": "true", "config": "true"})
             for r in self._api(f"{API}?{params}"):
                 if not isinstance(r, dict) or not isinstance(r.get("id"), str):
                     continue
                 entry = found.setdefault(r["id"], {"repo": r["id"], "downloads": r.get("downloads"), "likes": r.get("likes"),
-                                                   "gated": bool(r.get("gated")), "task": r.get("pipeline_tag"), "formats": []})
+                                                   "gated": bool(r.get("gated")), "task": r.get("pipeline_tag"), "formats": [],
+                                                   **self._describe(r)})
                 entry["formats"].append(tag)
         ranked = sorted(found.values(), key=lambda r: -(r["downloads"] if isinstance(r["downloads"], int) else 0))
         return {"repos": ranked[:24]}
+
+    def _describe(self, info):
+        """What a repository is to this app: whether it runs here as a package, and whether that package is here already."""
+        described = classify(info)
+        if self.packages_dir is None and described["verdict"] == "runs_here":
+            described = {**described, "verdict": "inspect", "reason": "ComfyUI loads models here; open the standalone app to run packages"}
+        repo = info.get("id")
+        described["installed"] = bool(self.packages_dir and isinstance(repo, str) and "/" in repo and is_installed(self.packages_dir, repo))
+        return described
+
+    def _model_info(self, repo):
+        owner, name = repo.split("/") if isinstance(repo, str) and repo.count("/") == 1 else (None, None)
+        if not owner or not re.fullmatch(r"[\w.-]+", owner) or not re.fullmatch(r"[\w.-]+", name) or ".." in repo:
+            raise ValueError("Invalid repository name")
+        info = self._api(f"{API}/{quote(owner)}/{quote(name)}?blobs=true")
+        if not isinstance(info, dict):
+            raise ValueError("Hugging Face sent no model information")
+        return info
+
+    def starters(self):
+        """Models checked end to end in this app, with their size and access as Hugging Face reports them now."""
+        if self._starters is None:
+            def one(starter):
+                repo, blurb = starter
+                try:
+                    info = self._model_info(repo)
+                    files = package_files(info)
+                    size = sum(f["size_bytes"] for f in files)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    return {"repo": repo, "blurb": blurb, "verdict": "inspect", "reason": f"{exc}"[:200], "size_bytes": None, "gated": False}
+                return {"repo": repo, "blurb": blurb, "size_bytes": size, "gated": bool(info.get("gated")), **classify(info)}
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                found = list(pool.map(one, STARTERS))
+            if any(s.get("size_bytes") for s in found):
+                self._starters = found  # an offline answer is not kept
+            else:
+                return {"starters": [{**s, "installed": False} for s in found], "folder": str(self.packages_dir or "")}
+        return {"starters": [{**s, "installed": bool(self.packages_dir and is_installed(self.packages_dir, s["repo"]))} for s in self._starters],
+                "folder": str(self.packages_dir or "")}
+
+    def package_plan(self, repo):
+        """Everything a download of one repository as a package would do, without downloading anything."""
+        if self.packages_dir is None:
+            raise ValueError("Packages download only in the standalone app")
+        info = self._model_info(repo)
+        described = classify(info)
+        folder = package_folder(self.packages_dir, repo)
+        plan = {"repo": repo, "destination": str(folder), "files": [], "total_bytes": 0, "download_bytes": 0, **described}
+        if described["verdict"] != "runs_here":
+            return {**plan, "ok": False}
+        if is_installed(self.packages_dir, repo):
+            return {**plan, "ok": False, "reason": "This package is already here"}
+        files = package_files(info)
+        revision = info.get("sha") if isinstance(info.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", info.get("sha")) else "main"
+        for f in files:
+            target = folder.joinpath(*[_safe_part(p) for p in f["path"].split("/")]).resolve()
+            if not target.is_relative_to(folder.resolve()):
+                raise ValueError("A file in this repository points outside its folder")
+            have = target.is_file() and target.stat().st_size == f["size_bytes"]
+            plan["files"].append({**f, "url": file_url(repo, f["path"], revision), "destination": str(target), "have": have})
+        plan["total_bytes"] = sum(f["size_bytes"] for f in files)
+        plan["download_bytes"] = sum(f["size_bytes"] for f in plan["files"] if not f["have"])
+        if info.get("gated"):
+            first = next(f for f in plan["files"] if not f["have"])
+            try:
+                access = self._remote(first["url"])
+            except (OSError, ValueError) as exc:
+                return {**plan, "ok": False, "reason": f"Could not reach Hugging Face: {exc}"[:400]}
+            if access.get("access") != "ok":
+                return {**plan, "ok": False, "reason": access.get("reason")}
+        anchor = folder
+        while not anchor.exists() and anchor.parent != anchor:
+            anchor = anchor.parent
+        plan["free_bytes"] = shutil.disk_usage(anchor).free
+        if plan["download_bytes"] + RESERVE_BYTES > plan["free_bytes"]:
+            return {**plan, "ok": False, "reason": "Not enough free disk space"}
+        return {**plan, "ok": True, "reason": None}
+
+    def package_start(self, repo, confirmed_bytes):
+        """Queue a package the person confirmed; one download per file, weights first and the config last."""
+        plan = self.package_plan(repo)
+        if not plan["ok"]:
+            raise ValueError(plan["reason"] or "This package cannot be downloaded")
+        if confirmed_bytes != plan["download_bytes"]:
+            raise ValueError("The package changed since you confirmed it; check it again")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Installer is closed")
+            active = {j["destination"] for j in self._jobs.values() if j["status"] in ACTIVE}
+            if any(f["destination"] in active for f in plan["files"]):
+                raise RuntimeError("This package is already downloading")
+            jobs = []
+            for f in plan["files"]:
+                if f["have"]:
+                    continue
+                job = {"id": uuid4().hex, "filename": f["path"], "category": "package", "package": repo, "destination": f["destination"], "url": f["url"],
+                       "status": "queued", "bytes": 0, "total_bytes": f["size_bytes"], "sha256": f["sha256"], "git_oid": f["git_oid"],
+                       "hash_checked": False, "error": None, "cancel": False, "discard": False}
+                self._jobs[job["id"]] = job
+                self._queue.append(job["id"])
+                jobs.append(job["id"])
+            self._trim()
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = Thread(target=self._run, name="model-run-install", daemon=True)
+                self._worker.start()
+            self._wake.set()
+        return {"jobs": jobs}
 
     def hub_files(self, repo, *, names=frozenset()):
         if not isinstance(repo, str) or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or ".." in repo:
@@ -490,6 +607,8 @@ class ModelInstaller:
         target.parent.mkdir(parents=True, exist_ok=True)
         part = target.with_name(target.name + PART_SUFFIX)
         digest = sha256()
+        # Git's own hash of the file, which Hugging Face publishes for files kept outside LFS.
+        blob = sha1(f"blob {job['total_bytes']}\0".encode())
         have = 0
         if part.exists():
             # Hash what is already here, so a resumed file is still checked end to end.
@@ -498,6 +617,7 @@ class ModelInstaller:
                 while chunk := stream.read(CHUNK):
                     self._check_cancel(job)
                     digest.update(chunk)
+                    blob.update(chunk)
                     have += len(chunk)
                     self._set(job, bytes=have)
         self._set(job, status="downloading", bytes=have)
@@ -509,7 +629,7 @@ class ModelInstaller:
             try:
                 if response.code == 200 and have:
                     # The server ignored the range, so start over.
-                    digest, have = sha256(), 0
+                    digest, blob, have = sha256(), sha1(f"blob {job['total_bytes']}\0".encode()), 0
                     part.unlink()
                 elif response.code == 206:
                     match = re.match(r"bytes (\d+)-", response.headers.get("Content-Range", ""))
@@ -522,6 +642,7 @@ class ModelInstaller:
                         self._check_cancel(job)
                         stream.write(chunk)
                         digest.update(chunk)
+                        blob.update(chunk)
                         have += len(chunk)
                         self._set(job, bytes=have)
                         if have > job["total_bytes"]:
@@ -547,12 +668,16 @@ class ModelInstaller:
                 part.unlink(missing_ok=True)
                 raise ValueError("The file's SHA-256 does not match the published one; it was deleted")
             checked = True
-        gguf = target.name.lower().endswith(".gguf")
+        elif job.get("git_oid"):
+            if blob.hexdigest() != job["git_oid"]:
+                part.unlink(missing_ok=True)
+                raise ValueError("The file does not match the one Hugging Face lists; it was deleted")
+            checked = True
         try:
-            (check_gguf if gguf else inspect_file)(part)
-        except (InventoryError, ValueError, OSError) as exc:
+            check_file(target.name, part)
+        except (InventoryError, ValueError, OSError, UnicodeError) as exc:
             part.unlink(missing_ok=True)
-            raise ValueError(f"This is not a valid {'GGUF' if gguf else 'safetensors'} file, so it was deleted: {exc}") from exc
+            raise ValueError(f"This is not a valid {_expected(target.name)} file, so it was deleted: {exc}") from exc
         if target.exists():
             raise ValueError("A file with this name appeared during the download; it was left alone")
         # Neither call replaces an existing file.

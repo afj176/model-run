@@ -20,13 +20,19 @@ export function installProgress(job) {
     queued: "Waiting",
     downloading: `Downloading ${amount}`,
     verifying: "Checking the file",
-    installed: job.hash_checked
-      ? "Installed · SHA-256 matched"
-      : "Installed · no published SHA-256 to check",
+    installed: job.files
+      ? `Installed · ${job.files.total} file${job.files.total === 1 ? "" : "s"} checked`
+      : job.hash_checked
+        ? "Installed · SHA-256 matched"
+        : "Installed · no published SHA-256 to check",
     failed: "Failed",
     cancelled: "Stopped",
   }[job.status];
-  return { fraction, label: label ?? job.status };
+  const files =
+    job.files && job.status !== "installed"
+      ? ` · ${job.files.done} of ${job.files.total} files`
+      : "";
+  return { fraction, label: (label ?? job.status) + files };
 }
 
 /** How much of a checked plan can go ahead. Free space is per disk, so the smallest is the safe figure. */
@@ -43,4 +49,46 @@ export function planTotals(plan) {
     ),
     free: free.length ? Math.min(...free) : NaN,
   };
+}
+
+const ORDER = ["downloading", "verifying", "queued", "failed", "cancelled"];
+
+/**
+ * Downloads as rows: each package's files folded into one row, other files as they are.
+ * A package row is as far along as all its files together, and as stuck as its worst one.
+ */
+export function groupJobs(jobs) {
+  const rows = [];
+  const packages = new Map();
+  for (const job of jobs) {
+    if (!job.package) {
+      rows.push(job);
+      continue;
+    }
+    if (!packages.has(job.package)) {
+      const row = {
+        id: `package:${job.package}`,
+        package: job.package,
+        filename: job.package,
+        members: [],
+      };
+      packages.set(job.package, row);
+      rows.push(row);
+    }
+    packages.get(job.package).members.push(job);
+  }
+  for (const row of packages.values()) {
+    const { members } = row;
+    row.status =
+      ORDER.find((s) => members.some((j) => j.status === s)) || "installed";
+    row.bytes = members.reduce((sum, j) => sum + (j.bytes || 0), 0);
+    row.total_bytes = members.reduce((sum, j) => sum + (j.total_bytes || 0), 0);
+    row.hash_checked = members.every((j) => j.hash_checked);
+    row.error = members.find((j) => j.error)?.error || null;
+    row.files = {
+      done: members.filter((j) => j.status === "installed").length,
+      total: members.length,
+    };
+  }
+  return rows;
 }

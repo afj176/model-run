@@ -71,6 +71,8 @@ export default function LocalLibrary({
   action,
   onExplore,
   onLoad,
+  packages,
+  onGetModels,
 }) {
   const [search, setSearch] = useState("");
   const [inspected, setInspected] = useState(null);
@@ -87,10 +89,27 @@ export default function LocalLibrary({
         .includes(search.toLowerCase()),
     );
   const standalone = host === "standalone";
+  const runnable = catalog.artifacts.some((a) => groupOf(a) === "here");
   return (
     <>
+      {standalone && packages && !runnable && (
+        <div className="library-callout" role="note">
+          <div>
+            <b>Nothing here runs in this app yet</b>
+            <span>
+              ComfyUI’s single files need ComfyUI to run. Get a complete
+              package, such as Qwen3 0.6B (1.4 GB), and it loads here.
+            </span>
+          </div>
+          <button className="primary" onClick={onGetModels}>
+            Get a model that runs here
+          </button>
+        </div>
+      )}
       <p className="muted">
-        Files in your ComfyUI model folders.{" "}
+        {packages
+          ? "Files in your ComfyUI model folders and the packages Model Run downloaded."
+          : "Files in your ComfyUI model folders."}{" "}
         {standalone
           ? "Files marked Runs here load in this app. The rest run in ComfyUI, where Model Run · Observe records them; here you can read their headers and explore their tensor names."
           : "They run in ComfyUI, where Model Run · Observe records them; here you can read their headers and explore their tensor names."}
