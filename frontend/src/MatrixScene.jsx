@@ -380,8 +380,15 @@ export default function MatrixScene({
     const selectedValue = matrix[selected?.row]?.[selected?.col];
     const hasSelection = Number.isFinite(selectedValue);
     if (hasSelection) {
-      colTicks.add(selected.col);
-      rowTicks.add(selected.row);
+      // The highlighted tick replaces any neighbour close enough to overlap it.
+      const near = (ticks, picked, step) => {
+        for (const t of ticks)
+          if (t !== picked && Math.abs(t - picked) < step * 0.6)
+            ticks.delete(t);
+        ticks.add(picked);
+      };
+      near(colTicks, selected.col, colStep);
+      near(rowTicks, selected.row, rowStep);
     }
     const colText = (c) =>
       axisLabels.colLabels?.[c] ?? (axisLabels.colOffset || 0) + c;
@@ -389,28 +396,28 @@ export default function MatrixScene({
       axisLabels.rowLabels?.[r] ?? (axisLabels.rowOffset || 0) + r;
     const labelled = Boolean(axisLabels.colLabels || axisLabels.rowLabels);
     colTicks.forEach((c) =>
-      makeLabel(colText(c), cellX(c), z0 + depth + 0.95, {
+      makeLabel(colText(c), cellX(c), z0 + depth + 1.1, {
         highlight: hasSelection && c === selected.col,
-        size: labelled ? 26 : 30,
-        scale: labelled ? 1.3 : 1,
+        size: labelled ? 30 : 36,
+        scale: labelled ? 1.75 : 1.4,
       }),
     );
     rowTicks.forEach((r) =>
-      makeLabel(rowText(r), x0 - (labelled ? 1.35 : 1.05), cellZ(r), {
+      makeLabel(rowText(r), x0 - (labelled ? 1.75 : 1.3), cellZ(r), {
         highlight: hasSelection && r === selected.row,
-        size: labelled ? 26 : 30,
-        scale: labelled ? 1.3 : 1,
+        size: labelled ? 30 : 36,
+        scale: labelled ? 1.75 : 1.4,
       }),
     );
-    makeLabel(axisLabels.col, 0, z0 + depth + 1.75, {
+    makeLabel(axisLabels.col, 0, z0 + depth + 2.1, {
       italic: true,
-      size: 36,
-      scale: 1.5,
+      size: 40,
+      scale: 2.1,
     });
-    makeLabel(axisLabels.row, x0 - 1.4, z0 - 0.9, {
+    makeLabel(axisLabels.row, x0 - 1.8, z0 - 1.1, {
       italic: true,
-      size: 36,
-      scale: 1.5,
+      size: 40,
+      scale: 2.1,
     });
 
     if (!cells.length) return;

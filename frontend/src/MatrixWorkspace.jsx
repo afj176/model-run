@@ -569,74 +569,6 @@ export default function MatrixWorkspace({
                 </table>
               </div>
             )}
-            {stageMode === "overview" && (
-              <aside className="matrix-inset" aria-label="Cell detail zoom">
-                <h4>
-                  Cell detail <span>(zoom)</span>
-                </h4>
-                <div className="matrix-inset-body">
-                  <div className="matrix-inset-grid">
-                    {neighborhood.map((row, i) => (
-                      <div key={i} className="matrix-inset-row">
-                        {row.map((cell, j) => (
-                          <button
-                            key={j}
-                            disabled={!cell}
-                            aria-label={
-                              cell
-                                ? `${rowName} ${rowOffset + cell.r}, ${colName} ${colOffset + cell.c}: ${cell.state === "captured" ? fmt(cell.v) : cell.state}`
-                                : "outside window"
-                            }
-                            className={
-                              !cell
-                                ? "void"
-                                : cell.r === selected.row &&
-                                    cell.c === selected.col
-                                  ? "picked"
-                                  : ""
-                            }
-                            style={
-                              cell
-                                ? {
-                                    "--cell": color(cell.v),
-                                    "--lift": `${Math.round(
-                                      6 +
-                                        (attention
-                                          ? Math.min(1, cell.v ?? 0)
-                                          : Math.min(
-                                              1,
-                                              Math.abs(cell.v ?? 0) / abs,
-                                            )) *
-                                          16,
-                                    )}px`,
-                                  }
-                                : undefined
-                            }
-                            onClick={() =>
-                              cell && setSelected({ row: cell.r, col: cell.c })
-                            }
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                  <dl>
-                    <dt>{cap(rowName.charAt(0))}:</dt>
-                    <dd>
-                      {rowIndex}
-                      {rowToken ? ` “${rowToken}”` : ""}
-                    </dd>
-                    <dt>{cap(colName.charAt(0))}:</dt>
-                    <dd>
-                      {colIndex}
-                      {colToken ? ` “${colToken}”` : ""}
-                    </dd>
-                    <dt>{valueLabel}:</dt>
-                    <dd className="mint">{valueText}</dd>
-                  </dl>
-                </div>
-              </aside>
-            )}
             {stageMode === "overview" && upperTriangleZero && (
               <p className="matrix-annotation">
                 <em>Causal mask</em>
@@ -762,6 +694,73 @@ export default function MatrixWorkspace({
         <h2>
           <Stack size={22} weight="duotone" /> Inspector
         </h2>
+        {data && data.rows && data.cols ? (
+          <section className="matrix-inset" aria-label="Selected cell">
+            <h4>
+              Selected cell <span>and its neighbours</span>
+            </h4>
+            <div className="matrix-inset-body">
+              <div className="matrix-inset-grid">
+                {neighborhood.map((row, i) => (
+                  <div key={i} className="matrix-inset-row">
+                    {row.map((cell, j) => (
+                      <button
+                        key={j}
+                        disabled={!cell}
+                        aria-label={
+                          cell
+                            ? `${rowName} ${rowOffset + cell.r}, ${colName} ${colOffset + cell.c}: ${cell.state === "captured" ? fmt(cell.v) : cell.state}`
+                            : "outside window"
+                        }
+                        className={
+                          !cell
+                            ? "void"
+                            : cell.r === selected.row && cell.c === selected.col
+                              ? "picked"
+                              : ""
+                        }
+                        style={
+                          cell
+                            ? {
+                                "--cell": color(cell.v),
+                                "--lift": `${Math.round(
+                                  6 +
+                                    (attention
+                                      ? Math.min(1, cell.v ?? 0)
+                                      : Math.min(
+                                          1,
+                                          Math.abs(cell.v ?? 0) / abs,
+                                        )) *
+                                      16,
+                                )}px`,
+                              }
+                            : undefined
+                        }
+                        onClick={() =>
+                          cell && setSelected({ row: cell.r, col: cell.c })
+                        }
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+              <dl>
+                <dt>{cap(rowName)}:</dt>
+                <dd>
+                  {rowIndex}
+                  {rowToken ? ` “${rowToken}”` : ""}
+                </dd>
+                <dt>{cap(colName)}:</dt>
+                <dd>
+                  {colIndex}
+                  {colToken ? ` “${colToken}”` : ""}
+                </dd>
+                <dt>{valueLabel}:</dt>
+                <dd className="mint">{valueText}</dd>
+              </dl>
+            </div>
+          </section>
+        ) : null}
         {profile && (
           <section className="matrix-insight" aria-label="Head insight">
             <h3>
@@ -1126,18 +1125,6 @@ export default function MatrixWorkspace({
             )}
             <dt>Shape</dt>
             <dd>{data?.shape.join(" × ") || "—"}</dd>
-            <dt className="selection">Selection</dt>
-            <dd className="selection">
-              {data
-                ? tokens
-                  ? `“${rowToken}” (${rowIndex}) → “${colToken}” (${colIndex})`
-                  : `${rowName} ${rowIndex}, ${colName} ${colIndex}`
-                : "—"}
-            </dd>
-            <dt>{valueLabel}</dt>
-            <dd>
-              <span className="matrix-badge">{valueText}</span>
-            </dd>
           </dl>
         )}
         {data && (
@@ -1294,28 +1281,6 @@ export default function MatrixWorkspace({
                 </button>
               </div>
             )}
-            <h3>
-              Cell detail{" "}
-              <small>
-                ({rowName} {rowIndex}, {colName} {colIndex})
-              </small>
-            </h3>
-            <dl className="matrix-facts">
-              <dt>{cap(rowName)} (row)</dt>
-              <dd>
-                {rowIndex}
-                {rowToken ? ` “${rowToken}”` : ""}
-              </dd>
-              <dt>{cap(colName)} (column)</dt>
-              <dd>
-                {colIndex}
-                {colToken ? ` “${colToken}”` : ""}
-              </dd>
-              <dt>{valueLabel}</dt>
-              <dd>
-                <span className="matrix-badge">{valueText}</span>
-              </dd>
-            </dl>
             <h3>
               <Clock size={18} /> Layer/Ordinal Event
             </h3>

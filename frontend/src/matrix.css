@@ -189,32 +189,31 @@
   color: #7fe6cd;
   font-weight: 700;
 }
+/* The selected cell and its neighbours, at the top of the Inspector. */
 .matrix-inset {
-  position: absolute;
-  z-index: 3;
-  top: 96px;
-  right: 72px;
-  width: 330px;
+  margin: 14px 0 6px;
   padding: 12px 14px 14px;
-  border: 1.5px solid #cbbcff44;
+  border: 1.5px solid #2b2252;
   border-radius: 14px;
-  background: #1a1437e8;
-  box-shadow: 0 10px 30px #0b071c66;
-  backdrop-filter: blur(6px);
+  background: #1a1436;
+  color: #f5f1ff;
 }
 .matrix-inset h4 {
   margin: 0 0 10px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
 }
 .matrix-inset h4 span {
   font-weight: 400;
-  color: var(--stage-muted);
+  font-size: 13px;
+  color: #c9c1e6;
 }
 .matrix-inset-body {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: center;
+  justify-content: space-between;
 }
 .matrix-inset-grid {
   display: flex;
@@ -589,19 +588,6 @@ button.matrix-dot:hover i {
 .matrix-facts dd {
   color: #2f2a55;
 }
-.matrix-facts .selection {
-  background: #ffe1ec;
-  color: #b4215a;
-}
-.matrix-facts dt.selection {
-  padding-left: 8px;
-  border-radius: 8px 0 0 8px;
-}
-.matrix-facts dd.selection {
-  font-weight: 600;
-  border-radius: 0 8px 8px 0;
-  padding-right: 8px;
-}
 .matrix-badge {
   display: inline-block;
   padding: 3px 10px;
@@ -765,10 +751,6 @@ button.matrix-dot:hover i {
   .matrix-workspace {
     grid-template-columns: minmax(0, 1fr) 360px;
   }
-  .matrix-inset {
-    right: 26px;
-    width: 290px;
-  }
   .matrix-segment button {
     font-size: 13px;
   }
@@ -786,9 +768,6 @@ button.matrix-dot:hover i {
   }
   .matrix-stage {
     height: 600px;
-  }
-  .matrix-inset {
-    display: none;
   }
 }
 @media (max-width: 600px) {
@@ -880,9 +859,6 @@ button.matrix-dot:hover i {
   white-space: nowrap;
 }
 @media (max-width: 1100px) {
-  .matrix-inset {
-    display: none;
-  }
   .matrix-segment button {
     font-size: 0;
     gap: 0;
@@ -901,24 +877,17 @@ button.matrix-dot:hover i {
   justify-content: flex-end;
   row-gap: 8px;
 }
-.matrix-inset {
-  width: 356px;
-}
 .matrix-inset dl {
   font-size: 14px;
   min-width: 0;
+  flex: 1 1 130px;
 }
 .matrix-inset dd {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .matrix-stage-header {
   z-index: 5;
-}
-@media (max-width: 1250px) {
-  .matrix-inset {
-    top: 150px;
-  }
 }
 
 /* ---- Insight sections in the inspector ---- */
@@ -1146,6 +1115,13 @@ button.matrix-dot:hover i {
 .matrix-stage-kind {
   margin-right: 6px;
 }
+/* These two buttons have no icon, so they keep their text when the others shrink to icons. */
+@media (max-width: 1100px) {
+  .matrix-segment.matrix-stage-kind button {
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+}
 .matrix-step {
   cursor: help;
 }
@@ -1360,4 +1336,33 @@ button.matrix-dot:hover i {
     overflow-x: auto;
     scrollbar-width: thin;
   }
+}
+
+/* The callout on the selected bar is one compact line, so it covers fewer bars. */
+.matrix-callout {
+  left: -14px;
+  bottom: 26px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-width: 1px;
+  border-radius: 9px;
+  box-shadow: none;
+  font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.matrix-callout::after {
+  left: 14px;
+  bottom: -26px;
+  height: 26px;
+}
+.matrix-callout span,
+.matrix-callout strong {
+  display: inline;
+  margin: 0;
+  font-size: 13px;
+}
+.matrix-callout strong small {
+  display: none;
 }

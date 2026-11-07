@@ -128,12 +128,29 @@ function Field({ label, children }) {
   );
 }
 
+/** Tab names for the result panels, keyed by panel key. */
+const OUTPUT_TABS = {
+  audio: "Audio",
+  image: "Image labels",
+  embedding: "Embedding",
+  prediction: "Next token",
+  response: "Response",
+  logits: "Scores",
+  links: "Attention links",
+  encoder: "Text encoder",
+  denoising: "Denoising",
+  xattn: "Cross-attention",
+  features: "Feature maps",
+  preview: "Image",
+};
+
 export function App() {
   const [state, setState] = useState(null),
     [catalog, setCatalog] = useState({ artifacts: [] });
   const [tree, setTree] = useState(null),
     [trace, setTrace] = useState(null),
     [traceId, setTraceId] = useState("");
+  const [outputTab, setOutputTab] = useState("response");
   const [selected, setSelected] = useState(""),
     [eventIndex, setEventIndex] = useState(0),
     [view, setView] = useState("matrix"),
@@ -1761,113 +1778,120 @@ export function App() {
         </div>
       )}
       <section className="output panel">
-        <div className="output-main">
-          {(() => {
-            const inSession =
-              session && Object.values(session.ids).includes(traceId);
-            const predictionTrace = trace?.output?.top_tokens
+        {(() => {
+          const inSession =
+            session && Object.values(session.ids).includes(traceId);
+          const predictionTrace = trace?.output?.top_tokens
+            ? trace
+            : inSession && companions.module?.output?.top_tokens
+              ? companions.module
+              : null;
+          const responseTrace =
+            trace?.kind === "generation_capture"
               ? trace
-              : inSession && companions.module?.output?.top_tokens
-                ? companions.module
+              : inSession && companions.generation
+                ? companions.generation
                 : null;
-            const responseTrace =
-              trace?.kind === "generation_capture"
-                ? trace
-                : inSession && companions.generation
-                  ? companions.generation
-                  : null;
-            const panels = [];
-            const audioTrace = trace?.audio_view
-              ? trace
-              : inSession && companions.module?.audio_view
-                ? companions.module
-                : null;
-            if (audioTrace)
-              panels.push(<AudioView key="audio" trace={audioTrace} />);
-            if (trace?.image_classification)
-              panels.push(<ImageClassification key="image" trace={trace} />);
-            if (trace?.embedding)
-              panels.push(<EmbeddingView key="embedding" trace={trace} />);
-            if (predictionTrace)
-              panels.push(
-                <Prediction key="prediction" trace={predictionTrace} />,
-              );
-            if (responseTrace)
-              panels.push(
-                <Response
-                  key="response"
-                  trace={responseTrace}
-                  doubtful={
-                    attentionPastAudio(audioTrace?.audio_view?.layers)?.doubtful
-                  }
-                />,
-              );
-            if (predictionTrace?.logits_view)
-              panels.push(<LogitsPanel key="logits" trace={predictionTrace} />);
-            if (trace?.kind === "attention_capture")
-              panels.push(<AttentionLinks key="links" trace={trace} />);
-            if (trace?.text_encoder)
-              panels.push(<TextEncoderPanel key="encoder" trace={trace} />);
-            if (trace?.denoising?.steps?.length)
-              panels.push(<Denoising key="denoising" trace={trace} />);
-            if (trace?.cross_attention)
-              panels.push(<CrossAttention key="xattn" trace={trace} />);
-            if (trace?.events?.some((e) => e.slices?.layout === "features"))
-              panels.push(<FeatureMaps key="features" trace={trace} />);
-            if (!panels.length && trace?.preview?.mime === "image/png")
-              panels.push(
-                <img
-                  key="preview"
-                  className="output-image"
-                  alt="Decoded pipeline output"
-                  src={`data:image/png;base64,${trace.preview.base64}`}
-                />,
-              );
-            if (!panels.length)
-              return (
-                <>
-                  <h2>{trace?.preview ? "Generated output" : "Results"}</h2>
-                  <p className="muted">
-                    {state?.host === "comfyui"
-                      ? "Results from Model Run's nodes appear here while ComfyUI runs."
-                      : "After a Run, what the model predicted and what it wrote appear here. Earlier runs stay in Capture history until the app restarts."}
-                  </p>
-                </>
-              );
+          const panels = [];
+          const audioTrace = trace?.audio_view
+            ? trace
+            : inSession && companions.module?.audio_view
+              ? companions.module
+              : null;
+          if (audioTrace)
+            panels.push(<AudioView key="audio" trace={audioTrace} />);
+          if (trace?.image_classification)
+            panels.push(<ImageClassification key="image" trace={trace} />);
+          if (trace?.embedding)
+            panels.push(<EmbeddingView key="embedding" trace={trace} />);
+          if (predictionTrace)
+            panels.push(
+              <Prediction key="prediction" trace={predictionTrace} />,
+            );
+          if (responseTrace)
+            panels.push(
+              <Response
+                key="response"
+                trace={responseTrace}
+                doubtful={
+                  attentionPastAudio(audioTrace?.audio_view?.layers)?.doubtful
+                }
+              />,
+            );
+          if (predictionTrace?.logits_view)
+            panels.push(<LogitsPanel key="logits" trace={predictionTrace} />);
+          if (trace?.kind === "attention_capture")
+            panels.push(<AttentionLinks key="links" trace={trace} />);
+          if (trace?.text_encoder)
+            panels.push(<TextEncoderPanel key="encoder" trace={trace} />);
+          if (trace?.denoising?.steps?.length)
+            panels.push(<Denoising key="denoising" trace={trace} />);
+          if (trace?.cross_attention)
+            panels.push(<CrossAttention key="xattn" trace={trace} />);
+          if (trace?.events?.some((e) => e.slices?.layout === "features"))
+            panels.push(<FeatureMaps key="features" trace={trace} />);
+          if (!panels.length && trace?.preview?.mime === "image/png")
+            panels.push(
+              <img
+                key="preview"
+                className="output-image"
+                alt="Decoded pipeline output"
+                src={`data:image/png;base64,${trace.preview.base64}`}
+              />,
+            );
+          if (!panels.length)
             return (
-              <div className="output-stack">
-                {panels.map((panel) => (
-                  <ErrorBoundary
-                    key={panel.key}
-                    label="this result panel"
-                    resetKey={traceId}
-                  >
-                    {panel}
-                  </ErrorBoundary>
-                ))}
+              <div className="output-main">
+                <h2>{trace?.preview ? "Generated output" : "Results"}</h2>
+                <p className="muted">
+                  {state?.host === "comfyui"
+                    ? "Results from Model Run's nodes appear here while ComfyUI runs."
+                    : "After a Run, what the model predicted and what it wrote appear here. Earlier runs stay in Capture history until the app restarts."}
+                </p>
               </div>
             );
-          })()}
-        </div>
+          const active =
+            panels.find((panel) => panel.key === outputTab) ?? panels[0];
+          return (
+            <>
+              <div className="output-tabs" role="tablist" aria-label="Results">
+                {panels.map((panel) => (
+                  <button
+                    key={panel.key}
+                    role="tab"
+                    id={`output-tab-${panel.key}`}
+                    aria-selected={panel === active}
+                    aria-controls="output-tabpanel"
+                    className={panel === active ? "selected" : ""}
+                    onClick={() => setOutputTab(panel.key)}
+                  >
+                    {OUTPUT_TABS[panel.key] ?? panel.key}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="output-main"
+                role="tabpanel"
+                id="output-tabpanel"
+                aria-labelledby={`output-tab-${active.key}`}
+              >
+                <ErrorBoundary
+                  key={active.key}
+                  label="this result panel"
+                  resetKey={traceId}
+                >
+                  {active}
+                </ErrorBoundary>
+              </div>
+            </>
+          );
+        })()}
         <div className="history">
-          {trace?.output?.top_tokens && (
-            <div className="top-candidates">
-              <h3>
-                Top 5 <small>(prob.)</small>
-              </h3>
-              {trace.output.top_tokens.slice(0, 5).map((t) => (
-                <div key={t.token_id}>
-                  <span>{t.text ?? t.token_id}</span>
-                  <span>{t.probability.toFixed(4)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <details
-            open={!trace?.output?.top_tokens}
-            className="history-disclosure"
-          >
-            <summary>Capture history</summary>
+          <details className="history-disclosure">
+            <summary>
+              Capture history
+              {retention ? ` · ${retention.runs} of ${retention.max_runs}` : ""}
+            </summary>
             <label htmlFor="history">Retained traces</label>
             <select
               id="history"
