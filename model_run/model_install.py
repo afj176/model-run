@@ -90,6 +90,20 @@ def _safe_part(part):
     return part
 
 
+def _match_tier(terms, names, tags, prose):
+    """0 when every term is in the name, 1 when each is in a name or tag, 2 when only the description has some; None when a term is missing."""
+    if not terms:
+        return 0
+    names, tags, prose = (" ".join(parts).lower() for parts in (names, tags, prose))
+    if all(term in names for term in terms):
+        return 0
+    if all(term in names or term in tags for term in terms):
+        return 1
+    if all(term in names or term in tags or term in prose for term in terms):
+        return 2
+    return None
+
+
 class _Cancelled(Exception):
     pass
 
@@ -140,13 +154,13 @@ class ModelInstaller:
         for item in index["models"].values():
             if category and item["category"] != category or source and source not in item["sources"]:
                 continue
-            words = " ".join([item["filename"], item.get("display", ""), item["description"], item["base"], item["category"],
-                              *[w["title"] for w in item["workflows"]]]).lower()
-            if all(term in words for term in terms):
-                public = self._public(item, names, grouped)
+            tier = _match_tier(terms, [item["filename"], item.get("display", "")], [item["base"], item["category"]],
+                               [item["description"], *[w["title"] for w in item["workflows"]]])
+            if tier is not None:
+                public = {**self._public(item, names, grouped), "_tier": tier}
                 if not (missing_only and public["installed"]):
                     found.append(public)
-        found.sort(key=lambda m: (bool(m["blocked"]), -len(m["workflows"]), m["filename"].lower()))
+        found.sort(key=lambda m: (m.pop("_tier"), bool(m["blocked"]), -len(m["workflows"]), m["filename"].lower()))
         return {"total": len(found), "models": found[:MAX_RESULTS], "categories": sorted(grouped), "notes": index["notes"], "logged_in": bool(_token())}
 
     def workflows(self, query="", *, kind=None, names=frozenset()):
@@ -157,7 +171,9 @@ class ModelInstaller:
         terms = query.lower().split()
         found, kinds = [], {}
         for workflow in index["workflows"]:
-            if not all(term in f"{workflow['title']} {workflow['name']} {workflow['description']} {workflow.get('kind', '')}".lower() for term in terms):
+            files = [index["by_id"][i]["filename"] for i in workflow["models"]]
+            tier = _match_tier(terms, [workflow["title"], workflow["name"]], [workflow.get("kind", ""), *files], [workflow["description"]])
+            if tier is None:
                 continue
             label = workflow.get("kind") or "Other"
             kinds[label] = kinds.get(label, 0) + 1
@@ -166,12 +182,29 @@ class ModelInstaller:
             models = [self._public(index["by_id"][i], names, grouped) for i in workflow["models"]]
             missing = [m for m in models if not m["installed"]]
             sizes = [m["size_bytes"] for m in missing]
-            found.append({**workflow, "kind": label, "models": models, "missing": len(missing),
+            found.append({**workflow, "_tier": tier, "kind": label, "models": models, "missing": len(missing),
                           "installable": sum(not m["blocked"] for m in missing),
                           "missing_bytes": sum(sizes) if missing and all(isinstance(s, int) for s in sizes) else None})
-        found.sort(key=lambda w: (w["missing"] > w["installable"], w["missing"], -(w.get("rank") or 0), w["title"].lower()))
+        found.sort(key=lambda w: (w.pop("_tier"), w["missing"] > w["installable"], w["missing"], -(w.get("rank") or 0), w["title"].lower()))
         return {"total": len(found), "workflows": found[:MAX_WORKFLOWS], "kinds": [{"kind": k, "count": n} for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])],
                 "ready": sum(not w["missing"] for w in found), "notes": index["notes"]}
+
+    def sizes(self, ids):
+        """Ask Hugging Face for the size of listed files the lists leave unsized, and remember the answers."""
+        if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_PLAN_ITEMS:
+            raise ValueError(f"Ask for 1 to {MAX_PLAN_ITEMS} files at a time")
+        by_id = self.index()["by_id"]
+        items = list({id(by_id[i]): by_id[i] for i in ids if isinstance(i, str) and i in by_id and not by_id[i]["blocked"]}.values())
+
+        def size(item):
+            if item["size_bytes"] is None:
+                try:
+                    item["size_bytes"] = self._remote(item["url"]).get("size_bytes")
+                except (OSError, ValueError):
+                    pass
+            return item
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            return {"sizes": {item["id"]: item["size_bytes"] for item in pool.map(size, items)}}
 
     def thumbnail(self, name):
         """A small still preview of a workflow template from ComfyUI's own media, or None. Needs Pillow."""

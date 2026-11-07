@@ -54,6 +54,7 @@ def dispatch(app, method, route, body=None):
         if route == "install/hub": return app.installer.hub_search(body.get("query"))
         if route == "install/hub-files": return app.installer.hub_files(body.get("repo"), names=app.installed_names())
         if route == "install/plan": return app.installer.plan(body.get("items"))
+        if route == "install/sizes": return app.installer.sizes(body.get("ids"))
         if route == "install/start": return app.installer.start(body.get("items"))
         if route == "install/cancel": return app.installer.cancel(body.get("id"), discard=bool(body.get("discard")))
         if route == "load": return app.load(body.get("id"), body.get("device", "cpu"))

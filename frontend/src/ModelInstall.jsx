@@ -12,6 +12,60 @@ const TABS = [
 ];
 // Previews are read once per page load; null records a template with none.
 const thumbnails = new Map();
+// File sizes asked of Hugging Face for files the lists leave unsized, by model id.
+const sizes = new Map();
+
+const sizeOf = (m) => m.size_bytes || sizes.get(m.id);
+const sumOf = (models) => {
+  const each = models.map(sizeOf);
+  return each.length && each.every(Boolean)
+    ? each.reduce((a, b) => a + b, 0)
+    : null;
+};
+
+/**
+ * Sizes for a card's files that the lists leave out, asked of Hugging Face once the card comes near the view:
+ * the files still to get, and every file when the template gives no total.
+ */
+function useFileSizes(w, ref) {
+  const [seen, setSeen] = useState(false);
+  const [, setVersion] = useState(0);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || seen) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => entries.some((e) => e.isIntersecting) && setSeen(true),
+      { rootMargin: "240px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ref, seen]);
+  const key = w.models
+    .filter(
+      (m) =>
+        (!w.size_bytes || !m.installed) &&
+        !m.blocked &&
+        !m.size_bytes &&
+        !sizes.has(m.id),
+    )
+    .map((m) => m.id)
+    .slice(0, 32)
+    .join(",");
+  useEffect(() => {
+    if (!seen || !key) return undefined;
+    let alive = true;
+    api("install/sizes", { ids: key.split(",") })
+      .then((answer) => {
+        for (const [id, bytes] of Object.entries(answer.sizes || {}))
+          sizes.set(id, bytes);
+      })
+      .catch(() => {})
+      .finally(() => alive && setVersion((v) => v + 1));
+    return () => {
+      alive = false;
+    };
+  }, [seen, key]);
+}
 
 /** A template's preview from ComfyUI's own media, fetched only when its card comes near the view. */
 function Thumbnail({ name }) {
@@ -56,12 +110,16 @@ function Thumbnail({ name }) {
 
 function WorkflowCard({ workflow: w, onInstall }) {
   const missing = w.models.filter((m) => !m.installed && !m.blocked);
+  const card = useRef(null);
+  useFileSizes(w, card);
+  const total = w.size_bytes || sumOf(w.models);
+  const toGet = w.missing_bytes ?? sumOf(missing);
   const facts = [
     w.kind,
-    w.size_bytes ? `${formatBytes(w.size_bytes)} of models` : null,
+    total ? `${formatBytes(total)} of models` : null,
   ].filter(Boolean);
   return (
-    <div className="workflow-card">
+    <div className="workflow-card" ref={card}>
       <Thumbnail name={w.name} />
       <div className="workflow-body">
         <b>{w.title}</b>
@@ -91,7 +149,7 @@ function WorkflowCard({ workflow: w, onInstall }) {
         ) : missing.length ? (
           <button onClick={() => onInstall(missing.slice(0, 32))}>
             Get {missing.length} file{missing.length === 1 ? "" : "s"}
-            {w.missing_bytes ? ` · ${formatBytes(w.missing_bytes)}` : ""}
+            {toGet ? ` · ${formatBytes(toGet)}` : ""}
           </button>
         ) : (
           <span className="install-note">Cannot install here</span>

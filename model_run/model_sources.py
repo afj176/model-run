@@ -223,6 +223,43 @@ def load_index(comfy_dir=None):
     for item in items.values():
         item["blocked"] = blocked_reason(item["url"], item["filename"])
         item["note"] = install_note(item["filename"])
+    items, by_id = merge_mirrors(items)
+    for workflow in workflows:
+        workflow["models"] = list(dict.fromkeys(by_id[i]["id"] for i in workflow["models"]))
     if not items:
         notes.append("No ComfyUI model lists were found here. Hugging Face search still works.")
-    return {"models": items, "by_id": {item["id"]: item for item in items.values()}, "workflows": workflows, "notes": notes}
+    return {"models": items, "by_id": by_id, "workflows": workflows, "notes": notes}
+
+
+def merge_mirrors(items):
+    """One entry per file: the same name in the same folder, hosted in several repositories, is one model.
+
+    ComfyUI finds a model by folder and file name, so copies under different URLs are the same install.
+    Copies whose published SHA-256 differ stay apart. Returns the merged items by URL, and every
+    original id pointing at the entry that now holds it."""
+    groups = {}
+    for item in items.values():
+        key = (item["category"], item["subfolder"], item["filename"].lower())
+        for group in groups.setdefault(key, []):
+            hashes = {m["sha256"] for m in group} - {None}
+            if not item["sha256"] or not hashes or item["sha256"] in hashes:
+                group.append(item)
+                break
+        else:
+            groups[key].append([item])
+    merged, by_id = {}, {}
+    for group in (g for gs in groups.values() for g in gs):
+        # The copy to download: one that can be installed, then the one most workflows name.
+        group.sort(key=lambda m: (bool(m["blocked"]), -len(m["workflows"]), "manager" not in m["sources"], m["url"]))
+        main = {**group[0], "workflows": [], "sources": [], "mirrors": len(group) - 1}
+        for item in group:
+            for workflow in item["workflows"]:
+                if workflow["name"] not in [w["name"] for w in main["workflows"]]:
+                    main["workflows"].append(workflow)
+            main["sources"] += [s for s in item["sources"] if s not in main["sources"]]
+            for field in ("sha256", "size_bytes", "description", "base", "display"):
+                if not main.get(field) and item.get(field):
+                    main[field] = item[field]
+            by_id[item["id"]] = main
+        merged[main["url"]] = main
+    return merged, by_id

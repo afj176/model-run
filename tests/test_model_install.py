@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from model_run.model_install import ModelInstaller, Transport, _safe_part
-from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, install_note, load_index, parse_size, template_thumbnail
+from model_run.model_sources import blocked_reason, guess_folder, huggingface_parts, install_note, load_index, merge_mirrors, parse_size, template_thumbnail
 
 URL = "https://huggingface.co/org/repo/resolve/main/a.safetensors"
 
@@ -172,6 +172,44 @@ class Index(unittest.TestCase):
             for name in ("../flux", "flux/x", "", "-flux", None):
                 self.assertIsNone(template_thumbnail(name, tmp), name)
 
+    def test_one_file_hosted_in_several_repositories_is_one_entry(self):
+        def item(url, workflows, sha=None, size=None, sources=("templates",), category="vae", filename="flux2-vae.safetensors"):
+            return {"id": url.rsplit("?", 1)[1], "name": filename, "filename": filename, "url": url, "category": category, "subfolder": "",
+                    "size_bytes": size, "sha256": sha, "description": "", "base": "", "sources": list(sources),
+                    "workflows": [{"name": w, "title": w.title()} for w in workflows], "blocked": None, "note": None}
+        hf = "https://huggingface.co/"
+        items = [item(hf + "a/r/flux2-vae.safetensors?a1", ["one"]),
+                 item(hf + "b/r/flux2-vae.safetensors?b22", ["two", "three"]),
+                 item(hf + "c/r/flux2-vae.safetensors?c333", ["four"], size=336, sources=("manager",)),
+                 item(hf + "d/r/flux2-vae.safetensors?d4444", ["five"], sha="1" * 64),
+                 item(hf + "e/r/flux2-vae.safetensors?e55555", ["six"], sha="2" * 64),
+                 item(hf + "f/r/flux2-vae.safetensors?f666666", ["seven"], category="text_encoders")]
+        merged, by_id = merge_mirrors({m["url"]: m for m in items})
+        same = by_id["b22"]
+        self.assertEqual(same["url"], hf + "b/r/flux2-vae.safetensors?b22")  # the copy most workflows name
+        self.assertIs(by_id["a1"], same)
+        self.assertIs(by_id["c333"], same)
+        self.assertIs(by_id["d4444"], same)  # a published hash joins the copies that list none
+        self.assertEqual(sorted(w["name"] for w in same["workflows"]), ["five", "four", "one", "three", "two"])
+        self.assertEqual((same["size_bytes"], same["sha256"], same["mirrors"]), (336, "1" * 64, 3))
+        self.assertEqual(sorted(same["sources"]), ["manager", "templates"])
+        self.assertIsNot(by_id["e55555"], same)  # a different hash is a different file
+        self.assertIsNot(by_id["f666666"], same)  # so is the same name in another folder
+        self.assertEqual(len(merged), 3)
+
+    def test_workflows_name_the_merged_entry_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            templates = Path(tmp) / ".venv" / "Lib" / "site-packages" / "comfyui_workflow_templates_json" / "templates"
+            templates.mkdir(parents=True)
+            models = [{"name": "a.safetensors", "url": URL, "directory": "vae"},
+                      {"name": "a.safetensors", "url": URL.replace("org/repo", "other/repo"), "directory": "vae"}]
+            (templates / "flux.json").write_text(json.dumps({"models": models}), encoding="utf-8")
+            (templates / "index.json").write_text(json.dumps([{"templates": [{"name": "flux", "title": "Flux"}]}]), encoding="utf-8")
+            index = load_index(tmp)
+        self.assertEqual(len(index["models"]), 1)
+        self.assertEqual(len(index["workflows"][0]["models"]), 1)
+        self.assertIn(index["workflows"][0]["models"][0], index["by_id"])
+
     def test_no_lists_says_so(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIn("Hugging Face search still works", load_index(tmp)["notes"][-1])
@@ -274,6 +312,32 @@ class Install(Base):
         only = self.installer(FakeHub(b""), index=index).workflows("", kind="Video")
         self.assertEqual([w["name"] for w in only["workflows"]], ["far"])
         self.assertEqual({k["kind"] for k in only["kinds"]}, {"Video", "Image"})  # every group stays offered
+
+    def test_a_name_match_comes_before_a_description_match(self):
+        def model(i, filename, description=""):
+            return {"id": f"m{i}", "name": filename, "filename": filename, "url": URL.replace("a.safetensors", filename),
+                    "category": "vae", "subfolder": "", "size_bytes": None, "sha256": None, "description": description, "base": "",
+                    "sources": ["templates"], "workflows": [], "blocked": None, "note": None}
+        models = {"m1": model(1, "qwen_vae.safetensors", "for users who want speed"), "m2": model(2, "wan_2.1_vae.safetensors")}
+        workflows = [{"name": "edit", "title": "Image Edit", "description": "Edit what you want", "kind": "Image", "rank": 900, "models": ["m1"]},
+                     {"name": "wan", "title": "Wan 2.2 Text to Video", "description": "", "kind": "Video", "rank": 1, "models": ["m2"]}]
+        index = {"models": {m["url"]: m for m in models.values()}, "by_id": models, "workflows": workflows, "notes": []}
+        installer = self.installer(FakeHub(b""), index=index)
+        self.assertEqual([w["name"] for w in installer.workflows("wan")["workflows"]], ["wan", "edit"])
+        self.assertEqual([m["id"] for m in installer.search("wan")["models"]], ["m2", "m1"])
+        self.assertEqual(installer.workflows("nothing like it")["total"], 0)
+
+    def test_unsized_files_are_sized_once_on_request(self):
+        data = safetensors()
+        item = {"id": "m1", "name": "a.safetensors", "filename": "a.safetensors", "url": URL, "category": "vae", "subfolder": "",
+                "size_bytes": None, "sha256": None, "description": "", "base": "", "sources": ["templates"], "workflows": [], "blocked": None, "note": None}
+        hub = FakeHub(data)
+        installer = self.installer(hub, index={"models": {URL: item}, "by_id": {"m1": item}, "workflows": [], "notes": []})
+        self.assertEqual(installer.sizes(["m1", "unknown"]), {"sizes": {"m1": len(data)}})
+        installer.sizes(["m1"])
+        self.assertEqual([r[0] for r in hub.requests], ["HEAD"])
+        with self.assertRaises(ValueError):
+            installer.sizes([])
 
     def test_finished_downloads_can_be_cleared(self):
         data = safetensors()
