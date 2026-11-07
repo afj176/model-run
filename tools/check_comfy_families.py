@@ -8,9 +8,9 @@ where do text keys really sit? That last check changes only the text and sees wh
 It tests structure and code paths, not results. Random weights say nothing about what a real model
 learned, and tiny configs can differ from released ones.
 
-Run from a ComfyUI folder with its Python, then read the JSON lines or the summary:
+Run it from a ComfyUI folder with the Python that runs ComfyUI, then read the JSON lines or the summary:
 
-    PYTHONPATH=. .venv/Scripts/python.exe <repo>/tools/check_comfy_families.py
+    PYTHONPATH=. python path/to/model-run/tools/check_comfy_families.py
 """
 import dataclasses, importlib, inspect, json, os, re, sys, traceback
 sys.argv = [sys.argv[0], "--cpu"]

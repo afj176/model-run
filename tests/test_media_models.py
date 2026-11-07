@@ -55,7 +55,10 @@ class TaskTests(unittest.TestCase):
 
     def test_names_come_from_the_config_only_when_published(self):
         self.assertEqual(declared_name({"_name_or_path": "openai/whisper-tiny"}, "compat-1"), "whisper-tiny")
-        self.assertEqual(declared_name({"_name_or_path": "C:/private/models/x"}, "folder"), "folder")
+        self.assertEqual(declared_name({"_name_or_path": "/private/models/x"}, "folder"), "folder")
+        self.assertEqual(declared_name({"_name_or_path": 'C:/private/models/x'}, "folder"), "folder")
+        self.assertEqual(declared_name({"_name_or_path": 'C:\\private\\x'}, "folder"), "folder")
+        self.assertEqual(declared_name({"_name_or_path": '\\\\server\\share\\x'}, "folder"), "folder")
         self.assertEqual(declared_name({}, "folder"), "folder")
 
 

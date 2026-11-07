@@ -16,8 +16,7 @@ nothing downloads without a click.
 
 Every number in the interface is measured from the run. Nothing is inferred from
 architecture names, missing data is never drawn as zero, and every trace lists its own
-limitations. [Tested models](#tested-models) lists what has been checked, on which machine,
-and how.
+limitations. [Tested models](#tested-models) lists what has been checked and how.
 
 ## Contents
 
@@ -32,9 +31,8 @@ and how.
 
 ## Run standalone
 
-Model Run runs on Windows, macOS and Linux with Python 3.10 or later (use `python3` where
-`python` is Python 2 or missing, as on many Macs and Linux systems). Install it into the
-environment that will load your models:
+Model Run runs on Windows, macOS and Linux. Install it into the Python environment that will
+load your models (on macOS and Linux the command is often `python3`):
 
 ```bash
 python -m pip install -e ".[transformers,diffusers,media,comfy-paths]"
@@ -43,7 +41,7 @@ python -m pip install -e ".[transformers,diffusers,media,comfy-paths]"
 Then start the server, pointing it at a ComfyUI folder if you have one:
 
 ```bash
-python -m model_run.server --comfy-dir /path/to/ComfyUI
+python -m model_run.server --comfy-dir path/to/ComfyUI
 ```
 
 Open **http://127.0.0.1:8766/**. The server listens on this computer only.
@@ -68,7 +66,7 @@ printed PID to end Model Run. Logs go to `.tmp/app-server.stdout.log` and
 Windows (PowerShell 5.1 or 7):
 
 ```powershell
-.\Start-ModelRun.ps1 -ComfyDir C:\path\ComfyUI
+.\Start-ModelRun.ps1 -ComfyDir path/to/ComfyUI
 ```
 
 `-ModelsDir`, `-ExtraPaths`, `-Port` and `-Python` are optional.
@@ -76,14 +74,13 @@ Windows (PowerShell 5.1 or 7):
 macOS and Linux:
 
 ```bash
-./start-model-run.sh --comfy-dir /path/to/ComfyUI
+./start-model-run.sh --comfy-dir path/to/ComfyUI
 ```
 
 `--models-dir`, `--extra-paths` (repeatable), `--port` and `--python` (default `python3`) are
 optional. Stop it with `kill PID`.
 
-Both scripts and the app were run on Windows 11 and on Ubuntu 24.04 under WSL2. macOS has not
-been tested yet.
+The shell script has not yet been run on macOS.
 
 ### Devices
 
@@ -217,26 +214,6 @@ ComfyUI's first run after a model load can differ on its own. Where a model read
 its attention maps were checked by masking words such as "red" and "wooden" and looking at
 the result. A model that is not listed should still load and record its layers: anything
 Model Run does not understand is reported, never guessed.
-
-### Test machine
-
-| | |
-| --- | --- |
-| OS | Windows 11 Pro |
-| CPU | Intel Core Ultra 9 275HX, 24 cores |
-| RAM | 63 GB |
-| GPU | NVIDIA GeForce RTX 5090 Laptop GPU, 24 GB VRAM |
-| Software | ComfyUI 0.42.1 and 0.43.2 (it updated during testing), PyTorch 2.12 with CUDA 13.0 in ComfyUI and CUDA 12.8 in the standalone app |
-
-Many of these models do not fit in 24 GB of VRAM alongside their text encoders and VAEs.
-ComfyUI loaded every model with its dynamic VRAM loading, which stages weights in system
-RAM and moves them to the GPU as they are needed, and offloaded each model to the CPU when
-the next one loaded. In the standalone app, Qwen3 14B (27.5 GB) and Qwen3 8B in float32
-did not fit and spilled into shared GPU memory, which is system RAM: a 12-token response
-took 56 and 57 seconds, against 2 seconds for Qwen3 8B in bfloat16. That is why the app
-loads a 16-bit checkpoint in its own precision when float32 would not fit. None of these
-times are benchmarks, and a machine with less memory will run the larger models slower or
-not at all.
 
 ### Standalone app
 
@@ -420,7 +397,25 @@ Command-line tools: `python -m model_run ARTIFACT` prints a file's metadata,
 `python -m model_run.run_text MODEL_DIR --module MODULE` captures one module on text
 from stdin.
 
-`frontend/AGENTS.md` holds implementation notes for coding agents.
+### Code layout
+
+| Path | What it holds |
+| --- | --- |
+| `model_run/server.py`, `application.py` | The standalone HTTP server and the app behind it: loading, runs, history and import/export, on one work queue. The ComfyUI extension serves the same API. |
+| `model_run/comfy_bridge.py` | Model Run · Observe and Attach Output: records ComfyUI's denoiser calls without changing them. |
+| `model_run/comfy_components.py` | The Text Encode, VAE Encode/Decode and Generate Text nodes. |
+| `model_run/wrapper_packs.py` | The Observe nodes for ComfyUI-WanVideoWrapper and ComfyUI-HunyuanVideoWrapper. |
+| `model_run/cross_attention.py`, `denoising.py`, `tensor_slices.py` | Attention maps and token labels, per-step denoising views, and per-frame and per-channel slices. |
+| `model_run/adapters.py`, `capture.py`, `transformers_capture.py`, `diffusion_capture.py` | The Python API: bindings and bounded capture for PyTorch, Transformers and Diffusers. |
+| `model_run/local_text.py`, `embedding_models.py`, `media_models.py` | Standalone loaders for language, embedding, image and speech models. |
+| `model_run/model_install.py`, `model_sources.py`, `inventory.py` | Get models: ComfyUI's model lists, Hugging Face search and downloads, and header checks. |
+| `model_run/trace_store.py` | Validates every trace section on import and export. |
+| `frontend/src/` | The React interface; build and package it into `model_run/web`. |
+| `__init__.py`, `comfy_web/` | ComfyUI's entry point and its menu item. |
+
+New views read recorded values only, and `trace_store.py` must validate any new trace
+section. When checking that a node leaves output unchanged, compare with a second plain run
+first, since ComfyUI's first run after a model load can differ on its own.
 
 ## Python API
 

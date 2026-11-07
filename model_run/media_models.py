@@ -10,7 +10,7 @@ import binascii
 import io
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .adapters import TorchModuleAdapter
 from .capture import capture_forward
@@ -58,7 +58,9 @@ def _causal_lm_types():
 def declared_name(config, fallback):
     """The published name a package was saved from, when the folder name does not say what it is."""
     origin = config.get("_name_or_path") if isinstance(config, dict) else None
-    if isinstance(origin, str) and origin and not Path(origin).is_absolute():
+    # A local path from any system, not only this one, is private and says nothing about the model.
+    local = isinstance(origin, str) and (PurePosixPath(origin).is_absolute() or PureWindowsPath(origin).is_absolute() or PureWindowsPath(origin).drive)
+    if isinstance(origin, str) and origin and not local:
         return origin.replace("\\", "/").rstrip("/").split("/")[-1][:80] or fallback
     return fallback
 
