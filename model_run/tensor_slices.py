@@ -104,7 +104,8 @@ def _clean(values):
 class SliceRecorder:
     """Records slices for one trace, spending at most ``max_values`` numbers across all events."""
 
-    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False, token_features=None):
+    def __init__(self, max_values=TRACE_VALUES, token_grid=None, sequence=None, per_event=None, convolutional=False, token_features=None,
+                 parts=(), part_features=None):
         # Set when every tensor is known to be a convolutional block, such as inside a VAE.
         self.convolutional = convolutional
         self.remaining = max_values
@@ -119,6 +120,9 @@ class SliceRecorder:
         self.sequence = sequence
         # Text layers: how many features of every token to keep (None leaves text layers to the prefix).
         self.token_features = token_features
+        # A layer's attention and MLP outputs keep fewer features; their per-token RMS stays exact.
+        self.parts, self.part_features = set(parts), part_features
+        self._path = None
 
     def _placed(self, tensor, latent_shape):
         # Some VAEs keep channels last in places; only name the axes when the shape really is the image's.
@@ -127,8 +131,9 @@ class SliceRecorder:
             return tensor, names, "features", None
         return _layout(tensor, latent_shape, self.token_grid, self.text_tokens, self.reference_tokens)
 
-    def record(self, tensor, latent_shape=None):
+    def record(self, tensor, latent_shape=None, path=None):
         """A slice record; None when the tensor has nothing to navigate; ``unavailable`` on failure."""
+        self._path = path
         try:
             return self._record(tensor, latent_shape)
         except Exception as exc:  # Observation must never break the model being observed.
@@ -178,7 +183,8 @@ class SliceRecorder:
         chosen_batch = self.conditional_batch if self.conditional_batch is not None and self.conditional_batch < batch else 0
         rows = min(length, MAX_TOKEN_ROWS)
         budget = self.remaining if self.per_event is None else min(self.remaining, self.per_event)
-        cols = min(depth, self.token_features, budget // rows)
+        limit = self.part_features if self.part_features and self._path in self.parts else self.token_features
+        cols = min(depth, limit, budget // rows)
         if cols < 1:
             return {"unavailable": "This trace's value budget was already spent on earlier layers."}
         features = _spaced(depth, cols)

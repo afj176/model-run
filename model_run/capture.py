@@ -7,7 +7,8 @@ from .control import ObservationCancelled
 from .tensor_slices import SliceRecorder
 
 
-def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None, slices=None, latent_shape=None, require_eval=True):
+def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, max_events=64, output_selectors=None, control=None, slices=None, latent_shape=None, require_eval=True,
+                    calls_per_module=None):
     """Run once and copy selected module output tensors to CPU, without mutating the model.
 
     Model construction, device placement, tokenization and trust remain the caller's responsibility.
@@ -35,6 +36,9 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
         raise ValueError("max_tensor_elements must be between 1 and 65536")
     if type(max_events) is not int or not 1 <= max_events <= 1024:
         raise ValueError("max_events must be between 1 and 1024")
+    if calls_per_module is not None and (type(calls_per_module) is not int or calls_per_module < 1):
+        raise ValueError("calls_per_module must be a positive integer")
+    calls = {}
     modules = dict(model.named_modules())
     missing = [name for name in module_paths if name not in modules]
     if missing:
@@ -59,6 +63,10 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
                 control.check()
             if len(events) >= max_events:
                 dropped += 1
+                return
+            # A module's later calls (a language model's generated tokens) can be left out.
+            calls[path] = calls.get(path, 0) + 1
+            if calls_per_module is not None and calls[path] > calls_per_module:
                 return
             if path in selectors:
                 value = output
@@ -99,7 +107,7 @@ def capture_forward(model, inputs, module_paths, *, max_tensor_elements=4096, ma
                            "selection": "flattened_prefix", "values": sample, "output_path": tensor_path,
                            "total_elements": flattened.numel(), "truncated": count < flattened.numel(),
                            "nonfinite_values_replaced_with_null": nonfinite})
-            record = slices.record(tensor, latent_shape)
+            record = slices.record(tensor, latent_shape, path=path)
             if record is not None:
                 events[-1]["slices"] = record
             if control is not None:

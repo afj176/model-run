@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { poolTokenGrid } from "./barcodeData";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { guardWheel } from "./wheelGuard";
@@ -125,6 +126,22 @@ function disposeGroup(group) {
   group.clear();
 }
 
+/** [tokens, features] when the event is a text layer's token grid. */
+function tokenGridShape(event) {
+  if (!Array.isArray(event?.token_rms) || event.shape?.length !== 2)
+    return null;
+  const [rows, cols] = event.shape;
+  return rows > 0 && cols > 0 && event.values?.length === rows * cols
+    ? [rows, cols]
+    : null;
+}
+
+/** The 99th percentile of |value|: one huge channel does not flatten every other bar. */
+function robustScale(finite) {
+  const sorted = finite.map(Math.abs).sort((a, b) => a - b);
+  return Math.max(sorted[Math.floor(sorted.length * 0.99)] ?? 0, 0.00001);
+}
+
 export default function Scene({
   nodes,
   selected,
@@ -137,6 +154,7 @@ export default function Scene({
   logScale,
   events = [],
   components = [],
+  parts = null,
   cameraMode = "orbit",
   valueIndex = null,
   onPickValue,
@@ -395,13 +413,27 @@ export default function Scene({
 
     // Values of the selected event
     const layout = volume ? event?.volume_layout : null;
-    const raw = (event?.values || []).flat().slice(0, layout ? 4096 : 2048);
+    // A text layer's token grid: one row per token, its features pooled into columns, each
+    // bar the strongest feature of its column, so every token shows and spikes are kept.
+    const gridShape = !volume && tokenGridShape(event);
+    const pooled = gridShape ? poolTokenGrid(event.values, ...gridShape) : null;
+    const raw = pooled
+      ? pooled.values
+      : (event?.values || []).flat().slice(0, layout ? 4096 : 2048);
     const finite = raw.filter((v) => v !== null && Number.isFinite(v));
-    const scale = Math.max(...finite.map(Math.abs), 0.00001);
+    const scale = pooled
+      ? robustScale(finite)
+      : Math.max(...finite.map(Math.abs), 0.00001);
     const normalize = (v) =>
-      logScale
-        ? (Math.sign(v) * Math.log1p(Math.abs(v))) / Math.log1p(scale)
-        : v / scale;
+      Math.max(
+        -1,
+        Math.min(
+          1,
+          logScale
+            ? (Math.sign(v) * Math.log1p(Math.abs(v))) / Math.log1p(scale)
+            : v / scale,
+        ),
+      );
     const tint = (v, out) => {
       if (v === null || !Number.isFinite(v)) return out.set(C.null);
       const n = Math.min(1, Math.abs(normalize(v)));
@@ -519,8 +551,86 @@ export default function Scene({
       });
     }
 
+    // A text layer whose attention and MLP were recorded: the two parts in the order data flows
+    // through them, each as tall as its output is large next to the layer's output.
+    const flow = !volume && parts?.parts?.length ? parts : null;
+    if (flow) {
+      const items = [
+        ...flow.parts,
+        flow.output && {
+          path: flow.output,
+          label: "Layer output",
+          share: 1,
+          output: true,
+        },
+      ].filter(Boolean);
+      const pitch = 3.1;
+      // Above the tallest bars, so the field never hides them.
+      const baseY = FIELD_Y + 3.2;
+      items.forEach((item, j) => {
+        const x = FIELD_X + (j - (items.length - 1) / 2) * pitch;
+        const share = Number.isFinite(item.share) ? item.share : 0;
+        const h = 0.35 + 1.5 * Math.min(1, share / 1.5);
+        const geometry = new RoundedBoxGeometry(2.1, h, 0.6, 2, 0.08);
+        const picked = item.path === selected;
+        const tile = new THREE.Mesh(
+          geometry,
+          new THREE.MeshStandardMaterial({
+            color: picked ? C.pink : item.output ? C.mid : C.positive,
+            roughness: 0.5,
+            emissive: picked ? C.pink : C.positive,
+            emissiveIntensity: picked ? 0.3 : 0.12,
+          }),
+        );
+        tile.position.set(x, baseY + h / 2, -5.8);
+        tile.userData.path = item.path;
+        const edgeColor = picked ? C.outline : C.tileEdge;
+        const edge = edges(geometry, edgeColor, 0.9);
+        edge.position.copy(tile.position);
+        tile.userData.edge = edge;
+        tile.userData.edgeColor = edgeColor;
+        add(tile);
+        add(edge);
+        rt.pick.clickable.push(tile);
+        const name = makeLabel(item.label, {
+          size: 30,
+          color: picked ? "#ffd3e6" : "#e6fbf4",
+          scale: 0.95,
+        });
+        name.position.set(x, baseY - 0.32, -5.8);
+        add(name);
+        if (!item.output && Number.isFinite(item.share)) {
+          const size = makeLabel(
+            `${item.share >= 10 ? Math.round(item.share) : item.share.toFixed(2)}× the output's RMS`,
+            { size: 24, color: "#b9b0dd", scale: 0.75 },
+          );
+          size.position.set(x, baseY - 0.82, -5.8);
+          add(size);
+        }
+        // Each part adds to the token's running state (with its norms); the layer then hands it on.
+        if (j < items.length - 1) {
+          const plus = makeLabel(
+            j === items.length - 2 && flow.output ? "→" : "+",
+            {
+              size: 40,
+              color: "#cfc6ef",
+              scale: 0.9,
+            },
+          );
+          plus.position.set(x + pitch / 2, baseY + 0.4, -5.8);
+          add(plus);
+        }
+      });
+      const title = makeLabel(
+        `inside ${flow.layer.split(".").slice(-2).join(".")} · what each part produced`,
+        { size: 26, color: "#b9b0dd", scale: 1.1 },
+      );
+      title.position.set(FIELD_X, baseY + 2.3, -5.8);
+      add(title);
+    }
+
     // Children of the selected block as tiles behind the field.
-    const tiles = volume ? [] : components.slice(0, 8);
+    const tiles = volume || flow ? [] : components.slice(0, 8);
     if (tiles.length) {
       const pitch = Math.min(1.75, 9 / tiles.length);
       tiles.forEach((component, j) => {
@@ -588,10 +698,16 @@ export default function Scene({
       ? layout.cols
       : volume
         ? Math.ceil(Math.cbrt(n))
-        : (event?.grid_cols ?? Math.ceil(Math.sqrt(n)));
+        : pooled
+          ? pooled.cols
+          : (event?.grid_cols ?? Math.ceil(Math.sqrt(n)));
     const rows = layout ? layout.rows : volume ? cols : Math.ceil(n / cols);
     const cell = FIELD_W / Math.max(cols, 1);
-    const depth = rows * cell;
+    // Token rows get their own depth, so a dozen tokens read as rows, not a thin strip.
+    const rowCell = pooled
+      ? Math.max(cell, Math.min(0.55, 5.5 / Math.max(rows, 1)))
+      : cell;
+    const depth = rows * rowCell;
     const fieldY = volume ? 0.6 : FIELD_Y;
     const x0 = FIELD_X - FIELD_W / 2;
     const z0 = -depth / 2;
@@ -622,15 +738,15 @@ export default function Scene({
         t.position.set(
           x0 + (cx + 0.5) * cell,
           fieldY + (direction * h) / 2,
-          z0 + depth - (cy + 0.5) * cell,
+          z0 + depth - (cy + 0.5) * rowCell,
         );
-        t.scale.set(cell * inset, h, cell * inset);
+        t.scale.set(cell * inset, h, rowCell * (pooled ? 0.7 : inset));
       }
       t.updateMatrix();
       bars.setMatrixAt(i, t.matrix);
       tint(v, color);
       bars.setColorAt(i, color);
-      rt.pick.barIndex[i] = i;
+      rt.pick.barIndex[i] = pooled ? pooled.source[i] : i;
     });
     bars.instanceMatrix.needsUpdate = true;
     if (bars.instanceColor) bars.instanceColor.needsUpdate = true;
@@ -642,6 +758,7 @@ export default function Scene({
       cols,
       rows,
       cell,
+      rowCell,
       depth,
       fieldY,
       x0,
@@ -651,6 +768,8 @@ export default function Scene({
       normalize,
       tint,
       n,
+      // The bar showing a value of the event: itself, or its token's pooled column.
+      toBar: pooled ? pooled.toBar : (i) => i,
     };
     rt.overlay = new THREE.Group();
     add(rt.overlay);
@@ -685,10 +804,10 @@ export default function Scene({
         lines.push(
           x0,
           fieldY + 0.002,
-          z0 + r * cell,
+          z0 + r * rowCell,
           x0 + FIELD_W,
           fieldY + 0.002,
-          z0 + r * cell,
+          z0 + r * rowCell,
         );
       const fieldGrid = new THREE.BufferGeometry();
       fieldGrid.setAttribute(
@@ -706,9 +825,30 @@ export default function Scene({
         ),
       );
       const caption = makeLabel(
-        `${event.label ?? eventPath(event)} · ${n.toLocaleString()} values · ${cols}×${rows}`,
+        pooled
+          ? `${event.label ?? eventPath(event)} · ${rows} tokens × ${gridShape[1].toLocaleString()} features${pooled.per > 1 ? ` · strongest of ${Math.round(pooled.per)} per column` : ""}`
+          : `${event.label ?? eventPath(event)} · ${n.toLocaleString()} values · ${cols}×${rows}`,
         { size: 26, color: "#b9b0dd", scale: 1.2 },
       );
+      // Token names along the rows, while they fit.
+      if (pooled && event.row_labels && rows <= 32) {
+        const every = Math.ceil(rows / 16);
+        event.row_labels.forEach((label, r) => {
+          if (r % every) return;
+          const sprite = makeLabel(String(label).slice(0, 12), {
+            size: 24,
+            color: "#cfc6ef",
+            scale: 0.7,
+            align: "right",
+          });
+          sprite.position.set(
+            x0 - 0.9,
+            fieldY + 0.05,
+            z0 + depth - (r + 0.5) * rowCell,
+          );
+          add(sprite);
+        });
+      }
       caption.position.set(FIELD_X, fieldY - 0.45, depth / 2 + 0.9);
       add(caption);
       if (selectedSlab) {
@@ -741,7 +881,17 @@ export default function Scene({
         ends.forEach(add);
       }
     }
-  }, [nodes, selected, event, view, spread, logScale, events, components]);
+  }, [
+    nodes,
+    selected,
+    event,
+    view,
+    spread,
+    logScale,
+    events,
+    components,
+    parts,
+  ]);
 
   // Frame what is drawn when the content itself changes (a new trace, model or view), not on selection.
   const contentKey = `${view}|${nodes.length}|${nodes[0]?.path ?? ""}|${events.length}|${events[0]?.module ?? ""}`;
@@ -759,6 +909,7 @@ export default function Scene({
       cols,
       rows,
       cell,
+      rowCell,
       depth,
       fieldY,
       x0,
@@ -768,20 +919,22 @@ export default function Scene({
       normalize,
       tint,
       n,
+      toBar,
     } = rt.field;
+    const picked = valueIndex === null ? null : toBar(valueIndex);
     disposeGroup(rt.overlay);
     rt.pick.anchor = null;
     const color = new THREE.Color();
     const pink = new THREE.Color(C.pink);
     raw.forEach((v, i) => {
       tint(v, color);
-      if (valueIndex !== null) {
+      if (picked !== null) {
         const cx = i % cols;
         const cy = Math.floor(i / cols) % rows;
-        if (i === valueIndex) color.copy(pink);
+        if (i === picked) color.copy(pink);
         else if (
           !volume &&
-          (cx === valueIndex % cols || cy === Math.floor(valueIndex / cols))
+          (cx === picked % cols || cy === Math.floor(picked / cols))
         )
           color.lerp(pink, 0.3);
       }
@@ -789,11 +942,11 @@ export default function Scene({
     });
     if (bars.instanceColor) bars.instanceColor.needsUpdate = true;
     const add = (o) => rt.overlay.add(o);
-    if (valueIndex !== null && valueIndex < n) {
-      const v = raw[valueIndex];
-      const cx = valueIndex % cols;
-      const cy = Math.floor(valueIndex / cols) % rows;
-      const cz = volume ? Math.floor(valueIndex / (cols * rows)) : 0;
+    if (picked !== null && picked < n) {
+      const v = raw[picked];
+      const cx = picked % cols;
+      const cy = Math.floor(picked / cols) % rows;
+      const cz = volume ? Math.floor(picked / (cols * rows)) : 0;
       const nv = v === null || !Number.isFinite(v) ? 0 : normalize(v);
       let position, outlineSize;
       if (volume) {
@@ -809,9 +962,9 @@ export default function Scene({
         position = new THREE.Vector3(
           x0 + (cx + 0.5) * cell,
           fieldY + (direction * h) / 2,
-          z0 + depth - (cy + 0.5) * cell,
+          z0 + depth - (cy + 0.5) * rowCell,
         );
-        outlineSize = [cell * 1.12, h + 0.06, cell * 1.12];
+        outlineSize = [cell * 1.12, h + 0.06, rowCell * 0.85];
         const bandMaterial = new THREE.MeshBasicMaterial({
           color: C.pink,
           transparent: true,
@@ -820,7 +973,7 @@ export default function Scene({
           side: THREE.DoubleSide,
         });
         const rowBand = new THREE.Mesh(
-          new THREE.PlaneGeometry(FIELD_W + 0.6, cell),
+          new THREE.PlaneGeometry(FIELD_W + 0.6, rowCell),
           bandMaterial,
         );
         rowBand.rotation.x = -Math.PI / 2;
@@ -855,6 +1008,7 @@ export default function Scene({
     logScale,
     events,
     components,
+    parts,
   ]);
 
   return (

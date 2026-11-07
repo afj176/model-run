@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Cube,
   Stack,
@@ -41,6 +48,7 @@ import {
   attentionPastAudio,
   eventForLayer,
   layerCaptured,
+  layerParts,
   layerLabels,
   layerNodePath,
   layerOf,
@@ -167,6 +175,84 @@ function withTokenWords(event, trace) {
   return words.every((w) => typeof w === "string")
     ? { ...event, row_labels: words.map((w) => w.trim() || "␣") }
     : event;
+}
+
+/** A value by its token and feature in a token grid ("park" · #611), otherwise by its index. */
+function valueName(event, index) {
+  const cols = event?.shape?.[1];
+  if (!event?.token_rms || !cols) return `#${index}`;
+  const row = Math.floor(index / cols);
+  const feature = event.feature_indices?.[index % cols] ?? index % cols;
+  const token = event.row_labels?.[row];
+  return `${token ? `“${token}”` : `token ${row}`} · #${feature}`;
+}
+
+/** Per token: how large the attention and MLP outputs were, beside the layer's output. */
+function PartsTable({ info, onPick }) {
+  const kinds = [
+    ...info.parts.map((p) => [p.kind, p.label, p.path]),
+    ...(info.output ? [["output", "Output", info.output]] : []),
+  ];
+  const top = Math.max(
+    1e-9,
+    ...info.tokens.flatMap((row) =>
+      kinds.map(([kind]) => row[kind]).filter(Number.isFinite),
+    ),
+  );
+  return (
+    <section className="parts-table" aria-label="What each part added">
+      <h3>What each part added</h3>
+      <p>
+        RMS per token of what attention and the MLP produced, beside the layer's
+        output. A long bar means that part changed the token a lot.
+      </p>
+      <div
+        className="parts-grid"
+        style={{
+          gridTemplateColumns: `minmax(56px, auto) repeat(${kinds.length}, 1fr)`,
+        }}
+      >
+        <span />
+        {kinds.map(([kind, label, path]) => (
+          <button
+            key={kind}
+            className="parts-head"
+            onClick={() => onPick(path)}
+          >
+            {label}
+          </button>
+        ))}
+        {info.tokens.slice(0, 64).map((row, i) => (
+          <Fragment key={i}>
+            <span className="parts-token" title={row.label}>
+              {row.label}
+            </span>
+            {kinds.map(([kind]) => (
+              <span
+                key={kind}
+                className={`parts-bar ${kind}`}
+                title={
+                  Number.isFinite(row[kind]) ? num(row[kind]) : "Not recorded"
+                }
+              >
+                <i
+                  style={{
+                    width: `${Number.isFinite(row[kind]) ? (row[kind] / top) * 100 : 0}%`,
+                  }}
+                />
+                <small>
+                  {Number.isFinite(row[kind]) ? num(row[kind]) : "—"}
+                </small>
+              </span>
+            ))}
+          </Fragment>
+        ))}
+      </div>
+      {info.tokens.length > 64 && (
+        <p>First 64 of {info.tokens.length} tokens.</p>
+      )}
+    </section>
+  );
 }
 
 export function App() {
@@ -406,6 +492,13 @@ export function App() {
   const currentRecord = state?.traces?.find((t) => t.id === traceId);
   const selectedValue =
     valueIndex !== null ? (event?.values || []).flat()[valueIndex] : undefined;
+  // A text layer's recorded attention and MLP, when this run has them.
+  const partsLayer = useMemo(() => {
+    const parent = nodes.find(
+      (n) => n.path === selected || selected?.startsWith(n.path + "."),
+    );
+    return layerParts(events, parent?.path);
+  }, [nodes, selected, events]);
   const expandedComponents = useMemo(() => {
     const parent = nodes.find(
       (n) => n.path === selected || selected.startsWith(n.path + "."),
@@ -492,12 +585,19 @@ export function App() {
       }));
     const labels = layerLabels(nodes.map((n) => n.path));
     const measured = events.length > 0;
+    // An attention capture that kept every layer's matrices can show any of them.
+    const stacked = new Set(
+      trace?.kind === "attention_capture"
+        ? (trace.layer_stacks || []).map((s) => s.index)
+        : [],
+    );
     const choices = nodes.map((n, i) => {
       // Steps have no module path: their timeline node is the event itself.
       const missing =
         measured &&
         !layerCaptured(n.path, events) &&
-        !events.some((e) => eventPath(e) === n.path);
+        !events.some((e) => eventPath(e) === n.path) &&
+        !stacked.has(layerOf(n.path));
       return {
         value: n.path,
         label: `${labels[i]} · ${n.path.split(".").slice(-2).join(".")}${missing ? " · not captured" : ""}`,
@@ -508,7 +608,7 @@ export function App() {
     return events.some((e) => e.module === "")
       ? [{ value: "", label: "Whole model" }, ...choices]
       : choices;
-  }, [blockMode, layerOptions, nodes, events]);
+  }, [blockMode, layerOptions, nodes, events, trace]);
   const status = busy
     ? `${state.job.action} · working`
     : state?.job.status === "failed"
@@ -1188,11 +1288,15 @@ export function App() {
                         selected.startsWith(n.path + "."),
                     )?.path || ""
               }
-              onChange={(e) =>
-                !blockMode
-                  ? pickLayer(Number(e.target.value))
-                  : choose(e.target.value)
-              }
+              onChange={(e) => {
+                if (!blockMode) return pickLayer(Number(e.target.value));
+                choose(e.target.value);
+                // An attention capture holds every layer's matrices: show the chosen one.
+                if (trace?.kind === "attention_capture") {
+                  const number = layerOf(e.target.value);
+                  if (number !== null) pickLayer(number);
+                }
+              }}
             >
               {blockMode && !layerChoices.length && <option value="">—</option>}
               {layerChoices.map((c) => (
@@ -1659,6 +1763,7 @@ export function App() {
                 <ErrorBoundary label="the 3D view" resetKey={traceId}>
                   <Scene
                     components={expandedComponents}
+                    parts={partsLayer}
                     cameraMode={cameraMode}
                     events={events}
                     nodes={nodes}
@@ -1678,7 +1783,7 @@ export function App() {
                           <span>
                             {event.volume_layout
                               ? volumeCell(event.volume_layout, valueIndex).text
-                              : `${short(event.label ?? eventPath(event))} · #${valueIndex}`}
+                              : `${short(event.label ?? eventPath(event))} · ${valueName(event, valueIndex)}`}
                           </span>
                           <strong>
                             Value{" "}
@@ -1750,21 +1855,58 @@ export function App() {
             )}
           </section>
           <aside className="inspector panel">
-            {expandedComponents.length > 0 && (
+            {partsLayer ? (
               <nav
                 className="component-shortcuts"
-                aria-label="Expanded layer components"
+                aria-label="Recorded parts of this layer"
               >
-                {expandedComponents.map((c) => (
-                  <button
-                    key={c.path}
-                    className={selected === c.path ? "active" : ""}
-                    onClick={() => choose(c.path)}
-                  >
-                    {c.path.split(".").at(-1).replaceAll("_", " ")}
-                  </button>
-                ))}
+                {[
+                  ...partsLayer.parts.map((part) => ({
+                    path: part.path,
+                    label: part.label,
+                    note: Number.isFinite(part.share)
+                      ? `${part.share.toFixed(2)}×`
+                      : null,
+                  })),
+                  partsLayer.output && {
+                    path: partsLayer.output,
+                    label: "Layer output",
+                  },
+                ]
+                  .filter(Boolean)
+                  .map((c) => (
+                    <button
+                      key={c.path}
+                      className={selected === c.path ? "active" : ""}
+                      onClick={() => choose(c.path)}
+                      title={
+                        c.note
+                          ? `${c.label}: its output's RMS is ${c.note} the layer output's, averaged over tokens`
+                          : "The layer's output: what it hands to the next layer"
+                      }
+                    >
+                      {c.label}
+                      {c.note && <small> {c.note}</small>}
+                    </button>
+                  ))}
               </nav>
+            ) : (
+              expandedComponents.length > 0 && (
+                <nav
+                  className="component-shortcuts"
+                  aria-label="Expanded layer components"
+                >
+                  {expandedComponents.map((c) => (
+                    <button
+                      key={c.path}
+                      className={selected === c.path ? "active" : ""}
+                      onClick={() => choose(c.path)}
+                    >
+                      {c.path.split(".").at(-1).replaceAll("_", " ")}
+                    </button>
+                  ))}
+                </nav>
+              )
             )}
             <h2>
               Component Inspector
@@ -1842,7 +1984,7 @@ export function App() {
                     <>
                       <dt>Selected value</dt>
                       <dd>
-                        #{valueIndex} ={" "}
+                        {valueName(event, valueIndex)} ={" "}
                         {selectedValue === null
                           ? "non-finite"
                           : num(selectedValue)}
@@ -1850,6 +1992,7 @@ export function App() {
                     </>
                   )}
                 </dl>
+                {partsLayer && <PartsTable info={partsLayer} onPick={choose} />}
                 {activeNode?.parameters?.length > 0 && (
                   <>
                     <h3>Local parameters</h3>

@@ -106,3 +106,41 @@ export function outlierChannels(model, times = MASSIVE, limit = 3) {
     .sort((a, b) => b.tokens - a.tokens || Math.abs(b.peak) - Math.abs(a.peak))
     .slice(0, limit);
 }
+
+/** Pool each token's features into at most a few thousand bars, keeping each column's strongest value. */
+export function poolTokenGrid(values, rows, features, budget = 3072) {
+  const cols = Math.max(1, Math.min(features, 128, Math.floor(budget / rows)));
+  const per = features / cols;
+  const out = [],
+    source = [];
+  for (let r = 0; r < rows; r++)
+    for (let b = 0; b < cols; b++) {
+      const c0 = Math.floor(b * per),
+        c1 = Math.max(c0 + 1, Math.floor((b + 1) * per));
+      let best = c0;
+      for (let c = c0; c < c1; c++) {
+        const v = values[r * features + c],
+          w = values[r * features + best];
+        if (
+          Number.isFinite(v) &&
+          (!Number.isFinite(w) || Math.abs(v) > Math.abs(w))
+        )
+          best = c;
+      }
+      source.push(r * features + best);
+      out.push(values[r * features + best]);
+    }
+  const toBar = (index) => {
+    const r = Math.floor(index / features),
+      c = index % features;
+    let b = Math.min(cols - 1, Math.floor(c / per));
+    // Floor rounding can put a feature one column early; step to the column that holds it.
+    while (
+      b < cols - 1 &&
+      c >= Math.max(Math.floor(b * per) + 1, Math.floor((b + 1) * per))
+    )
+      b++;
+    return r * cols + b;
+  };
+  return { values: out, source, cols, per, toBar };
+}

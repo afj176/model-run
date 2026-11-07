@@ -412,6 +412,9 @@ def _validate(trace):
                     raise ValueError(f"Invalid event {field}")
             if "denoiser_call" in event and (type(event["denoiser_call"]) is not int or event["denoiser_call"] < 0):
                 raise ValueError("Invalid denoiser call index")
+            if ("part" in event or "part_of" in event) and (event.get("part") not in ("attention", "mlp") or not isinstance(event.get("part_of"), str)
+                                                          or not event["module"].startswith(f"{event['part_of']}.")):
+                raise ValueError("Invalid layer part")
             if event["status"] == "captured":
                 values = event.get("values")
                 shape = event.get("shape")

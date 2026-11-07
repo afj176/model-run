@@ -33,6 +33,20 @@ export async function api(route, body, refreshed = false) {
   // Long value lists arrive packed; every view reads plain numbers.
   return route.startsWith("traces/") ? unpackValues(value) : value;
 }
+/**
+ * A text stack's layer groups that ran. A multimodal text encoder also holds image and audio
+ * towers that a text prompt never calls; their layers would only be empty slabs.
+ */
+function ranBlocks(blocks, trace) {
+  const events = trace?.events || [];
+  if (!events.some((e) => e.slices?.layout === "tokens")) return blocks;
+  const group = (path) => path.replace(/\.\d+$/, "");
+  const ran = new Set(events.map((e) => e.module).filter(Boolean));
+  const groups = new Set(
+    blocks.filter((n) => ran.has(n.path)).map((n) => group(n.path)),
+  );
+  return groups.size ? blocks.filter((n) => groups.has(group(n.path))) : blocks;
+}
 export function displayNodes(tree, trace) {
   const nodes = tree?.nodes || [];
   // Outermost only: a UNet's input_blocks.4 holds transformer_blocks.0, which is not a layer of the model.
@@ -47,7 +61,7 @@ export function displayNodes(tree, trace) {
     ? blocks.filter((n) => n.path.startsWith(`${primary}.`))
     : [];
   if (own.length) return own.slice(0, 64);
-  if (blocks.length) return blocks.slice(0, 64);
+  if (blocks.length) return ranBlocks(blocks, trace).slice(0, 64);
   if (nodes.length) {
     const roots = nodes.filter((n) => n.path && n.path.split(".").length <= 2);
     return (roots.length ? roots : nodes).slice(0, 64);

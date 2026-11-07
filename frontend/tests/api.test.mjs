@@ -88,3 +88,33 @@ test("a multimodal model lists its language layers, not its image tower", async 
   assert.equal(paths({ nodes }).length, 4);
 });
 
+test("a text stack's towers that never ran leave the layer stack", async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = { location: { href: "http://127.0.0.1:8766/" } };
+  const { displayNodes } = await import("../src/api.js");
+  globalThis.window = originalWindow;
+  const nodes = [
+    "gemma4.transformer.model.layers.0",
+    "gemma4.transformer.model.layers.1",
+    "gemma4.transformer.model.layers.2",
+    "gemma4.transformer.vision_model.encoder.layers.0",
+    "gemma4.transformer.audio_model.layers.0",
+  ].map((path) => ({ path }));
+  const grid = { slices: { layout: "tokens" } };
+  // Layer 1 was thinned out but its group ran, so it stays as an uncaptured slab.
+  const trace = {
+    events: [
+      { module: "gemma4.transformer.model.layers.0", ...grid },
+      { module: "gemma4.transformer.model.layers.2", ...grid },
+    ],
+  };
+  assert.deepEqual(
+    displayNodes({ nodes }, trace).map((n) => n.path),
+    nodes.slice(0, 3).map((n) => n.path),
+  );
+  // Without token grids (an image model, a VAE) the whole structure stays.
+  assert.equal(
+    displayNodes({ nodes }, { events: [{ module: nodes[0].path }] }).length,
+    5,
+  );
+});

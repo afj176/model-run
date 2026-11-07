@@ -87,6 +87,12 @@ class CaptureTests(unittest.TestCase):
         _, trace = capture_forward(model, {"x": torch.ones(1)}, ["layer"], max_events=1)
         self.assertEqual(trace["dropped_events"], 1)
         with self.assertRaises(ValueError): capture_forward(model, {}, ["missing"])
+        # Only the first call of each module, as a text stack's prompt pass.
+        _, trace = capture_forward(model, {"x": torch.ones(1)}, ["layer"], calls_per_module=1)
+        self.assertEqual(len(trace["events"]), 1)
+        _, trace = capture_forward(model, {"x": torch.ones(1)}, ["layer"])
+        self.assertEqual(len(trace["events"]), 2)
+        with self.assertRaises(ValueError): capture_forward(model, {"x": torch.ones(1)}, ["layer"], calls_per_module=0)
 
     def test_nonfinite_and_complex_outputs(self):
         model = torch.nn.Identity().eval()

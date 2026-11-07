@@ -136,12 +136,19 @@ def _cache_size(past):
     return {"tensors": entries, "bytes": int(size), "tokens": length} if entries else None
 
 
-def token_slices(module_paths, token_features):
-    """A recorder that keeps every token of each text layer, sharing one trace budget across the layers."""
+from .layer_parts import layer_parts, order_parts
+
+
+def token_slices(module_paths, token_features, parts=()):
+    """A recorder that keeps every token of each text layer, sharing one trace budget across the layers.
+
+    Each layer's attention and MLP (``parts``) keep a smaller grid from the same budget."""
+    from .layer_parts import PART_FEATURES
     from .tensor_slices import TOKEN_VALUES, SliceRecorder
     if not token_features:
         return None
-    return SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(module_paths)), token_features=token_features)
+    return SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(module_paths)), token_features=token_features,
+                         parts=[p for p, _layer, _kind in parts], part_features=PART_FEATURES)
 
 
 def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=10, max_tensor_elements=4096, logit_lens=True, control=None, token_features=None):
@@ -161,8 +168,12 @@ def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=
     inputs = {"input_ids": input_ids, "use_cache": False}
     if logit_lens:
         inputs["output_hidden_states"] = True
-    output, trace = capture_forward(model, inputs, module_paths, max_tensor_elements=max_tensor_elements, control=control,
-                                    slices=token_slices(module_paths, token_features))
+    # With token grids, each layer's attention and MLP are recorded too, after the layers.
+    parts = layer_parts(model, module_paths) if token_features else []
+    output, trace = capture_forward(model, inputs, [*module_paths, *(p for p, _layer, _kind in parts)], max_tensor_elements=max_tensor_elements,
+                                    control=control, max_events=max(64, len(module_paths) + len(parts)),
+                                    slices=token_slices(module_paths, token_features, parts))
+    order_parts(trace, parts)
     logits = getattr(output, "logits", None)
     if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
         raise ValueError("Model did not return causal language model logits")

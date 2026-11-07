@@ -141,8 +141,8 @@ What Model Run adds to a workflow, by hand or through the buttons above:
 | --- | --- | --- |
 | **Model Run · Observe** | Between a MODEL output and its sampler | The denoiser's blocks and output for each call, denoising previews, attention maps and token masking. |
 | **Model Run · Attach Output** | After VAE Decode | Pins the decoded images or frames to the observed run. |
-| **Model Run · Text Encode** | In place of CLIP Text Encode | The text encoder's layers and tokens. |
-| **Model Run · Generate Text** | In place of Generate Text | The prompt through the language model's layers, and for each written token its probability and the tokens it nearly wrote. Same text as Generate Text. |
+| **Model Run · Text Encode** | In place of CLIP Text Encode | The text encoder's layers and tokens, each layer's attention and MLP, and its attention weights. |
+| **Model Run · Generate Text** | In place of Generate Text | The prompt through the language model's layers, each layer's attention and MLP, the attention weights of every layer and head, and for each written token its probability and the tokens it nearly wrote. Same text as Generate Text. |
 | **Model Run · VAE Decode** / **VAE Encode** | In place of VAE Decode / Encode | What each VAE block produced. |
 | **Model Run · Observe (WanVideoWrapper)** | Between WanVideo Model Loader and WanVideo Sampler | The same as Observe, for Kijai's ComfyUI-WanVideoWrapper. |
 | **Model Run · Observe (HunyuanVideoWrapper)** | Between HunyuanVideo Model Loader and HunyuanVideo Sampler | The same, for Kijai's ComfyUI-HunyuanVideoWrapper. It records only the queued prompt it runs in. |
@@ -316,7 +316,14 @@ tensor names in 3D.
   an attention probe at the chosen layer and head that records every layer. Diffusion runs
   record denoising steps.
 - **Run View** shows the model as a stack of slabs, one per block or step, tinted by measured
-  activity, with the selected event's values as a field of bars.
+  activity, with the selected event's values as a field of bars. A text layer's field has one
+  row per token, its features pooled into columns (each bar is the strongest feature of its
+  column). Layer groups that never ran, such as a multimodal model's image and audio towers
+  on a text prompt, are left out.
+- **What each part added.** For a text layer, Model Run also records its attention and MLP
+  outputs (256 features per token, each token's RMS exact). Run View draws the two parts
+  above the field, as tall as their output is large next to the layer's output, and the
+  inspector lists them per token. Click a part to open its own grid.
 - **Tensor Exploration Table** shows attention and activations as a navigable 3D matrix with
   a linked heatmap, 32 × 32 values per window. **Tensor Volume** stacks a tensor's recorded
   maps along one axis. Frames and channels can be stepped through and played.
@@ -499,6 +506,13 @@ Model Run does not understand is reported, never guessed.
 
 Gemma 4 E4B, Gemma 3 4B, Qwen3 4B, Qwen3.5 4B, Qwen3.5 9B and Qwen3.8 27B. Each wrote the same text as ComfyUI's Generate Text, and
 every written token was the top token in Model Run's record.
+
+ComfyUI's fused attention kernel returns no weights, so on the prompt pass Model Run computes
+each layer's softmax(QKᵀ · scale + mask) beside it, from the query, key, mask and scale the
+kernel received. The kernel's output is what the model uses; nothing it computes changes.
+Gemma 4 E4B and Qwen3 4B were checked: the same text, with every layer's attention
+(42 layers × 8 heads and 36 × 32) opening under **Attention**. Generated tokens read the
+same layers later and are not recorded there.
 
 ### ComfyUI: add-ons and custom node packs
 

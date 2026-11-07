@@ -1198,3 +1198,43 @@ export function frameDifferenceStory(means, indices) {
         : `Across ${means.length} frames the difference is largest at frame ${indices[peak]} (${pctFine(means[peak])}) and smallest at frame ${indices[low]} (${pctFine(means[low])}).`,
   };
 }
+
+/**
+ * What a text layer's attention and MLP produced, beside the layer's output: each part's mean RMS over
+ * tokens as a share of the output's, and per token. Null when the run did not record the parts.
+ */
+export function layerParts(events, layerPath) {
+  if (!layerPath) return null;
+  const list = events || [];
+  const output = list.find((e) => e.module === layerPath && !e.part);
+  const found = ["attention", "mlp"]
+    .map((kind) => list.find((e) => e.part_of === layerPath && e.part === kind))
+    .filter(Boolean);
+  if (!found.length) return null;
+  const rms = (e) =>
+    Array.isArray(e?.slices?.token_rms) ? e.slices.token_rms : null;
+  const mean = (xs) => {
+    const ok = (xs || []).filter(finite);
+    return ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : null;
+  };
+  const base = mean(rms(output));
+  const parts = found.map((e) => {
+    const m = mean(rms(e));
+    return {
+      path: e.module,
+      kind: e.part,
+      label: e.part === "mlp" ? "MLP" : "Attention",
+      rms: m,
+      share: base && m !== null ? m / base : null,
+    };
+  });
+  const labels = output?.slices?.row_labels || found[0].slices?.row_labels;
+  const rows = Math.max(...[output, ...found].map((e) => rms(e)?.length ?? 0));
+  const tokens = Array.from({ length: rows }, (_, i) => ({
+    label: labels?.[i] ?? `#${i}`,
+    output: rms(output)?.[i] ?? null,
+    attention: rms(found.find((e) => e.part === "attention"))?.[i] ?? null,
+    mlp: rms(found.find((e) => e.part === "mlp"))?.[i] ?? null,
+  }));
+  return { layer: layerPath, output: output?.module ?? null, parts, tokens };
+}

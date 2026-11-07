@@ -4,6 +4,8 @@ import re
 
 from .capture import capture_forward
 from .structure import inspect_module_tree
+from .comfy_attention import AttentionWatch, attention_trace
+from .layer_parts import PART_FEATURES, layer_parts, order_parts
 from .tensor_slices import ALL_FEATURES, TOKEN_VALUES, SliceRecorder
 
 MAX_LAYERS = 65
@@ -202,7 +204,14 @@ class ModelRunTextEncode:
         tokens = clip.tokenize(text)
         value, trace = record_text_stack(clip, lambda: tokens, lambda: clip.encode_from_tokens_scheduled(tokens), prompt_characters=len(text))
         if trace is not None:
-            _publish(type(clip.cond_stage_model).__name__, trace, text if isinstance(text, str) else None)
+            name = type(clip.cond_stage_model).__name__
+            attention = trace.pop("attention_trace", None)
+            if attention is None:
+                _publish(name, trace, text if isinstance(text, str) else None)
+            else:
+                # Attention and layers open together, as one run; the layers open first.
+                run = _publish_run(name, attention, None, "attention")
+                _publish_run(name, trace, run, "module")
         return (value,)
 
 
@@ -238,10 +247,16 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
         result["value"] = call()
     invocation = _Run.module("encoder", stack, run)
     try:
-        # Every token of every layer, by as many features as one trace holds.
-        _, trace = capture_forward(invocation, {}, [f"encoder.{p}" for p in paths], max_tensor_elements=MAX_ELEMENTS, max_events=len(paths),
-                                   slices=SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(paths)), token_features=ALL_FEATURES),
-                                   require_eval=False)
+        # Every token of every layer, by as many features as one trace holds, and each layer's attention and MLP.
+        parts = layer_parts(stack, paths)
+        watched = [f"encoder.{p}" for p in [*paths, *(part for part, _layer, _kind in parts)]]
+        # The fused attention kernel returns no weights; the watch computes them beside it on the prompt pass.
+        watch = AttentionWatch(stack, [part for part, _layer, kind in parts if kind == "attention"])
+        with watch.watching():
+            _, trace = capture_forward(invocation, {}, watched, max_tensor_elements=MAX_ELEMENTS, max_events=len(watched),
+                                       slices=SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(paths)), token_features=ALL_FEATURES,
+                                                            parts=[f"encoder.{part}" for part, _layer, _kind in parts], part_features=PART_FEATURES),
+                                       require_eval=False, calls_per_module=1)
     except Exception as exc:
         if result.get("started") and "value" not in result:
             raise  # the model itself failed, as it would have without this node
@@ -253,10 +268,12 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
     try:
         for event in trace["events"]:
             event["module"] = event["module"][len("encoder."):]
+        order_parts(trace, parts)
         token_dict = tokens()
-        sections, labels = [], {}
+        sections, labels, found_by = [], {}, {}
         for encoder, group in groups.items():
             found = encoder_tokens(clip, token_dict, encoder)
+            found_by[encoder] = found
             section = encoder_section(encoder, {p: states[p] for p in group if p in states}, found)
             if section:
                 sections.append(section)
@@ -264,10 +281,25 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
                 labels[path] = found["labels"] if found else None
         # Token grids take their rows' words once the prompt's tokens are known.
         for event in trace["events"]:
-            grid, words = event.get("slices"), labels.get(event["module"])
+            grid, words = event.get("slices"), labels.get(event["module"]) or labels.get(event.get("part_of"))
             if isinstance(grid, dict) and grid.get("layout") == "tokens" and words and len(words) == grid["source_rows"]:
                 grid["row_labels"] = [str(words[i])[:64] for i in grid["token_indices"]]
         trace.update(model_class=f"{type(stack).__module__}.{type(stack).__qualname__}", source="comfyui_native_text_encoder", structure=inspect_module_tree(stack))
+        try:
+            measured = next(iter(watch.found), None)
+            found = found_by.get(measured.split(".")[0]) if measured else None
+            words = [{"id": i, "text": label} for i, label in zip(found["ids"], found["labels"])] if found else None
+            attention = attention_trace(watch, words, trace["model_class"]) if watch.found else None
+        except Exception as exc:  # noqa: BLE001 - the layers are still worth keeping
+            logging.getLogger(__name__).warning("Model Run could not record this text model's attention: %s", exc)
+            attention = None
+        if attention is not None:
+            # The stack attention was measured on is the language model: both traces show its layers first.
+            prefix = attention.pop("stack", "").rsplit(".", 1)[0]
+            if prefix:
+                trace["structure"]["primary_prefix"] = prefix
+            attention["structure"] = trace["structure"]
+            trace["attention_trace"] = attention  # taken off by the caller and kept as the run's attention
         trace["capture"]["modules"] = paths
         trace["text_encoder"] = {"encoders": sections, "limitations": list(ENCODER_LIMITATIONS)}
         if prompt_characters is not None:
@@ -444,6 +476,10 @@ class ModelRunTextGenerate:
             name = type(clip.cond_stage_model).__name__
             # The newest part of a run is the one that opens, so the layers go last and the response stacks below them.
             run = _publish_run(name, generation, None, "generation") if generation is not None else None
+            attention = trace.pop("attention_trace", None) if trace is not None else None
+            if attention is not None:
+                published = _publish_run(name, attention, run, "attention")
+                run = run or published  # the first part published names the run
             if trace is not None:
                 _publish_run(name, trace, run, "module")
         except Exception as exc:  # noqa: BLE001 - the text is what the workflow came for
