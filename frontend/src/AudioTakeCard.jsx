@@ -242,7 +242,7 @@ export default function AudioTakeCard({
 
   // The waveform, the window frame and the playhead.
   const empty = !take && !recording;
-  const H = empty ? 44 : 72;
+  const H = empty ? 56 : 84;
   useEffect(() => {
     const cv = canvas.current;
     if (!cv || !width) return;

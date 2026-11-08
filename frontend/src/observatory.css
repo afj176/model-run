@@ -4939,59 +4939,64 @@ i.after {
 }
 .take-card {
   display: grid;
-  grid-template-columns: 124px minmax(0, 1fr) 236px;
-  gap: 10px 18px;
+  grid-template-columns: 150px minmax(0, 1fr) 270px;
+  gap: 12px 22px;
   align-items: center;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
+  padding: 10px 6px 12px;
   min-width: 0;
 }
 .take-card.dragging {
   cursor: grabbing;
   user-select: none;
 }
+/* Left: the record button, as large as the waveform is tall. */
 .take-record {
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: 4px;
-  padding-right: 16px;
+  gap: 8px;
+  padding-right: 22px;
   border-right: 1px solid var(--line);
   align-self: stretch;
 }
 .take-button {
   --level: 0;
-  width: 64px;
-  height: 64px;
+  width: 76px;
+  height: 76px;
   padding: 0;
   margin-bottom: 4px;
   border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--lilac);
-  color: var(--indigo);
-  box-shadow: 0 2px 10px #1b123f22;
+  border: 2px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
 }
 .take-button:hover:not(:disabled) {
   border-color: var(--indigo);
+  background: var(--surface);
+  transform: scale(1.03);
 }
 .take-button.recording {
   background: #ff3d8f !important;
   border-color: #ff3d8f !important;
   color: #fff !important;
   box-shadow:
-    0 0 0 calc(4px + var(--level) * 14px) #ff3d8f33,
-    0 0 0 calc(8px + var(--level) * 22px) #ff3d8f14;
+    0 0 0 calc(5px + var(--level) * 14px) #ff3d8f33,
+    0 0 0 calc(10px + var(--level) * 22px) #ff3d8f14;
   transition: box-shadow 0.1s;
 }
 .take-time {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+}
+.take-time.mono {
+  font-size: 15px;
   color: var(--ink);
 }
 .take-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   text-align: center;
 }
@@ -5000,12 +5005,18 @@ i.after {
   align-items: center;
   gap: 4px;
   padding: 0;
-  font-size: 11px;
+  font-size: 12px;
+  color: var(--indigo);
+  text-decoration: none;
 }
+.take-sub .text-button:hover {
+  text-decoration: underline;
+}
+/* Middle: the take's waveform on its own panel, the window framed on it. */
 .take-wave {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 6px;
   align-content: center;
 }
 .take-wave [hidden] {
@@ -5016,7 +5027,7 @@ i.after {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   min-width: 0;
 }
@@ -5027,32 +5038,35 @@ i.after {
 }
 .take-chips {
   display: inline-flex;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
 }
 .take-card .chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-height: 0;
-  padding: 2px 9px;
+  padding: 4px 11px;
   border: 0;
   border-radius: 999px;
   background: var(--lilac);
   color: var(--ink);
-  font-size: 11px;
+  font-size: 12px;
   cursor: default;
 }
 .take-card button.chip {
   cursor: pointer;
 }
+.take-card button.chip:hover {
+  background: var(--c-e3dbf5);
+}
 .take-card .chip.on {
   background: #0f9f8626;
-  color: #0a7f6a;
+  color: var(--c-0a7f6a);
 }
 .take-card .chip.live {
   background: #ff3d8f26;
-  color: #b4215a;
+  color: var(--c-b4215a);
 }
 .take-card .chip.live i {
   width: 7px;
@@ -5062,9 +5076,10 @@ i.after {
 }
 .take-wave-plot {
   position: relative;
-  min-height: 44px;
-  border-radius: 8px;
-  background: var(--c-1a1436);
+  min-height: 56px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
   overflow: hidden;
   outline: none;
 }
@@ -5072,7 +5087,9 @@ i.after {
   cursor: grab;
 }
 .take-wave-plot:focus-visible {
-  box-shadow: 0 0 0 2px #ff3d8f;
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 0 0 2px #ff3d8f;
 }
 .take-wave-plot canvas {
   display: block;
@@ -5084,25 +5101,27 @@ i.after {
   place-items: center;
   padding: 0 16px;
   text-align: center;
-  font-size: 12px;
-  color: var(--c-c9c1e6);
+  font-size: 13px;
+  color: var(--muted);
 }
 .take-ruler {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  padding: 0 2px;
+  font-size: 11px;
   color: var(--muted);
 }
+/* Right: the facts, labels muted and values in the ink. */
 .take-facts {
   margin: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 14px;
+  gap: 5px 16px;
   align-content: center;
   align-self: stretch;
-  padding-left: 16px;
+  padding-left: 22px;
   border-left: 1px solid var(--line);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
 }
 .take-facts dt {
@@ -5112,6 +5131,7 @@ i.after {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+  color: var(--ink);
 }
 .take-start {
   display: inline-flex;
@@ -5125,21 +5145,22 @@ i.after {
   padding: 2px 6px !important;
   font-size: 12px !important;
 }
+/* The strip of takes under the card. */
 .take-strip {
   grid-column: 1 / -1;
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-top: 10px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
   scrollbar-width: thin;
 }
 .take-tile {
   position: relative;
-  flex: 0 0 150px;
+  flex: 0 0 160px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--c-f6f2ff);
+  background: var(--surface);
 }
 .take-tile.picked {
   border: 2px solid #ff3d8f;
@@ -5158,13 +5179,13 @@ i.after {
 .take-tile-head {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 .take-tile-wave {
   display: block;
   width: 100%;
-  height: 26px;
+  height: 28px;
   border-radius: 4px;
   background: var(--c-1a1436);
 }
