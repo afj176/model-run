@@ -241,7 +241,8 @@ export default function AudioTakeCard({
   }
 
   // The waveform, the window frame and the playhead.
-  const H = 72;
+  const empty = !take && !recording;
+  const H = empty ? 44 : 72;
   useEffect(() => {
     const cv = canvas.current;
     if (!cv || !width) return;
@@ -382,7 +383,7 @@ export default function AudioTakeCard({
             <Microphone size={28} />
           </button>
         )}
-        <span className="take-time mono">
+        <span className={`take-time ${recording ? "mono" : ""}`}>
           {recording ? formatTime(elapsed, true) : "Record a take"}
         </span>
         <span className="take-sub">
@@ -413,7 +414,7 @@ export default function AudioTakeCard({
       </div>
 
       <div className="take-wave">
-        <div className="take-wave-head">
+        <div className="take-wave-head" hidden={empty}>
           <span className="mono">
             {recording
               ? "recording…"
@@ -475,7 +476,7 @@ export default function AudioTakeCard({
             </div>
           )}
         </div>
-        <div className="take-ruler mono">
+        <div className="take-ruler mono" hidden={empty}>
           {ruler.map((t, i) => (
             <span key={i}>{formatTime(t)}</span>
           ))}
@@ -488,7 +489,7 @@ export default function AudioTakeCard({
             <dt>Microphone</dt>
             <dd>default</dd>
             <dt>Model gets</dt>
-            <dd className="mono">16 kHz · mono WAV</dd>
+            <dd>16 kHz · mono WAV</dd>
             <dt>Window</dt>
             <dd className="mono">first {WINDOW_SECONDS} s</dd>
             <dt>Where</dt>
@@ -519,7 +520,7 @@ export default function AudioTakeCard({
                 .join(" · ")}
             </dd>
             <dt>Model gets</dt>
-            <dd className="mono">16 kHz · mono</dd>
+            <dd>16 kHz · mono</dd>
             <dt>Window</dt>
             <dd className="mono">
               {window_.whole
@@ -573,7 +574,7 @@ export default function AudioTakeCard({
         ) : (
           <>
             <dt>Model gets</dt>
-            <dd className="mono">16 kHz · mono · {WINDOW_SECONDS} s</dd>
+            <dd>16 kHz · mono · {WINDOW_SECONDS} s</dd>
             <dt>Where</dt>
             <dd>this computer only</dd>
           </>
