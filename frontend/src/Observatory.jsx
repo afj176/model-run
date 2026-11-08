@@ -99,6 +99,7 @@ import {
   waitForPrompt,
 } from "./comfyRun";
 import { buildReport } from "./report";
+import { fetchOutputs, outputUrl } from "./comfyRun";
 import { packValues } from "./packedValues.js";
 import { api, displayNodes, samples, eventPath } from "./api";
 import { mostOf, leastOf } from "./extent.js";
@@ -584,6 +585,21 @@ export function App() {
         : withTokenWords(sliceEvent(rawEvent, sliceWanted), trace),
     [rawEvent, sliceWanted, view, trace],
   );
+  // What the ComfyUI run saved (a video, images), looked up once per prompt from ComfyUI's history.
+  const [comfyOutputs, setComfyOutputs] = useState({});
+  const comfyPromptId = trace?.comfy_prompt_id;
+  useEffect(() => {
+    if (!comfyPromptId || state?.host !== "comfyui") return;
+    if (comfyOutputs[comfyPromptId] !== undefined) return;
+    let live = true;
+    fetchOutputs(comfyPromptId).then((files) => {
+      if (live) setComfyOutputs((all) => ({ ...all, [comfyPromptId]: files }));
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comfyPromptId, state?.host, busy, nativeQueued]);
   // The prompt ribbon: the whole prompt as a strip, a reading window the views under it share.
   const moduleTrace =
     trace?.kind === "pytorch_module_capture"
@@ -2637,6 +2653,14 @@ export function App() {
                 trace={trace}
                 call={replayCall}
                 onCall={goToCall}
+                outputs={
+                  comfyPromptId
+                    ? (comfyOutputs[comfyPromptId] || []).map((f) => ({
+                        ...f,
+                        url: outputUrl(f),
+                      }))
+                    : []
+                }
               />,
             );
           if (trace?.denoising?.steps?.length)

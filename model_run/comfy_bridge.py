@@ -621,6 +621,9 @@ class DenoiserObserver:
             self.trace["capture"]["max_events_per_call"] = len(self.paths)
             self.trace["capture"]["max_events"] = len(self.paths) * self.max_calls
             self.trace["source"] = "comfyui_native_denoiser"
+            prompt_id = _current_prompt_id()
+            if prompt_id:
+                self.trace["comfy_prompt_id"] = prompt_id
             if getattr(self, "block_parts", None):
                 self.trace["block_parts"] = self.block_parts
             if self.attention_block is not None:
@@ -1047,6 +1050,16 @@ def local_request(request):
     from urllib.parse import urlsplit
     host = urlsplit(f"//{request.host}").hostname
     return request.remote in ("127.0.0.1", "::1") and host in ("127.0.0.1", "localhost", "::1") and "X-Forwarded-For" not in request.headers
+
+
+def _current_prompt_id():
+    """The id of the prompt ComfyUI is executing, as its server records it; None outside ComfyUI."""
+    try:
+        from server import PromptServer
+        value = getattr(PromptServer.instance, "last_prompt_id", None)
+    except Exception:
+        return None
+    return value[:64] if isinstance(value, str) and value else None
 
 
 def install_routes():

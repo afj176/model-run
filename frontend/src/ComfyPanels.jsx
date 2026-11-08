@@ -51,10 +51,12 @@ function StepBars({ title, values, picked, onPick, labels }) {
 }
 
 /**
- * The image the run made, with its progress: a strip of every step's estimate ends at the final
- * decode, and the large picture is whichever one is chosen. Follows the replay's denoiser call.
+ * The image or video the run made, with its progress: a strip of every step's estimate ends at
+ * the final decode, and the large picture is whichever one is chosen. A video run plays the file
+ * ComfyUI saved when it can be found, and otherwise its decoded frames as a flipbook. Follows the
+ * replay's denoiser call.
  */
-export function ImageProgress({ trace, call = null, onCall }) {
+export function ImageProgress({ trace, call = null, onCall, outputs = [] }) {
   const steps = (trace?.denoising?.steps || []).filter(
     (s) => s.images?.estimate,
   );
@@ -62,6 +64,9 @@ export function ImageProgress({ trace, call = null, onCall }) {
     trace?.preview?.mime === "image/png"
       ? `data:image/png;base64,${trace.preview.base64}`
       : null;
+  const frames = trace?.preview_frames?.frames || [];
+  const video = outputs.find((f) => f.kind === "video") || null;
+  const audio = outputs.find((f) => f.kind === "audio") || null;
   // The last position is the final image; before it, each recorded step's estimate.
   const last = steps.length;
   const [position, setPosition] = useState(last);
@@ -83,17 +88,39 @@ export function ImageProgress({ trace, call = null, onCall }) {
     // The replay's last denoiser call is the finished run: show the decoded image there.
     if (found >= 0) setPosition(found === steps.length - 1 ? last : found);
   }, [call, steps]);
-  if (!final && !steps.length) return null;
+  // The flipbook of decoded frames, for a video run without its saved file.
+  const [frame, setFrame] = useState(0);
+  const [flipping, setFlipping] = useState(false);
+  useEffect(() => {
+    setFrame(0);
+    setFlipping(frames.length > 1 && !video);
+  }, [trace?.id, frames.length, video]);
+  useEffect(() => {
+    if (!flipping || frames.length < 2) return undefined;
+    const timer = setInterval(
+      () => setFrame((f) => (f + 1) % frames.length),
+      1000 / 8,
+    );
+    return () => clearInterval(timer);
+  }, [flipping, frames.length]);
+  if (!final && !steps.length && !frames.length) return null;
   const atFinal = position >= last || !steps[position];
-  const shown = atFinal ? final : jpeg(steps[position].images.estimate);
+  const shown = atFinal
+    ? frames.length > 1 && !video
+      ? `data:image/png;base64,${frames[frame]}`
+      : final
+    : jpeg(steps[position].images.estimate);
   const go = (next) => {
     setPosition(next);
     if (next < last) onCall?.(steps[next].index);
   };
-  const size =
-    trace?.preview?.width && trace?.preview?.height
-      ? `${trace.preview.width} × ${trace.preview.height}`
-      : "";
+  const sourceFrames = trace?.preview_frames?.source_frames;
+  const frameIndices = trace?.preview_frames?.frame_indices || [];
+  const what = video
+    ? "the video ComfyUI saved"
+    : frames.length > 1
+      ? `${frames.length} of ${sourceFrames ?? frames.length} decoded frames`
+      : "the decoded image";
   return (
     <div className="image-progress">
       <div className="xattn-head">
@@ -101,7 +128,7 @@ export function ImageProgress({ trace, call = null, onCall }) {
           What it made
           <small>
             {atFinal
-              ? `the decoded image${size ? ` · ${size}` : ""}`
+              ? what
               : `step ${steps[position].index + 1}${trace.denoising?.total_steps ? ` of ${trace.denoising.total_steps}` : ""} · the sampler's estimate of the final image`}
           </small>
         </h2>
@@ -122,12 +149,25 @@ export function ImageProgress({ trace, call = null, onCall }) {
       <div className="image-progress-body">
         <SourceFigures trace={trace} />
         <figure className="image-progress-main">
-          {shown ? (
+          {atFinal && video ? (
+            <video
+              key={video.url}
+              src={video.url}
+              controls
+              loop
+              autoPlay
+              muted
+              playsInline
+              aria-label="The video ComfyUI saved for this run"
+            />
+          ) : shown ? (
             <img
               src={shown}
               alt={
                 atFinal
-                  ? "The decoded image"
+                  ? frames.length > 1
+                    ? `Decoded frame ${frameIndices[frame] ?? frame}`
+                    : "The decoded image"
                   : `Estimate at step ${steps[position].index + 1}`
               }
             />
@@ -140,7 +180,32 @@ export function ImageProgress({ trace, call = null, onCall }) {
           )}
           <figcaption>
             {atFinal ? (
-              <b>Final image</b>
+              video ? (
+                <>
+                  <b>{video.filename}</b>
+                  <span>
+                    saved in ComfyUI's {video.type} folder
+                    {video.subfolder ? ` · ${video.subfolder}` : ""}
+                    {audio ? " · with audio" : ""}
+                  </span>
+                </>
+              ) : frames.length > 1 ? (
+                <>
+                  <b>
+                    Frame {(frameIndices[frame] ?? frame) + 1}
+                    {sourceFrames ? ` of ${sourceFrames}` : ""}
+                  </b>
+                  <span>
+                    {frames.length} frames were kept, evenly spaced; this
+                    flipbook is not the video's own speed.
+                    {trace?.comfy_prompt_id
+                      ? " The saved file was not found in ComfyUI's history."
+                      : " Runs made from now on also show the file ComfyUI saved."}
+                  </span>
+                </>
+              ) : (
+                <b>Final image</b>
+              )
             ) : (
               <b>Step {steps[position].index + 1}</b>
             )}
@@ -148,6 +213,40 @@ export function ImageProgress({ trace, call = null, onCall }) {
           </figcaption>
         </figure>
       </div>
+      {atFinal && frames.length > 1 && !video && (
+        <div
+          className="image-progress-frames"
+          role="list"
+          aria-label="Decoded frames"
+        >
+          <button
+            type="button"
+            className="image-progress-flip"
+            aria-label={flipping ? "Pause the frames" : "Play the frames"}
+            onClick={() => setFlipping((v) => !v)}
+          >
+            {flipping ? (
+              <Pause size={14} weight="fill" />
+            ) : (
+              <Play size={14} weight="fill" />
+            )}
+          </button>
+          {frames.map((f, i) => (
+            <button
+              key={i}
+              role="listitem"
+              className={i === frame ? "picked" : ""}
+              title={`Frame ${(frameIndices[i] ?? i) + 1}`}
+              onClick={() => {
+                setFlipping(false);
+                setFrame(i);
+              }}
+            >
+              <img src={`data:image/png;base64,${f}`} alt="" />
+            </button>
+          ))}
+        </div>
+      )}
       {steps.length > 0 && (
         <div className="image-progress-strip" role="list" aria-label="Steps">
           {steps.map((s, i) => (
@@ -162,15 +261,19 @@ export function ImageProgress({ trace, call = null, onCall }) {
               <small>{s.index + 1}</small>
             </button>
           ))}
-          {final && (
+          {(final || video) && (
             <button
               role="listitem"
               className={`final ${atFinal ? "picked" : ""}`}
-              title="The decoded image"
+              title={video ? "The saved video" : "The decoded image"}
               onClick={() => go(last)}
             >
-              <img src={final} alt="" />
-              <small>final</small>
+              {final ? (
+                <img src={final} alt="" />
+              ) : (
+                <span className="image-progress-video-tile">▶</span>
+              )}
+              <small>{video ? "video" : "final"}</small>
             </button>
           )}
         </div>

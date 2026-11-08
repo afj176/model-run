@@ -361,6 +361,8 @@ def _validate(trace):
                     or not isinstance(source.get("file"), str) or len(source["file"]) > 256):
                 raise ValueError("Invalid source image")
             _check_png(source.get("base64"))
+    if "comfy_prompt_id" in trace and (not isinstance(trace["comfy_prompt_id"], str) or not 1 <= len(trace["comfy_prompt_id"]) <= 64):
+        raise ValueError("Invalid ComfyUI prompt id")
     if "preview_frames" in trace:
         block = trace["preview_frames"]
         frames = block.get("frames") if isinstance(block, dict) else None

@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { comfyError, progressText, textModelPrompt } from "../src/comfyRun.js";
+import {
+  comfyError,
+  outputFiles,
+  progressText,
+  textModelPrompt,
+} from "../src/comfyRun.js";
 
 test("a text model file runs through a small prompt that ends in an output node", () => {
   const generate = textModelPrompt({
@@ -73,4 +78,45 @@ test("ComfyUI's progress reads as words, for this run only", () => {
     ),
     null,
   );
+});
+
+test("a finished prompt's files are listed by kind, videos and audio told from images", () => {
+  const record = {
+    outputs: {
+      79: {
+        images: [
+          { filename: "ComfyUI_00001_.mp4", subfolder: "", type: "output" },
+        ],
+        animated: [true],
+      },
+      80: {
+        images: [{ filename: "still.png", subfolder: "day", type: "output" }],
+      },
+      81: {
+        audio: [{ filename: "voice.flac", subfolder: "", type: "output" }],
+      },
+      82: {
+        gifs: [
+          {
+            filename: "clip.webm",
+            subfolder: "",
+            type: "temp",
+            format: "video/webm",
+          },
+        ],
+      },
+    },
+  };
+  const files = outputFiles(record);
+  assert.deepEqual(
+    files.map((f) => [f.filename, f.kind, f.type]),
+    [
+      ["ComfyUI_00001_.mp4", "video", "output"],
+      ["still.png", "image", "output"],
+      ["voice.flac", "audio", "output"],
+      ["clip.webm", "video", "temp"],
+    ],
+  );
+  assert.equal(files[1].subfolder, "day");
+  assert.deepEqual(outputFiles(null), []);
 });

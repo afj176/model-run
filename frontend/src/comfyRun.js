@@ -138,6 +138,65 @@ export async function waitForPrompt(
   }
 }
 
+const VIDEO_EXT = /\.(mp4|webm|mov|mkv|gif|avi)$/i;
+const AUDIO_EXT = /\.(mp3|wav|flac|ogg|m4a)$/i;
+
+/** The files a finished prompt wrote, from its history record: [{filename, subfolder, type, format, kind}]. */
+export function outputFiles(record) {
+  const found = [];
+  for (const [node, output] of Object.entries(record?.outputs || {})) {
+    if (!output || typeof output !== "object") continue;
+    for (const [key, list] of Object.entries(output)) {
+      if (!Array.isArray(list)) continue;
+      for (const file of list) {
+        if (!file || typeof file.filename !== "string") continue;
+        const format = typeof file.format === "string" ? file.format : "";
+        const kind =
+          key === "audio" ||
+          /^audio\//.test(format) ||
+          AUDIO_EXT.test(file.filename)
+            ? "audio"
+            : key === "gifs" ||
+                key === "videos" ||
+                /^video\//.test(format) ||
+                output.animated?.length ||
+                VIDEO_EXT.test(file.filename)
+              ? "video"
+              : "image";
+        found.push({
+          node,
+          filename: file.filename,
+          subfolder: typeof file.subfolder === "string" ? file.subfolder : "",
+          type: typeof file.type === "string" ? file.type : "output",
+          format,
+          kind,
+        });
+      }
+    }
+  }
+  return found;
+}
+
+/** Where ComfyUI serves one of its output files. */
+export function outputUrl(file) {
+  const params = new URLSearchParams({
+    filename: file.filename,
+    subfolder: file.subfolder || "",
+    type: file.type || "output",
+  });
+  return comfyUrl(`view?${params}`).href;
+}
+
+/** The files a prompt wrote, from ComfyUI's history; [] when it is not there any more. */
+export async function fetchOutputs(promptId) {
+  try {
+    const history = await (await fetch(comfyUrl(`history/${promptId}`))).json();
+    return outputFiles(history?.[promptId]);
+  } catch {
+    return [];
+  }
+}
+
 /** Where ComfyUI serves a file from its input folder, by the name a Load node takes ("sub/name.png"). */
 export function inputPreviewUrl(name) {
   const cut = name.lastIndexOf("/");

@@ -5241,6 +5241,63 @@ i.after {
   }
 }
 
+.image-progress-main video {
+  display: block;
+  width: min(100%, 640px);
+  max-height: 520px;
+  border-radius: 10px;
+  background: var(--c-1a1437);
+}
+.image-progress-frames {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.image-progress-frames button {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+}
+.image-progress-frames button img {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.image-progress-frames button.picked {
+  border-color: #ff3d8f;
+}
+.image-progress-flip {
+  width: 32px;
+  height: 32px;
+  margin-right: 6px;
+  border-radius: 50% !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-progress-video-tile {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 5px;
+  background: var(--c-1a1437);
+  color: #fff;
+  font-size: 18px;
+}
+
 /* ---- The prompt ribbon: every token as a column, a reading window drawn in full ---- */
 .ribbon {
   display: grid;
