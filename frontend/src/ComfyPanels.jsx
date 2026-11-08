@@ -80,7 +80,8 @@ export function ImageProgress({ trace, call = null, onCall }) {
     steps.forEach((s, i) => {
       if (s.index <= call) found = i;
     });
-    if (found >= 0 && found < steps.length - 1) setPosition(found);
+    // The replay's last denoiser call is the finished run: show the decoded image there.
+    if (found >= 0) setPosition(found === steps.length - 1 ? last : found);
   }, [call, steps]);
   if (!final && !steps.length) return null;
   const atFinal = position >= last || !steps[position];

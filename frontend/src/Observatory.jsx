@@ -602,18 +602,25 @@ export function App() {
     );
     setRibbonToken((t) => (t !== null && t < promptTokens.length ? t : null));
   }, [promptTokens.length]);
+  // The layer the stage shows: the replay's event for a layer-output capture, the probed layer for attention.
+  const shownLayer =
+    trace?.kind === "attention_capture"
+      ? layer
+      : (layerOf(
+          replayEvent?.part ? replayEvent.part_of : replayEvent?.module,
+        ) ?? layer);
   const ribbonMeasures = useMemo(() => {
     const n = promptTokens.length;
     if (!n) return [];
     const list = [];
     const layerEvent = (moduleTrace?.events ?? []).find(
-      (e) => !e.part && layerOf(e.module) === layer && e.slices?.token_rms,
+      (e) => !e.part && layerOf(e.module) === shownLayer && e.slices?.token_rms,
     );
     const norms = tokenNorms(layerEvent);
     if (norms)
       list.push({
         key: "size",
-        label: `token size at L${layer}`,
+        label: `token size at L${shownLayer}`,
         values: norms,
       });
     const read = answerAttention(generationTrace?.steps, n);
@@ -632,7 +639,14 @@ export function App() {
         });
     }
     return list;
-  }, [promptTokens, moduleTrace, generationTrace, trace, viewTrace, layer]);
+  }, [
+    promptTokens,
+    moduleTrace,
+    generationTrace,
+    trace,
+    viewTrace,
+    shownLayer,
+  ]);
   // Each layer's mean output size, as a share of the largest, for the layer rail's background.
   const railLoad = useMemo(() => {
     const summary = layerSummary(
@@ -1937,7 +1951,7 @@ export function App() {
                 <ResidualLadder
                   events={moduleTrace?.events ?? []}
                   tokens={promptTokens}
-                  layer={layer}
+                  layer={shownLayer}
                   onPick={(n) => goToLayer(n)}
                 />
                 <MetricsTable
