@@ -34,6 +34,7 @@ import {
   tokenText,
 } from "./insights";
 import "./matrix.css";
+import { mostOf, leastOf } from "./extent.js";
 
 const fmt = (n) =>
   Number.isFinite(n)
@@ -1038,7 +1039,7 @@ export default function MatrixWorkspace({
             </h3>
             <div className="matrix-attribution">
               {attribution.map((value, index) => {
-                const peak = Math.max(...attribution, 1e-9);
+                const peak = mostOf(attribution, 1e-9);
                 return (
                   <span
                     key={index}
@@ -1442,11 +1443,11 @@ function OrdinalDot({ label, active, pending, onClick }) {
 function Sparkline({ series, activeLayer }) {
   const points = series.points;
   const layers = points.map((p) => p.layer);
-  const minLayer = Math.min(...layers),
-    maxLayer = Math.max(...layers);
+  const minLayer = leastOf(layers),
+    maxLayer = mostOf(layers);
   const values = points.map((p) => p.value);
-  const lo = Math.min(...values),
-    hi = Math.max(...values);
+  const lo = leastOf(values),
+    hi = mostOf(values);
   const w = 100,
     h = 26;
   const x = (layer) =>
@@ -1474,7 +1475,10 @@ function Sparkline({ series, activeLayer }) {
 }
 
 function DeltaBars({ deltas, activeIndex, onPick }) {
-  const peak = Math.max(...deltas.map((d) => d.delta ?? 0), 1e-9);
+  const peak = mostOf(
+    deltas.map((d) => d.delta ?? 0),
+    1e-9,
+  );
   return (
     <div className="matrix-deltas">
       {deltas.map((d) => (

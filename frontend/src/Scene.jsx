@@ -6,6 +6,7 @@ import { guardWheel } from "./wheelGuard";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { eventPath } from "./api";
 import { activationStats, layerLabels } from "./insights";
+import { mostOf } from "./extent.js";
 
 /** The Run View stage: a model map (one slab per block or step, tinted by its
  * captured activity) linked to a floating field of the selected event's values.
@@ -423,7 +424,7 @@ export default function Scene({
     const finite = raw.filter((v) => v !== null && Number.isFinite(v));
     const scale = pooled
       ? robustScale(finite)
-      : Math.max(...finite.map(Math.abs), 0.00001);
+      : mostOf(finite.map(Math.abs), 0.00001);
     const normalize = (v) =>
       Math.max(
         -1,
@@ -497,8 +498,8 @@ export default function Scene({
         // A strip of the node's first retained values sits on the slab.
         const strip = (firstEvent.get(node.path)?.values || []).slice(0, 24);
         if (strip.length) {
-          const stripScale = Math.max(
-            ...strip.filter((v) => v !== null).map(Math.abs),
+          const stripScale = mostOf(
+            strip.filter((v) => v !== null).map(Math.abs),
             1e-9,
           );
           const bars = new THREE.InstancedMesh(

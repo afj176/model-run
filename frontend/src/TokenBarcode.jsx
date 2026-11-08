@@ -7,6 +7,7 @@ import {
   scaled,
   strongest,
 } from "./barcodeData";
+import { mostOf, leastOf } from "./extent.js";
 
 const SCALE_KEY = "model-run.barcode-scale";
 // Dark-stage diverging ramps: near zero sinks into the stage, positive rises to mint, negative to rose.
@@ -60,8 +61,8 @@ function PatchMap({ model, grid, image, selected, onPick }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const values = model.rms.slice(prefix, prefix + rows * cols);
     const finite = values.filter(Number.isFinite);
-    const low = Math.min(...finite),
-      high = Math.max(...finite, low + 1e-9);
+    const low = leastOf(finite),
+      high = mostOf(finite, low + 1e-9);
     const cw = SIZE / cols,
       ch = SIZE / rows;
     const paint = () => {
@@ -236,7 +237,7 @@ export default function TokenBarcode({
     const px = off.width;
     ctx.imageSmoothingEnabled = false;
     const gap = rowH >= 10 ? 2 : rowH >= 7 ? 1 : 0;
-    const maxRms = Math.max(...model.rms.filter(Number.isFinite), 1e-6);
+    const maxRms = mostOf(model.rms.filter(Number.isFinite), 1e-6);
     ctx.font = "12px Inter, system-ui, sans-serif";
     ctx.textBaseline = "middle";
     for (let r = 0; r < model.rows; r++) {

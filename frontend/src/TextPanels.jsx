@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { pct, tokenText } from "./insights";
 import { attentionArcs, headFanOut, samplingWhatIf } from "./viewData";
+import { mostOf } from "./extent.js";
 
 const label = (text) => (text === undefined ? "?" : tokenText(text) || "∅");
 
@@ -22,10 +23,13 @@ export function LogitsPanel({ trace }) {
   );
   if (!view || !result) return null;
   const counts = view.histogram.counts;
-  const tallest = Math.max(...counts.map((c) => Math.log1p(c)), 1);
+  const tallest = mostOf(
+    counts.map((c) => Math.log1p(c)),
+    1,
+  );
   const shown = result.rows.slice(0, 10);
-  const peak = Math.max(
-    ...shown.map((r) => Math.max(r.probability, r.filtered)),
+  const peak = mostOf(
+    shown.map((r) => Math.max(r.probability, r.filtered)),
     1e-9,
   );
   return (
@@ -164,8 +168,14 @@ export function ResidualStream({ lens }) {
   );
   if (layers.length < 2 || !layers.some((l) => Number.isFinite(l.written_norm)))
     return null;
-  const peakNorm = Math.max(...layers.map((l) => l.residual_norm), 1e-9);
-  const peakWritten = Math.max(...layers.map((l) => l.written_norm ?? 0), 1e-9);
+  const peakNorm = mostOf(
+    layers.map((l) => l.residual_norm),
+    1e-9,
+  );
+  const peakWritten = mostOf(
+    layers.map((l) => l.written_norm ?? 0),
+    1e-9,
+  );
   return (
     <div className="residual-stream">
       <h3>
@@ -207,7 +217,10 @@ export function ResidualStream({ lens }) {
 export function CacheGrowth({ steps }) {
   const series = (steps || []).filter((s) => s.cache);
   if (series.length < 2) return null;
-  const peak = Math.max(...series.map((s) => s.cache.bytes), 1);
+  const peak = mostOf(
+    series.map((s) => s.cache.bytes),
+    1,
+  );
   const megabytes = (bytes) => `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   const last = series.at(-1);
   return (
@@ -260,7 +273,10 @@ export function AttentionLinks({ trace }) {
     return null;
   const step = 100 / count;
   const x = (i) => step * (i + 0.5);
-  const peak = Math.max(...arcs.map((a) => a.weight), 1e-9);
+  const peak = mostOf(
+    arcs.map((a) => a.weight),
+    1e-9,
+  );
   return (
     <div className="attention-links">
       <h2>

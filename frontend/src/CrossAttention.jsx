@@ -3,7 +3,7 @@ import { Lightbulb } from "@phosphor-icons/react";
 import { crossAttentionStory, pct, pctFine, tokenText } from "./insights";
 
 /** Where the prompt is read: measured image-to-text attention maps per token. */
-export default function CrossAttention({ trace }) {
+export default function CrossAttention({ trace, call = null, onCall }) {
   const section = trace?.cross_attention;
   const events = section?.events || [];
   const [eventIndex, setEventIndex] = useState(0);
@@ -21,6 +21,15 @@ export default function CrossAttention({ trace }) {
     setToken(null);
     setFrame(0);
   }, [trace?.cross_attention]);
+  // Follow the replay's denoiser call: the last attention call recorded at or before it.
+  useEffect(() => {
+    if (call === null || !events.length) return;
+    let found = -1;
+    events.forEach((e, i) => {
+      if (e.denoiser_call <= call) found = i;
+    });
+    if (found >= 0) setEventIndex(found);
+  }, [call, events]);
   if (!section) return null;
   const picked = token ?? story?.index ?? 0;
   // Latent frames map to decoded frames by position; the two have different frame counts.
@@ -97,7 +106,11 @@ export default function CrossAttention({ trace }) {
             Denoiser call
             <select
               value={eventIndex}
-              onChange={(e) => setEventIndex(Number(e.target.value))}
+              onChange={(e) => {
+                const i = Number(e.target.value);
+                setEventIndex(i);
+                onCall?.(events[i]?.denoiser_call);
+              }}
             >
               {events.map((e, i) => (
                 <option key={i} value={i}>

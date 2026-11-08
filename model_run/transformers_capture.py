@@ -1,9 +1,10 @@
 """Text-model adapter for already-loaded Hugging Face causal language models."""
 import math
 
+from . import capture_limits
 from .capture import capture_forward
 
-# Aggregate bound for optional per-head matrices returned with an attention capture.
+# Standard bounds for per-head matrices; the active ones come from capture_limits (head_values, stack_values).
 MAX_HEAD_VALUES = 262144
 MAX_STACK_VALUES = 1048576  # per-head matrices for every layer are kept when they fit this bound
 ROUND_DIGITS = 5
@@ -144,19 +145,43 @@ def token_slices(module_paths, token_features, parts=()):
 
     Each layer's attention and MLP (``parts``) keep a smaller grid from the same budget."""
     from .layer_parts import PART_FEATURES
-    from .tensor_slices import TOKEN_VALUES, SliceRecorder
+    from .tensor_slices import SliceRecorder
     if not token_features:
         return None
-    return SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(module_paths)), token_features=token_features,
+    budget = capture_limits.get("token_values")
+    return SliceRecorder(max_values=budget, per_event=budget // max(1, len(module_paths)), token_features=token_features,
                          parts=[p for p, _layer, _kind in parts], part_features=PART_FEATURES)
 
 
-def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=10, max_tensor_elements=4096, logit_lens=True, control=None, token_features=None):
+def _prompt_limit(max_tokens):
+    """The longest prompt a capture takes: the caller's, or the active capture size's."""
+    limit = capture_limits.get("prompt_tokens") if max_tokens is None else max_tokens
+    if type(limit) is not int or not 1 <= limit <= capture_limits.CEILING["prompt_tokens"]:
+        raise ValueError(f"max_tokens must be between 1 and {capture_limits.CEILING['prompt_tokens']}")
+    return limit
+
+
+def keep_token_rows(trace, recorder, prompt_length):
+    """Run Metrics rows for a text run's token grids, from what its recorder kept."""
+    stats = getattr(recorder, "token_stats", None)
+    if not stats or not stats["layers"] and not stats["short"]:
+        return
+    rows = stats["rows"]
+    capture_limits.kept(trace, "Token rows per layer", f"{stats['length'] or prompt_length:,} tokens",
+                        f"{rows:,}" + ("" if rows >= (stats["length"] or prompt_length) else " (the first ones)"),
+                        None if rows >= (stats["length"] or prompt_length) else "Raise Token rows per layer to keep every token.")
+    if stats["cols"] is not None:
+        capture_limits.kept(trace, "Features per token", f"{stats['depth']:,}", f"{stats['cols']:,}" + (" or more" if stats["cols"] < stats["depth"] else ""),
+                            None if stats["cols"] >= stats["depth"] else "Evenly spaced features; each token's RMS and peak use all of them.")
+    capture_limits.kept(trace, "Layers with token grids", f"{stats['layers'] + stats['short']:,}", f"{stats['layers']:,}",
+                        None if not stats["short"] else "Token values per run ran out before the last layers.")
+
+
+def capture_next_token(model, input_ids, module_paths, *, max_tokens=None, top_k=10, max_tensor_elements=4096, logit_lens=True, control=None, token_features=None):
     """Observe a single eager forward pass; no model loading or tokenization is performed."""
     import torch
 
-    if type(max_tokens) is not int or not 1 <= max_tokens <= 4096:
-        raise ValueError("max_tokens must be between 1 and 4096")
+    max_tokens = _prompt_limit(max_tokens)
     if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1:
         raise ValueError("input_ids must be a batch of one token sequence")
     if input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
@@ -168,12 +193,21 @@ def capture_next_token(model, input_ids, module_paths, *, max_tokens=256, top_k=
     inputs = {"input_ids": input_ids, "use_cache": False}
     if logit_lens:
         inputs["output_hidden_states"] = True
+        config = getattr(model, "config", None)
+        text = getattr(config, "text_config", None) or config
+        layers, width = getattr(text, "num_hidden_layers", None), getattr(text, "hidden_size", None)
+        if type(layers) is int and type(width) is int:
+            capture_limits.check_memory((layers + 1) * int(input_ids.shape[1]) * width * 4,
+                                        f"Every layer's hidden state for {int(input_ids.shape[1]):,} tokens", device=input_ids.device)
     # With token grids, each layer's attention and MLP are recorded too, after the layers.
     parts = layer_parts(model, module_paths) if token_features else []
+    recorder = token_slices(module_paths, token_features, parts)
     output, trace = capture_forward(model, inputs, [*module_paths, *(p for p, _layer, _kind in parts)], max_tensor_elements=max_tensor_elements,
                                     control=control, max_events=max(64, len(module_paths) + len(parts)),
-                                    slices=token_slices(module_paths, token_features, parts))
+                                    slices=recorder)
     order_parts(trace, parts)
+    capture_limits.kept(trace, "Prompt tokens", f"{int(input_ids.shape[1]):,}", f"{int(input_ids.shape[1]):,}")
+    keep_token_rows(trace, recorder, int(input_ids.shape[1]))
     logits = getattr(output, "logits", None)
     if not isinstance(logits, torch.Tensor) or logits.ndim != 3 or logits.shape[0] != 1:
         raise ValueError("Model did not return causal language model logits")
@@ -227,7 +261,31 @@ def _layer_summaries(attentions):
     return summaries
 
 
-def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_heads=True, control=None):
+def attention_bytes(model, length):
+    """(bytes, layers, heads) the model's returned attention holds for a prompt of ``length`` tokens, or None."""
+    import torch
+    config = getattr(model, "config", None)
+    text = getattr(config, "text_config", None) or config
+    layers, heads = getattr(text, "num_hidden_layers", None), getattr(text, "num_attention_heads", None)
+    if type(layers) is not int or type(heads) is not int:
+        return None
+    try:
+        dtype = next(model.parameters()).dtype
+    except StopIteration:
+        return None
+    width = torch.finfo(dtype).bits // 8 if dtype.is_floating_point else 4
+    return layers * heads * length * length * width, layers, heads
+
+
+def check_attention_memory(model, input_ids):
+    """Stop before a forward pass that returns more attention than this computer has free."""
+    found = attention_bytes(model, int(input_ids.shape[1]))
+    if found is not None:
+        capture_limits.check_memory(found[0], f"Attention for {int(input_ids.shape[1]):,} tokens over {found[1]} layers and {found[2]} heads",
+                                    device=input_ids.device)
+
+
+def capture_attention(model, input_ids, layer, head, *, max_tokens=None, all_heads=True, control=None):
     """Capture one returned attention matrix; the runtime may materialize all layers first.
 
     When ``all_heads`` is set and the result fits the aggregate bound, every head of the
@@ -237,14 +295,15 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
     import torch
     if any(module.training for module in model.modules()):
         raise ValueError("all model modules must already be in evaluation mode")
-    if type(max_tokens) is not int or not 1 <= max_tokens <= 128:
-        raise ValueError("max_tokens must be between 1 and 128")
+    max_tokens = _prompt_limit(max_tokens)
     if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
         raise ValueError("input_ids must be a bounded batch of one integer token sequence")
     if type(layer) is not int or layer < 0 or type(head) is not int or head < 0:
         raise ValueError("layer and head must be nonnegative integers")
     if type(all_heads) is not bool:
         raise ValueError("all_heads must be boolean")
+    check_attention_memory(model, input_ids)
+    side, head_values, stack_values = (capture_limits.get(k) for k in ("attention_side", "head_values", "stack_values"))
     if control is not None:
         control.checkpoint("attention_start")
     with torch.inference_mode():
@@ -263,7 +322,9 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
         raise ValueError("Requested attention tensor shape is unavailable")
     if head >= matrix.shape[1]:
         raise ValueError(f"Head {head} is out of range; layer {layer} has {int(matrix.shape[1])} heads")
-    selected = matrix[0, head].detach().float().cpu()
+    length = int(matrix.shape[-1])
+    selected, ranges = capture_limits.pool_attention(matrix[0, head].detach().float(), side)
+    selected = selected.cpu()
     if not torch.isfinite(selected).all().item():
         raise ValueError("Attention contains non-finite values")
     trace = {"schema_version": "1.0", "kind": "attention_capture", "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
@@ -273,20 +334,18 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
              "axes": ["query_position", "key_position"], "shape": list(selected.shape), "values": selected.tolist(),
              "input": {"token_count": int(input_ids.shape[1]), "token_ids_included": False},
              "limitations": ["Attention weights alone do not establish causality.", "Runtime may materialize attention for every layer and head.", "No tokenizer or input text is recorded."]}
+    keep_attention_shape(trace, length, ranges, int(matrix.shape[1]))
     if all_heads:
         complete = all(isinstance(a, torch.Tensor) and a.ndim == 4 and a.shape[0] == 1 for a in attentions)
         if not complete:
             trace["limitations"].append("Some layers returned no attention; head gallery, rollout and layer summaries were skipped.")
         else:
-            cpu = [a.detach().float().cpu() for a in attentions]
+            # One layer at a time, shrunk as it goes, so a long prompt never holds every layer twice.
+            cpu = [capture_limits.pool_attention(a.detach().float(), side)[0].cpu() for a in attentions]
             if not all(torch.isfinite(a).all().item() for a in cpu):
                 raise ValueError("Attention contains non-finite values")
             size = int(selected.shape[0])
-            if int(matrix.shape[1]) * size * size <= MAX_HEAD_VALUES:
-                trace["heads"] = [[[round(v, ROUND_DIGITS) for v in row] for row in h.tolist()] for h in cpu[layer][0]]
-                trace["limitations"].append(f"Per-head matrices are rounded to {ROUND_DIGITS} decimals; the selected head keeps full precision in values.")
-            else:
-                trace["limitations"].append("Per-head matrices exceed the aggregate bound and were not recorded.")
+            keep_attention_heads(trace, cpu, layer, size, head_values)
             rolled = _rollout(cpu)
             # Directly measured: how much the final query position attends to each key, averaged over every layer and head.
             received = torch.stack([a[0, :, -1, :].mean(0) for a in cpu]).mean(0)
@@ -296,17 +355,55 @@ def capture_attention(model, input_ids, layer, head, *, max_tokens=128, all_head
                                     "limitations": ["Rollout assumes equal head weighting and a residual identity term; it is an attention-flow estimate, not a causal attribution.",
                                                     "last_position_attention is the measured head- and layer-averaged attention from the final query position."]}
             trace["layers"] = _layer_summaries(cpu)
-            # Every layer, so the viewer can move between layers without another forward pass.
-            total = len(cpu) * int(matrix.shape[1]) * size * size
-            if total <= MAX_STACK_VALUES:
-                trace["layer_stacks"] = [{"index": index, "heads": [[[round(v, 4) for v in row] for row in h.tolist()] for h in a[0]]}
-                                         for index, a in enumerate(cpu)]
-                trace["limitations"].append("layer_stacks holds every layer's per-head matrices rounded to 4 decimals; the probed layer keeps full precision in values and heads.")
-            else:
-                trace["layer_stacks"] = [{"index": index, "mean": [[round(v, 4) for v in row] for row in a[0].mean(0).tolist()]}
-                                         for index, a in enumerate(cpu)]
-                trace["limitations"].append(f"Per-head matrices for every layer would exceed {MAX_STACK_VALUES:,} values, so layer_stacks holds each layer's head-averaged matrix; per-head detail is kept for the probed layer only.")
+            keep_layer_stacks(trace, cpu, size, stack_values)
     return trace
+
+
+def keep_attention_shape(trace, length, ranges, heads):
+    """Note a shrunk matrix on the trace and in Run Metrics."""
+    side = len(ranges) if ranges else length
+    if ranges:
+        block = ranges[0][1] - ranges[0][0]
+        trace["pooled"] = {"token_count": length, "ranges": ranges}
+        trace["limitations"].append(f"The prompt has {length:,} tokens, more than the {capture_limits.get('attention_side'):,} an attention matrix keeps per side, so "
+                                    f"every matrix was shrunk to {side} × {side} blocks of {block} tokens: each block is the attention its queries gave its keys, "
+                                    "summed over the keys and averaged over the queries, so rows still sum to 1. Sink, previous-token and self shares are of blocks.")
+    capture_limits.kept(trace, "Attention matrix", f"{length:,} × {length:,}", f"{side:,} × {side:,}",
+                        f"Blocks of {ranges[0][1] - ranges[0][0]} tokens. Raise Attention side to keep every token." if ranges else None)
+
+
+def keep_attention_heads(trace, cpu, layer, size, head_values):
+    """Per-head matrices of the probed layer, as far as the capture size allows."""
+    heads = int(cpu[layer].shape[1])
+    if heads * size * size <= head_values:
+        trace["heads"] = [[[round(v, ROUND_DIGITS) for v in row] for row in h.tolist()] for h in cpu[layer][0]]
+        trace["limitations"].append(f"Per-head matrices are rounded to {ROUND_DIGITS} decimals; the selected head keeps full precision in values.")
+        capture_limits.kept(trace, "Probed layer's heads", f"{heads} heads", f"{heads} heads")
+    else:
+        trace["limitations"].append("Per-head matrices exceed the aggregate bound and were not recorded.")
+        capture_limits.kept(trace, "Probed layer's heads", f"{heads} heads", "the selected head", "Raise Per-head attention to keep every head.")
+
+
+def keep_layer_stacks(trace, cpu, size, stack_values):
+    """Every layer's matrices, per head when they fit, else each layer's head mean, else none."""
+    heads = int(cpu[0].shape[1])
+    # Every layer, so the viewer can move between layers without another forward pass.
+    total = len(cpu) * heads * size * size
+    if total <= stack_values:
+        trace["layer_stacks"] = [{"index": index, "heads": [[[round(v, 4) for v in row] for row in h.tolist()] for h in a[0]]}
+                                 for index, a in enumerate(cpu)]
+        trace["limitations"].append("layer_stacks holds every layer's per-head matrices rounded to 4 decimals; the probed layer keeps full precision in values and heads.")
+        kept = "every head"
+    elif len(cpu) * size * size <= stack_values:
+        trace["layer_stacks"] = [{"index": index, "mean": [[round(v, 4) for v in row] for row in a[0].mean(0).tolist()]}
+                                 for index, a in enumerate(cpu)]
+        trace["limitations"].append(f"Per-head matrices for every layer would exceed {stack_values:,} values, so layer_stacks holds each layer's head-averaged matrix; per-head detail is kept for the probed layer only.")
+        kept = "each layer's head mean"
+    else:
+        trace["limitations"].append(f"Even each layer's head-averaged matrix would exceed {stack_values:,} values, so only the probed layer's matrices and every layer's summary were kept.")
+        kept = "summaries only"
+    capture_limits.kept(trace, "Every layer's attention", f"{len(cpu)} layers × {heads} heads", kept,
+                        None if kept == "every head" else "Raise Every layer's heads to keep more.")
 
 
 MAX_ABLATION_HEADS = 128
@@ -353,7 +450,7 @@ def _distribution(logits, top_k):
                            "entropy_bits": _entropy_bits(probabilities)}
 
 
-def capture_head_ablation(model, input_ids, layer, heads=None, *, max_tokens=128, top_k=10, control=None):
+def capture_head_ablation(model, input_ids, layer, heads=None, *, max_tokens=None, top_k=10, control=None):
     """Zero one attention head's output at a time and record how the next-token distribution moves.
 
     The head's slice of the input to the layer's output projection is zeroed during a full
@@ -363,8 +460,7 @@ def capture_head_ablation(model, input_ids, layer, heads=None, *, max_tokens=128
     import torch
     if any(module.training for module in model.modules()):
         raise ValueError("all model modules must already be in evaluation mode")
-    if type(max_tokens) is not int or not 1 <= max_tokens <= 128:
-        raise ValueError("max_tokens must be between 1 and 128")
+    max_tokens = _prompt_limit(max_tokens)
     if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
         raise ValueError("input_ids must be a bounded batch of one integer token sequence")
     if type(layer) is not int or layer < 0:
@@ -455,7 +551,7 @@ def _hidden_of(output):
     raise ValueError("Decoder layer output is not a hidden-state tensor")
 
 
-def capture_activation_patching(model, source_ids, target_ids, *, layers=None, positions="last", max_tokens=128, top_k=10, control=None):
+def capture_activation_patching(model, source_ids, target_ids, *, layers=None, positions="last", max_tokens=None, top_k=10, control=None):
     """Copy the source run's residual stream into the target run, one decoder layer at a time.
 
     For each layer the layer's output hidden state at the patched positions is replaced with the
@@ -466,8 +562,7 @@ def capture_activation_patching(model, source_ids, target_ids, *, layers=None, p
     import torch
     if any(module.training for module in model.modules()):
         raise ValueError("all model modules must already be in evaluation mode")
-    if type(max_tokens) is not int or not 1 <= max_tokens <= 128:
-        raise ValueError("max_tokens must be between 1 and 128")
+    max_tokens = _prompt_limit(max_tokens)
     for ids in (source_ids, target_ids):
         if not isinstance(ids, torch.Tensor) or ids.ndim != 2 or ids.shape[0] != 1 or ids.dtype not in (torch.int32, torch.int64) or not 1 <= ids.shape[1] <= max_tokens:
             raise ValueError("input_ids must be a bounded batch of one integer token sequence")
@@ -561,11 +656,12 @@ def capture_activation_patching(model, source_ids, target_ids, *, layers=None, p
                             "kl_bits is the KL divergence from the target baseline to the patched next-token distribution."]}
 
 
+# Standard bounds; the active ones come from capture_limits (response_tokens, prompt_tokens).
 MAX_GENERATED_TOKENS = 256
 MAX_GENERATION_CONTEXT = 512
 
 
-def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_tokens=128, provenance=True, control=None):
+def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_tokens=None, provenance=True, control=None):
     """Greedy-decode a bounded response and record, for every generated token, where it came from.
 
     The prompt is run once; each later step feeds the new token with the key-value cache, so
@@ -577,12 +673,16 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
     import torch
     if any(module.training for module in model.modules()):
         raise ValueError("all model modules must already be in evaluation mode")
-    if type(max_tokens) is not int or not 1 <= max_tokens <= 256:
-        raise ValueError("max_tokens must be between 1 and 256")
+    max_tokens = _prompt_limit(max_tokens)
     if not isinstance(input_ids, torch.Tensor) or input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.dtype not in (torch.int32, torch.int64) or not 1 <= input_ids.shape[1] <= max_tokens:
         raise ValueError("input_ids must be a bounded batch of one integer token sequence")
-    if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= MAX_GENERATED_TOKENS:
-        raise ValueError(f"max_new_tokens must be between 1 and {MAX_GENERATED_TOKENS}")
+    longest = capture_limits.get("response_tokens")
+    if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= longest:
+        raise ValueError(f"max_new_tokens must be between 1 and {longest}")
+    # The context stops growing at the longest prompt plus the longest answer the capture size allows.
+    context_limit = max(MAX_GENERATION_CONTEXT, capture_limits.get("prompt_tokens") + longest)
+    if provenance:
+        check_attention_memory(model, input_ids)
     if type(top_k) is not int or not 1 <= top_k <= 20:
         raise ValueError("top_k must be between 1 and 20")
     if type(provenance) is not bool:
@@ -654,7 +754,7 @@ def capture_generation(model, input_ids, *, max_new_tokens=32, top_k=5, max_toke
             if chosen in eos_ids:
                 stopped = "eos"
                 break
-            if sequence.shape[1] >= MAX_GENERATION_CONTEXT:
+            if sequence.shape[1] >= context_limit:
                 stopped = "context_limit"
                 break
             pending = torch.tensor([[chosen]], dtype=sequence.dtype, device=sequence.device)

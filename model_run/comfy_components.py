@@ -6,7 +6,8 @@ from .capture import capture_forward
 from .structure import inspect_module_tree
 from .comfy_attention import AttentionWatch, attention_trace
 from .layer_parts import PART_FEATURES, layer_parts, order_parts
-from .tensor_slices import ALL_FEATURES, TOKEN_VALUES, SliceRecorder
+from . import capture_limits
+from .tensor_slices import ALL_FEATURES, SliceRecorder
 
 MAX_LAYERS = 65
 # Text stacks share one token budget across their layers, so every layer of even a large multimodal stack fits.
@@ -89,7 +90,7 @@ def encoder_groups(stack):
     """{encoder attribute: [layer paths]}, with the embedding first where one can be found."""
     from .comfy_bridge import all_layer_paths
     groups = {}
-    for path in [p for p in all_layer_paths(stack, MAX_TEXT_LAYERS) if p]:
+    for path in [p for p in all_layer_paths(stack, capture_limits.get("text_layers")) if p]:
         groups.setdefault(path.split(".")[0], []).append(path)
     names = dict(stack.named_modules())
     for encoder, paths in groups.items():
@@ -157,7 +158,8 @@ def encoder_section(encoder, states, tokens):
     else:
         labels, ids, weights = [f"#{i}" for i in range(token_total)], [None] * token_total, [1.0] * token_total
         numbered = True
-    positions = real_tokens(labels)[:MAX_TOKENS]
+    # The token map shows half as many tokens as a layer's grid keeps: 64 on the Standard capture size.
+    positions = real_tokens(labels)[:max(MAX_TOKENS, capture_limits.get("token_rows") // 2)]
     keep = len(positions)
     # Start and end tokens can be far stronger than any word, so they do not get to choose what is shown.
     words = [i for i, at in enumerate(positions) if not SPECIAL_TOKEN.fullmatch(str(labels[at]).strip())] or list(range(keep))
@@ -225,7 +227,8 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
     stack = clip.cond_stage_model
     try:
         groups = encoder_groups(stack)
-        paths = _thin([path for group in groups.values() for path in group], MAX_TEXT_LAYERS)
+        found = [path for group in groups.values() for path in group]
+        paths = _thin(found, capture_limits.get("text_layers"))
     except Exception as exc:  # noqa: BLE001 - the node must still do its work
         logging.getLogger(__name__).warning("Model Run could not read this text encoder: %s", exc)
         return call(), None
@@ -253,10 +256,16 @@ def record_text_stack(clip, tokens, call, *, prompt_characters=None):
         # The fused attention kernel returns no weights; the watch computes them beside it on the prompt pass.
         watch = AttentionWatch(stack, [part for part, _layer, kind in parts if kind == "attention"])
         with watch.watching():
+            budget = capture_limits.get("token_values")
+            recorder = SliceRecorder(max_values=budget, per_event=budget // max(1, len(paths)), token_features=ALL_FEATURES,
+                                     parts=[f"encoder.{part}" for part, _layer, _kind in parts], part_features=PART_FEATURES)
             _, trace = capture_forward(invocation, {}, watched, max_tensor_elements=MAX_ELEMENTS, max_events=len(watched),
-                                       slices=SliceRecorder(max_values=TOKEN_VALUES, per_event=TOKEN_VALUES // max(1, len(paths)), token_features=ALL_FEATURES,
-                                                            parts=[f"encoder.{part}" for part, _layer, _kind in parts], part_features=PART_FEATURES),
-                                       require_eval=False, calls_per_module=1)
+                                       slices=recorder, require_eval=False, calls_per_module=1)
+        from .transformers_capture import keep_token_rows
+        keep_token_rows(trace, recorder, recorder.token_stats["length"])
+        if len(paths) < len(found):
+            capture_limits.kept(trace, "Text encoder layers", f"{len(found):,}", f"{len(paths):,} (evenly spaced)",
+                                "Raise Text encoder layers to record every one.")
     except Exception as exc:
         if result.get("started") and "value" not in result:
             raise  # the model itself failed, as it would have without this node

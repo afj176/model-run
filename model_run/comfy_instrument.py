@@ -6,6 +6,8 @@ so links into it still hold. Pure, so it is tested without ComfyUI.
 from copy import deepcopy
 import re
 
+from . import capture_limits
+
 SAMPLER = re.compile(r"(Sampler|Guider)")
 SWAPS = {"CLIPTextEncode": "ModelRunTextEncode", "VAEDecode": "ModelRunVAEDecode", "VAEEncode": "ModelRunVAEEncode"}
 GENERATION = ("temperature", "top_k", "top_p", "min_p", "repetition_penalty", "seed")
@@ -199,7 +201,7 @@ def instrument(source, settings=None):
         if key not in observers:
             observe = _fresh(prompt, "model_run_observe_")
             prompt[observe] = {"class_type": "ModelRunObserve", "_meta": {"title": "Model Run · Observe"},
-                               "inputs": {"model": model, "modules": "", "max_calls": 8, "elements": 1024, "output_selectors": "{}",
+                               "inputs": {"model": model, "modules": "", "max_calls": capture_limits.get("layer_calls"), "elements": 1024, "output_selectors": "{}",
                                           "attention_block": "auto", "attention_grid": 32, "prompt": text if isinstance(text, str) else "",
                                           "denoising_views": True, "ablate_tokens": ""}}
             # Word labels for the attention maps come from the text encoder that read the prompt.

@@ -4,9 +4,22 @@ import os
 import tempfile
 import math
 from pathlib import Path
+from . import capture_limits
 from .tensor_slices import validate_slices
 
-MAX_TRACE_BYTES = 64 * 1024 * 1024
+# The largest trace any capture size writes; one run is also bounded by the active size (size_limit).
+MAX_TRACE_BYTES = capture_limits.CEILING["trace_bytes"]
+CEILING = capture_limits.CEILING
+
+
+def size_limit():
+    """Bytes one run, or one import, may take on the active capture size."""
+    return min(MAX_TRACE_BYTES, capture_limits.get("trace_bytes"))
+
+
+def too_large(size):
+    return ValueError(f"This run would be {size / (1024 * 1024):,.0f} MB, more than the {size_limit() / (1024 * 1024):,.0f} MB the "
+                      f"{capture_limits.LABELS[capture_limits.profile()]} capture size keeps for one run. Choose a larger capture size in Settings, or record fewer layers.")
 # Long lists of measured values are kept packed: 32-bit floats in base64, about a third smaller than JSON text.
 MIN_PACKED = 64
 SUPPORTED_KINDS = {"pytorch_module_capture", "attention_capture", "diffusion_step_capture", "head_ablation", "activation_patching", "generation_capture"}
@@ -24,14 +37,14 @@ def _unique_pairs(pairs):
 def _validate_cross_attention(section):
     """Measured image-to-text attention maps attached to a diffusion or module trace."""
     if (not isinstance(section, dict) or section.get("method") != "measured_attention_probabilities" or not isinstance(section.get("source"), str)
-            or not isinstance(section.get("selection"), str) or not isinstance(section.get("events"), list) or len(section["events"]) > 32
+            or not isinstance(section.get("selection"), str) or not isinstance(section.get("events"), list) or len(section["events"]) > max(32, CEILING["attention_calls"])
             or not isinstance(section.get("limitations"), list) or type(section.get("grid_limit")) is not int):
         raise ValueError("Invalid cross-attention section")
     labels = section.get("text_labels")
     if labels is not None and (not isinstance(labels, list) or len(labels) > 4096 or any(not isinstance(l, str) or len(l) > 48 for l in labels)):
         raise ValueError("Invalid cross-attention token labels")
     skipped = section.get("skipped")
-    if skipped is not None and (not isinstance(skipped, list) or len(skipped) > 32 or any(not isinstance(s, dict) or not isinstance(s.get("reason"), str) for s in skipped)):
+    if skipped is not None and (not isinstance(skipped, list) or len(skipped) > max(32, CEILING["attention_calls"]) or any(not isinstance(s, dict) or not isinstance(s.get("reason"), str) for s in skipped)):
         raise ValueError("Invalid cross-attention skip list")
     for event in section["events"]:
         if (not isinstance(event, dict) or type(event.get("denoiser_call")) is not int or event["denoiser_call"] < 0
@@ -45,7 +58,7 @@ def _validate_cross_attention(section):
             raise ValueError("Invalid cross-attention frame count")
         cells = frames * event["grid"][0] * event["grid"][1]
         maps = event.get("maps")
-        if (not isinstance(maps, list) or len(maps) != event["text_tokens"] or event["text_tokens"] * cells > 262144
+        if (not isinstance(maps, list) or len(maps) != event["text_tokens"] or event["text_tokens"] * cells > CEILING["cross_attention_values"]
                 or any(not isinstance(row, list) or len(row) != cells or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in row) for row in maps)):
             raise ValueError("Invalid cross-attention maps")
         for key, length in (("text_mass", cells), ("token_mass", event["text_tokens"])):
@@ -68,7 +81,7 @@ DENOISING_IMAGES = {"latent", "estimate", "noise", "positive", "negative", "guid
 def _validate_denoising(section):
     """Per-step sampler records: measured numbers plus small JPEG panels."""
     import base64
-    if not isinstance(section, dict) or section.get("method") != "sampler_post_cfg" or not isinstance(section.get("steps"), list) or len(section["steps"]) > 64:
+    if not isinstance(section, dict) or section.get("method") != "sampler_post_cfg" or not isinstance(section.get("steps"), list) or len(section["steps"]) > max(64, CEILING["denoising_steps"] + 1):
         raise ValueError("Invalid denoising section")
     if not isinstance(section.get("limitations"), list) or section.get("projection") not in ("latent_rgb_factors", "first_channels"):
         raise ValueError("Invalid denoising section")
@@ -103,7 +116,7 @@ def _validate_text_encoder(section):
         if not isinstance(encoder, dict) or not isinstance(encoder.get("encoder"), str) or not isinstance(encoder.get("tokens"), list) or not isinstance(encoder.get("layers"), list):
             raise ValueError("Invalid text encoder")
         count = len(encoder["tokens"])
-        if not 1 <= count <= 256 or len(encoder["layers"]) > 128:
+        if not 1 <= count <= max(256, CEILING["token_rows"]) or len(encoder["layers"]) > max(128, CEILING["text_layers"]):
             raise ValueError("Invalid text encoder size")
         for token in encoder["tokens"]:
             if not isinstance(token, dict) or not isinstance(token.get("text"), str) or len(token["text"]) > 48 or not (token.get("id") is None or type(token["id"]) is int) or not _number(token.get("weight")) or type(token.get("special", False)) is not bool:
@@ -147,7 +160,7 @@ def _validate_generation(trace):
     steps = trace.get("steps")
     if (trace.get("decoding") not in ("greedy", "sampled") or trace.get("stopped") not in ("max_new_tokens", "eos", "context_limit")
             or not isinstance(trace.get("input"), dict) or type(trace["input"].get("token_count")) is not int
-            or not isinstance(steps, list) or not 1 <= len(steps) <= 256 or type(trace.get("provenance")) is not bool):
+            or not isinstance(steps, list) or not 1 <= len(steps) <= max(256, CEILING["response_tokens"]) or type(trace.get("provenance")) is not bool):
         raise ValueError("Invalid generation capture")
     for index, step in enumerate(steps):
         if (not isinstance(step, dict) or step.get("index") != index or type(step.get("position")) is not int or step["position"] < 1
@@ -231,6 +244,7 @@ def _validate(trace):
     for field in ("model_name", "source", "status", "input_mode", "response"):
         if field in trace and not isinstance(trace[field], str):
             raise ValueError(f"Invalid {field}")
+    capture_limits.validate_kept(trace)
     if "cross_attention" in trace:
         if trace["kind"] not in ("pytorch_module_capture", "diffusion_step_capture"):
             raise ValueError("Cross-attention maps belong to denoiser traces")
@@ -274,7 +288,7 @@ def _validate(trace):
                     if not isinstance(tensor, dict) or not isinstance(tensor.get("name"), str) or not isinstance(tensor.get("dtype"), str) or not isinstance(tensor.get("shape"), list) or any(type(d) is not int or d < 0 for d in tensor["shape"]):
                         raise ValueError("Invalid component tensor metadata")
     if "tokens" in trace:
-        if not isinstance(trace["tokens"], list) or len(trace["tokens"]) > 4096 or any(not isinstance(t, dict) or type(t.get("id")) is not int or not isinstance(t.get("text"), str) for t in trace["tokens"]):
+        if not isinstance(trace["tokens"], list) or len(trace["tokens"]) > max(4096, CEILING["prompt_tokens"]) or any(not isinstance(t, dict) or type(t.get("id")) is not int or not isinstance(t.get("text"), str) for t in trace["tokens"]):
             raise ValueError("Invalid decoded tokens")
     if "input_media" in trace and trace["input_media"] is not None:
         from .media_models import validate_input_media
@@ -358,9 +372,18 @@ def _validate(trace):
             _check_png(frame)
     if trace["kind"] == "attention_capture":
         shape, values = trace.get("shape"), trace.get("values")
-        if (not isinstance(shape, list) or len(shape) != 2 or any(type(n) is not int or not 1 <= n <= 128 for n in shape)
+        if (not isinstance(shape, list) or len(shape) != 2 or any(type(n) is not int or not 1 <= n <= CEILING["attention_side"] for n in shape)
                 or not isinstance(values, list) or len(values) != shape[0]):
             raise ValueError("Invalid attention matrix shape")
+        if "pooled" in trace:
+            # A long prompt shrunk to blocks: each row and column is a run of consecutive tokens.
+            pooled = trace["pooled"]
+            ranges = pooled.get("ranges") if isinstance(pooled, dict) else None
+            if (not isinstance(ranges, list) or len(ranges) != shape[0] or type(pooled.get("token_count")) is not int or pooled["token_count"] <= shape[0]
+                    or any(not isinstance(r, list) or len(r) != 2 or any(type(n) is not int for n in r) for r in ranges)
+                    or ranges[0][0] != 0 or ranges[-1][1] != pooled["token_count"]
+                    or any(a[1] != b[0] or a[0] >= a[1] for a, b in zip(ranges, ranges[1:]))):
+                raise ValueError("Invalid pooled attention ranges")
         for row in values:
             if not isinstance(row, list) or len(row) != shape[1] or any(type(v) not in (int, float) or not math.isfinite(v) for v in row):
                 raise ValueError("Invalid attention matrix values")
@@ -368,7 +391,7 @@ def _validate(trace):
             raise ValueError("Invalid attention selection or axes")
         if "heads" in trace:
             heads = trace["heads"]
-            if not isinstance(heads, list) or not 1 <= len(heads) <= 256 or len(heads) * shape[0] * shape[1] > 262144:
+            if not isinstance(heads, list) or not 1 <= len(heads) <= 256 or len(heads) * shape[0] * shape[1] > CEILING["head_values"]:
                 raise ValueError("Invalid attention head gallery")
             for matrix in heads:
                 if not isinstance(matrix, list) or len(matrix) != shape[0] or any(not isinstance(row, list) or len(row) != shape[1] or any(type(v) not in (int, float) or not 0 <= v <= 1 for v in row) for row in matrix):
@@ -413,7 +436,7 @@ def _validate(trace):
                     budget += shape[0] * shape[1]
                 else:
                     raise ValueError("Layer stack needs heads or mean")
-            if budget > 1200000:
+            if budget > CEILING["stack_values"] * 1.2:
                 raise ValueError("Layer stacks exceed the value bound")
         if "layers" in trace:
             if not isinstance(trace["layers"], list) or len(trace["layers"]) > 1024 or any(not isinstance(e, dict) or type(e.get("index")) is not int or any(type(e.get(k)) not in (int, float) or not math.isfinite(e[k]) for k in ("sink_mass", "diagonal_mass", "previous_token_mass", "entropy_bits")) for e in trace["layers"]):
@@ -426,7 +449,7 @@ def _validate(trace):
         _validate_generation(trace)
     elif trace["kind"] == "pytorch_module_capture":
         events, capture = trace.get("events"), trace.get("capture")
-        if not isinstance(events, list) or len(events) > 1024 or not isinstance(capture, dict):
+        if not isinstance(events, list) or len(events) > max(1024, CEILING["layer_events"] + CEILING["layer_paths"] + 2 * CEILING["text_layers"]) or not isinstance(capture, dict):
             raise ValueError("Invalid capture events")
         for event in events:
             if not isinstance(event, dict) or not isinstance(event.get("module"), str) or event.get("status") not in ("captured", "no_tensor_output", "unsupported_tensor"):
@@ -453,7 +476,7 @@ def _validate(trace):
                     validate_slices(event["slices"])
     else:
         events = trace.get("events")
-        if not isinstance(events, list) or len(events) > 256 or not isinstance(trace.get("capture"), dict):
+        if not isinstance(events, list) or len(events) > max(256, CEILING["denoising_steps"]) or not isinstance(trace.get("capture"), dict):
             raise ValueError("Invalid diffusion events")
         for event in events:
             if not isinstance(event, dict) or type(event.get("step")) is not int or event["step"] < 0 or type(event.get("timestep")) not in (int, float) or not math.isfinite(event["timestep"]):
@@ -531,12 +554,13 @@ def encode_trace(trace):
     """Validate, pack and encode while bounding the accumulated serialized output."""
     _validate(trace)
     data = bytearray()
+    limit = size_limit()
     try:
         encoder = json.JSONEncoder(ensure_ascii=True, allow_nan=False, separators=(",", ":"))
         for chunk in encoder.iterencode(pack_values(trace)):
             encoded = chunk.encode("utf-8")
-            if len(data) + len(encoded) > MAX_TRACE_BYTES:
-                raise ValueError("Trace exceeds the size limit")
+            if len(data) + len(encoded) > limit:
+                raise too_large(len(data) + len(encoded))
             data.extend(encoded)
     except (TypeError, ValueError, RecursionError) as exc:
         raise ValueError(f"Trace cannot be serialized: {exc}") from exc
@@ -563,9 +587,9 @@ def save_trace(path, trace):
 def load_trace(path):
     path = Path(path)
     with path.open("rb") as stream:
-        data = stream.read(MAX_TRACE_BYTES + 1)
-    if len(data) > MAX_TRACE_BYTES:
-        raise ValueError("Trace exceeds the size limit")
+        data = stream.read(size_limit() + 1)
+    if len(data) > size_limit():
+        raise too_large(path.stat().st_size)
     try:
         trace = json.loads(data, object_pairs_hook=_unique_pairs, parse_constant=lambda x: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
     except (ValueError, UnicodeError, RecursionError) as exc:

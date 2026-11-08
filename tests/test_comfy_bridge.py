@@ -343,11 +343,9 @@ class PublishSafetyTests(unittest.TestCase):
         self.assertTrue(any("fits" in s["reason"] for s in observer.trace["cross_attention"]["skipped"]))
 
     def test_section_value_budget(self):
-        from model_run import comfy_bridge
+        from model_run import capture_limits
         patcher = Patcher()
-        original = comfy_bridge.MAX_SECTION_VALUES
-        comfy_bridge.MAX_SECTION_VALUES = 3 * 16
-        try:
+        with capture_limits.override(cross_attention_values=3 * 16):
             observer = DenoiserObserver(patcher, ["layer"], max_calls=3, elements=3, attention_block="double:0")
             def denoiser(x, timestep, c_crossattn=None, transformer_options=None):
                 q = torch.randn(1, 2, 3 + 16, 4)
@@ -358,9 +356,7 @@ class PublishSafetyTests(unittest.TestCase):
             section = observer.trace["cross_attention"]
             self.assertEqual(len(section["events"]), 1)
             self.assertIn("budget", section["skipped"][0]["reason"])
-            encode_trace(observer.trace)
-        finally:
-            comfy_bridge.MAX_SECTION_VALUES = original
+        encode_trace(observer.trace)
 
 
 

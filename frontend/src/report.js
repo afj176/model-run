@@ -16,6 +16,7 @@ import {
   tokenLabel,
   tokenText,
 } from "./insights.js";
+import { mostOf, leastOf } from "./extent.js";
 
 const esc = (s) =>
   String(s ?? "")
@@ -112,8 +113,8 @@ function bars(items, { max = null, unit = "" } = {}) {
 function sparkline(points, label) {
   if (!points?.length) return "";
   const values = points.map((p) => p.value).filter(Number.isFinite);
-  const lo = Math.min(...values),
-    hi = Math.max(...values);
+  const lo = leastOf(values),
+    hi = mostOf(values);
   const w = 320,
     h = 48;
   const path = points

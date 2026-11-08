@@ -7,6 +7,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from model_run import capture_limits
 from model_run.application import Application
 from model_run.server import make_server
 
@@ -54,7 +55,7 @@ class ApplicationTests(unittest.TestCase):
                 ids = [app.publish(trace())["id"] for _ in range(18)]
                 self.assertEqual(len(app.snapshot()["traces"]), 16)
                 with self.assertRaises(ValueError): app.trace(ids[0])
-                self.assertEqual(app.trace(ids[-1]), trace())
+                self.assertEqual(app.trace(ids[-1]), capture_limits.stamp(trace()))
                 app.delete_trace(ids[-1])
                 self.assertEqual(len(app.snapshot()["traces"]), 15)
             finally:
@@ -111,7 +112,7 @@ class ApplicationTests(unittest.TestCase):
             for index in range(module.MAX_RUNS - 1):
                 app.publish(trace(), run=f"r{index}")
             self.assertEqual(app.snapshot()["retention"]["runs"], module.MAX_RUNS)
-            self.assertEqual(app.trace(first[0]), trace())
+            self.assertEqual(app.trace(first[0]), capture_limits.stamp(trace()))
             app.publish(trace(), run="next")
             kept = {t["id"] for t in app.snapshot()["traces"]}
             self.assertFalse(kept & set(first))  # the whole oldest run left together
@@ -169,17 +170,14 @@ class ApplicationTests(unittest.TestCase):
             app.close()
 
     def test_byte_limit_never_evicts_the_newest_trace(self):
-        import model_run.application as module
         app = Application()
-        original = module.MAX_RETAINED_BYTES
         try:
-            module.MAX_RETAINED_BYTES = 1
-            older = app.publish(trace(), run="a")["id"]
-            newest = app.publish(trace(), run="b")["id"]
+            with capture_limits.override(history_bytes=1):
+                older = app.publish(trace(), run="a")["id"]
+                newest = app.publish(trace(), run="b")["id"]
             self.assertEqual([t["id"] for t in app.snapshot()["traces"]], [newest])
             self.assertNotEqual(older, newest)
         finally:
-            module.MAX_RETAINED_BYTES = original
             app.close()
 
     def test_invalid_run_group_is_rejected(self):

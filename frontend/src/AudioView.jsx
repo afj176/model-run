@@ -38,7 +38,7 @@ function paint(canvas, rows, cols, read) {
 const isSpecial = (text) => /^<\|.*\|>$/.test((text || "").trim());
 
 /** What the model heard, and where in the audio it read for each token it wrote. */
-export default function AudioView({ trace }) {
+export default function AudioView({ trace, stageLayer = null, onLayer }) {
   const view = trace?.audio_view;
   const layers = view?.layers || [];
   const tokens = view?.tokens || [];
@@ -57,6 +57,11 @@ export default function AudioView({ trace }) {
     setTime(0);
     setPlaying(false);
   }, [trace]);
+  // On a decoder layer, the stage and this view show the same layer.
+  useEffect(() => {
+    const i = layers.findIndex((l) => l.layer === stageLayer);
+    if (i >= 0) setLayerAt(i);
+  }, [stageLayer, layers]);
   const layerIndex = validIndex(layerAt, layers.length, layers.length - 1);
   const layer = layers[layerIndex];
   const hover = hovered && tokens[hovered.row] ? hovered : null;
@@ -269,7 +274,11 @@ export default function AudioView({ trace }) {
                 max={layers.length - 1}
                 value={layerIndex}
                 aria-label="Decoder layer"
-                onChange={(e) => setLayerAt(Number(e.target.value))}
+                onChange={(e) => {
+                  const i = Number(e.target.value);
+                  setLayerAt(i);
+                  onLayer?.(layers[i]?.layer);
+                }}
               />
             </label>
           )}

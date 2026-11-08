@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+from . import capture_limits
+
 MAX_SLICES = 64
 MAX_FRAMES = 16
 SIDE = 16
@@ -16,6 +18,7 @@ SEQUENCE_COLS = 64
 MAX_SEQUENCE_BATCH = 8
 TRACE_VALUES = 262144
 # Token grids: every token of a text layer (up to this many) by as many of its features as fit.
+# The Standard capture size; the active one comes from capture_limits (token_rows, token_values).
 MAX_TOKEN_ROWS = 128
 TOKEN_VALUES = 8388608  # per trace, across every layer
 ALL_FEATURES = 1 << 20
@@ -128,7 +131,10 @@ class SliceRecorder:
         # Image patch layers also keep every patch by its features, from a budget of their own, so the
         # patch maps they already record are unchanged.
         self.patch_features = patch_features
-        self.patch_remaining = TOKEN_VALUES
+        self.patch_remaining = capture_limits.get("token_values")
+        self.token_rows = capture_limits.get("token_rows")
+        # What text layers held and what their grids kept, for Run Metrics.
+        self.token_stats = {"layers": 0, "length": 0, "rows": 0, "depth": 0, "cols": None, "short": 0}
 
     def _placed(self, tensor, latent_shape):
         # Some VAEs keep channels last in places; only name the axes when the shape really is the image's.
@@ -176,10 +182,10 @@ class SliceRecorder:
                 "values": _clean(view.reshape(-1).to(device="cpu").tolist()), "aggregate_axis": None,
                 "aggregate_measure": None, "aggregate": []}
 
-    def _token_record(self, tensor, max_rows=MAX_TOKEN_ROWS, features=None, patch_grid=None):
+    def _token_record(self, tensor, max_rows=None, features=None, patch_grid=None):
         """Every token of a [B, T, D] (or [T, D]) text layer by the same evenly spaced features, exact, not averaged.
 
-        Rows are the first tokens (up to MAX_TOKEN_ROWS): text comes first and padding last. Each row also
+        Rows are the first tokens (up to the capture size's token rows): text comes first and padding last. Each row also
         keeps the token's RMS and peak over all of its features, so a token's strength is never a sample."""
         import torch
         state = tensor.detach()
@@ -187,15 +193,22 @@ class SliceRecorder:
             state = state.unsqueeze(0)
         batch, length, depth = (int(n) for n in state.shape)
         chosen_batch = self.conditional_batch if self.conditional_batch is not None and self.conditional_batch < batch else 0
-        rows = min(length, max_rows)
+        rows = min(length, max_rows or self.token_rows)
         pool = "patch_remaining" if patch_grid is not None else "remaining"
         budget = getattr(self, pool) if self.per_event is None else min(getattr(self, pool), self.per_event)
         limit = features or (self.part_features if self.part_features and self._path in self.parts else self.token_features)
         cols = min(depth, limit, budget // rows)
+        # A layer's own grid; its attention and MLP parts keep fewer features by design.
+        stats = self.token_stats if patch_grid is None and self._path not in self.parts else None
         if cols < 1:
+            if stats is not None:
+                stats["short"] += 1
             return {"unavailable": "This trace's value budget was already spent on earlier layers."}
         features = _spaced(depth, cols)
         cols = len(features)
+        if stats is not None:
+            stats.update(layers=stats["layers"] + 1, length=max(stats["length"], length), rows=max(stats["rows"], rows),
+                         depth=max(stats["depth"], depth), cols=cols if stats["cols"] is None else min(stats["cols"], cols))
         setattr(self, pool, getattr(self, pool) - rows * cols)
         tokens = state[chosen_batch, :rows].to(dtype=torch.float32)
         values = tokens[:, torch.tensor(features, device=tokens.device)]
@@ -398,7 +411,8 @@ def _validate_tokens(record):
                              or grid[1] < 1 or grid[2] < 1 or grid[0] + grid[1] * grid[2] != length):
         raise ValueError("Invalid patch grid")
     if (record.get("axes") != [] or record.get("aggregate") != [] or type(rows) is not int or type(cols) is not int
-            or not 1 <= rows <= (MAX_PATCH_ROWS if grid else MAX_TOKEN_ROWS) or not 1 <= cols <= depth or rows * cols > TOKEN_VALUES
+            or not 1 <= rows <= (MAX_PATCH_ROWS if grid else capture_limits.CEILING["token_rows"]) or not 1 <= cols <= depth
+            or rows * cols > capture_limits.CEILING["token_values"]
             or type(record.get("batch_index")) is not int or record["batch_index"] < 0):
         raise ValueError("Invalid token grid")
     if (not isinstance(tokens, list) or len(tokens) != rows or any(type(i) is not int or not 0 <= i < length for i in tokens)

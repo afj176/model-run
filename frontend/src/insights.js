@@ -1,3 +1,4 @@
+import { mostOf, leastOf } from "./extent.js";
 /** Insight computations over recorded values. Every number here is derived from
  * captured data; nothing is inferred from architecture names or assumptions. */
 
@@ -734,9 +735,9 @@ export function patchStory(block) {
   const name = (t) => `\u201c${tokenText(t.text)}\u201d`;
   let text;
   if (sameAnswer)
-    text = `Both prompts already answer ${name(source)}; patching moves its probability from ${pct(block.target_run.source_answer_probability)} by at most ${pct(Math.max(...layers.map((l) => l.source_answer_probability)) - block.target_run.source_answer_probability)} (layer ${best.layer}).`;
+    text = `Both prompts already answer ${name(source)}; patching moves its probability from ${pct(block.target_run.source_answer_probability)} by at most ${pct(mostOf(layers.map((l) => l.source_answer_probability)) - block.target_run.source_answer_probability)} (layer ${best.layer}).`;
   else if (flips.length)
-    text = `Copying A's residual stream into B at the ${block.positions === "all" ? "every position" : "last position"} flips the answer to ${name(source)} at ${flips.length === 1 ? `layer ${flips[0]}` : `${flips.length} layers (first ${Math.min(...flips)}, last ${Math.max(...flips)})`}; layer ${best.layer} recovers ${pct(best.recovery)} of the gap, taking ${name(source)} from ${pct(block.target_run.source_answer_probability)} to ${pct(best.source_answer_probability)}.`;
+    text = `Copying A's residual stream into B at the ${block.positions === "all" ? "every position" : "last position"} flips the answer to ${name(source)} at ${flips.length === 1 ? `layer ${flips[0]}` : `${flips.length} layers (first ${leastOf(flips)}, last ${mostOf(flips)})`}; layer ${best.layer} recovers ${pct(best.recovery)} of the gap, taking ${name(source)} from ${pct(block.target_run.source_answer_probability)} to ${pct(best.source_answer_probability)}.`;
   else
     text = `No single layer flips B's answer to ${name(source)}; the strongest is layer ${best.layer}, which recovers ${pct(best.recovery)} of the gap (${pct(block.target_run.source_answer_probability)} \u2192 ${pct(best.source_answer_probability)}).`;
   const peak = Math.max(1e-9, ...layers.map((l) => Math.abs(l.recovery)));
@@ -864,7 +865,7 @@ export function diffusionCompareStory({
     parts.push(
       first
         ? `${subject} ${last.module === null ? "diverge" : "diverges"} from ${unit} ${first.step} and ${last.module === null ? "end" : "ends"} ${pctFine(last.relative)} apart relative to A.`
-        : `${subject} ${last.module === null ? "stay" : "stays"} within ${pctFine(Math.max(...deltas.map((d) => d.relative)))} of A throughout.`,
+        : `${subject} ${last.module === null ? "stay" : "stays"} within ${pctFine(mostOf(deltas.map((d) => d.relative)))} of A throughout.`,
     );
   }
   if (shift?.ranked?.length && shift.peak < MIN_VISIBLE_SHIFT)
@@ -1052,7 +1053,7 @@ export const moduleInStop = (module, stop) =>
 export function speechTokenStory(map, outside, seconds) {
   const values = (map || []).map((v) => (Number.isFinite(v) ? v : 0));
   if (!values.length) return { peak: 0, peakSeconds: 0, outside: outside ?? 0 };
-  const peak = Math.max(...values);
+  const peak = mostOf(values);
   return {
     peak,
     peakSeconds: ((values.indexOf(peak) + 0.5) / values.length) * seconds,
@@ -1187,8 +1188,8 @@ export function comparableFrames(traceA, traceB) {
 /** Where two videos differ most, from a mean difference per frame. */
 export function frameDifferenceStory(means, indices) {
   if (!Array.isArray(means) || means.length < 2) return null;
-  const peak = means.indexOf(Math.max(...means)),
-    low = means.indexOf(Math.min(...means));
+  const peak = means.indexOf(mostOf(means)),
+    low = means.indexOf(leastOf(means));
   return {
     peak,
     mean: means.reduce((x, y) => x + y, 0) / means.length,
@@ -1231,8 +1232,15 @@ export function layerParts(events, layerPath, trace = null) {
       share: base && m !== null ? m / base : null,
     };
   });
-  const labels = grid(output)?.row_labels || grid(found[0])?.row_labels;
-  const rows = Math.max(...[output, ...found].map((e) => rms(e)?.length ?? 0));
+  // A text run's grids carry token indices; the words come from the run's decoded prompt.
+  const indices = grid(output)?.token_indices || grid(found[0])?.token_indices;
+  const words =
+    Array.isArray(indices) && Array.isArray(trace?.tokens)
+      ? indices.map((i) => trace.tokens[i]?.text?.trim() || null)
+      : null;
+  const labels =
+    grid(output)?.row_labels || grid(found[0])?.row_labels || words;
+  const rows = mostOf([output, ...found].map((e) => rms(e)?.length ?? 0));
   const tokens = Array.from({ length: rows }, (_, i) => ({
     label: labels?.[i] ?? `#${i}`,
     output: rms(output)?.[i] ?? null,
@@ -1259,7 +1267,10 @@ export function layerParts(events, layerPath, trace = null) {
 function blockParts(trace, layerPath, output) {
   const block = (trace?.block_parts || []).find((b) => b.block === layerPath);
   if (!block) return null;
-  const largest = Math.max(...block.parts.map((part) => part.rms), 1e-12);
+  const largest = mostOf(
+    block.parts.map((part) => part.rms),
+    1e-12,
+  );
   return {
     layer: layerPath,
     output: output?.module ?? layerPath,

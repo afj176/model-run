@@ -10,6 +10,9 @@ import re
 import sys
 from contextlib import contextmanager
 
+from . import capture_limits
+
+# Standard prompt length; the active one is the capture size's prompt tokens.
 MAX_TOKENS = 128
 _LAYER = re.compile(r"^(.*?(?:^|\.)(?:layers?|blocks?))\.(\d+)\.")
 
@@ -29,6 +32,10 @@ class AttentionWatch:
         self.current = None
         self.found = {}
         self.skipped = None
+        self.side = capture_limits.get("attention_side")
+        self.longest = capture_limits.get("prompt_tokens")
+        self.length = None  # the prompt's tokens, before any shrinking
+        self.ranges = None
 
     @contextmanager
     def watching(self):
@@ -91,7 +98,7 @@ class AttentionWatch:
             key = k.view(k.shape[0], k.shape[1], -1, depth).transpose(1, 2)
         length, depth = int(query.shape[2]), int(query.shape[3])
         # A single query is a generated token reading the cache; only the prompt pass is recorded.
-        if length < 2 or length > MAX_TOKENS or int(key.shape[2]) != length:
+        if length < 2 or length > self.longest or int(key.shape[2]) != length:
             return None
         query = query[:1].float()
         key = key[:1].float()
@@ -105,13 +112,16 @@ class AttentionWatch:
             mask = mask[..., -length:, -length:]
             scores = scores.masked_fill(~mask, float("-inf")) if mask.dtype == torch.bool else scores + mask.float()
         weights = torch.softmax(scores, dim=-1).nan_to_num(0.0)
-        return weights[0].cpu()  # [H, T, T]
+        # A long prompt is shrunk to blocks layer by layer, so every layer's full matrix is never held at once.
+        pooled, ranges = capture_limits.pool_attention(weights[0], self.side)
+        self.length, self.ranges = length, ranges
+        return pooled.cpu()  # [H, T, T]
 
 
 def attention_trace(watch, tokens, model_class):
     """An attention_capture trace from the watched layers, the same shape as a standalone attention probe."""
     import torch
-    from .transformers_capture import MAX_HEAD_VALUES, MAX_STACK_VALUES, ROUND_DIGITS, _layer_summaries, _rollout
+    from .transformers_capture import _layer_summaries, _rollout, keep_attention_heads, keep_attention_shape, keep_layer_stacks
     # The language model's own stack: the group with the most recorded layers, numbered from 0 without gaps.
     groups = {}
     for path, weights in watch.found.items():
@@ -141,12 +151,12 @@ def attention_trace(watch, tokens, model_class):
              "layer": layer, "head": head, "head_count": heads, "layer_count": len(cpu),
              "attention_implementation": "comfyui (weights recomputed beside the fused kernel)",
              "axes": ["query_position", "key_position"], "shape": [size, size], "values": selected.tolist(),
-             "input": {"token_count": size, "token_ids_included": False},
+             "input": {"token_count": watch.length or size, "token_ids_included": False},
              "limitations": ["Attention weights alone do not establish causality.",
                              "ComfyUI's fused kernel returns no weights, so each layer's softmax(QK^T * scale + mask) was computed beside it from the same query, key, mask and scale.",
                              "Prompt pass only: generated tokens read the same layers later and are not recorded."]}
-    if heads * size * size <= MAX_HEAD_VALUES:
-        trace["heads"] = [[[round(v, ROUND_DIGITS) for v in row] for row in h.tolist()] for h in cpu[layer][0]]
+    keep_attention_shape(trace, watch.length or size, watch.ranges, heads)
+    keep_attention_heads(trace, cpu, layer, size, capture_limits.get("head_values"))
     rolled = _rollout(cpu)
     received = torch.stack([a[0, :, -1, :].mean(0) for a in cpu]).mean(0)
     trace["attribution"] = {"method": "attention_rollout", "position": size - 1,
@@ -155,14 +165,13 @@ def attention_trace(watch, tokens, model_class):
                             "limitations": ["Rollout assumes equal head weighting and a residual identity term; it is an attention-flow estimate, not a causal attribution.",
                                             "last_position_attention is the measured head- and layer-averaged attention from the final query position."]}
     trace["layers"] = _layer_summaries(cpu)
-    if len(cpu) * heads * size * size <= MAX_STACK_VALUES:
-        trace["layer_stacks"] = [{"index": i, "heads": [[[round(v, 4) for v in row] for row in h.tolist()] for h in a[0]]} for i, a in enumerate(cpu)]
-    else:
-        trace["layer_stacks"] = [{"index": i, "mean": [[round(v, 4) for v in row] for row in a[0].mean(0).tolist()]} for i, a in enumerate(cpu)]
-        trace["limitations"].append(f"Per-head matrices for every layer would exceed {MAX_STACK_VALUES:,} values, so layer_stacks holds each layer's head-averaged matrix.")
-    if tokens and len(tokens) >= size:
+    keep_layer_stacks(trace, cpu, size, capture_limits.get("stack_values"))
+    length = watch.length or size
+    if tokens and len(tokens) >= length:
         # Real token ids where the tokenizer gave them; the text is what the views show.
-        trace["tokens"] = [{"id": t["id"] if type(t.get("id")) is int else i, "text": str(t["text"])[:64]} for i, t in enumerate(tokens[:size])]
+        trace["tokens"] = [{"id": t["id"] if type(t.get("id")) is int else i, "text": str(t["text"])[:64]} for i, t in enumerate(tokens[:length])]
+        if watch.ranges:
+            trace["tokens"] = capture_limits.pooled_tokens(trace["tokens"], watch.ranges)
         trace["limitations"].append("The decoded prompt tokens are included; exported traces may contain private text.")
     trace["stack"] = container  # where these layers live; the caller takes it off
     if len(cpu) < len(layers):

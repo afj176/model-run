@@ -246,7 +246,7 @@ the library.
 
 | Kind | Notes |
 | --- | --- |
-| Causal language models (Transformers, safetensors) | One forward pass of up to 128 tokens, a greedy response of 32 to 256 tokens, attention probes. Raw or chat-template input. Image-and-text models that Transformers also loads as language models, such as Gemma 3 and 4, load as text. |
+| Causal language models (Transformers, safetensors) | One forward pass of a prompt up to the capture size's length (1,024 tokens on Standard), a greedy response of 32 to 256 tokens (more on larger capture sizes), attention probes. Raw or chat-template input. Image-and-text models that Transformers also loads as language models, such as Gemma 3 and 4, load as text. |
 | Embedding models (Sentence Transformers packages) | Layers and the sentence vector from the package's own pooling, dense and normalise steps. |
 | Image classifiers | Top labels, per-layer outputs on the patch grid, and the class token's attention over the image. |
 | Whisper | Transcript with per-token confidence, the spectrogram it heard, playback, and each token's attention over audio time. Uses the first 30 seconds. |
@@ -335,13 +335,14 @@ tensor names in 3D.
   a linked heatmap, 32 × 32 values per window. **Tensor Volume** stacks a tensor's recorded
   maps along one axis. Frames and channels can be stepped through and played.
 - **Every token of a text layer.** A text model's layers, standalone or in ComfyUI, are
-  recorded as a grid: one row per prompt token (up to 128), named by the token, and one
+  recorded as a grid: one row per prompt token (the first 128 on Standard), named by the token, and one
   column per feature, with exact values rather than averages. *All that fit* keeps every
   feature while the trace holds them all, and otherwise the same evenly spaced features for
   every token, numbered by their place in the layer (`#35`). For a model loaded in Model Run,
   **Features per token** in the run settings can keep fewer (1024, 256 or 64). Each row also
-  keeps that token's RMS and peak over all its features. A text trace holds 8,388,608 values
-  across its layers, so a 4B model's 18-token prompt keeps all 2,560 features at every layer.
+  keeps that token's RMS and peak over all its features. On Standard a text trace holds
+  8,388,608 values across its layers, so a 4B model's 18-token prompt keeps all 2,560
+  features at every layer.
 - **Every token × feature** under the stage draws that grid whole: one row per token, every
   feature as a stripe, and each token's RMS beside it. The robust colour scale saturates at
   the 99th percentile so one huge channel does not wash out the rest; white ticks and the
@@ -350,8 +351,13 @@ tensor names in 3D.
   layers get **Every patch × feature**: the class token and every patch by all of their
   features, beside a map of each patch's RMS over the image the model received. The layer's
   patch maps are kept as before.
-- **Recorded event replay** sits right under the visualizer, so the stage and its timeline
-  are read together.
+- **Recorded event replay** sits right under the visualizer and is the run's one playhead.
+  **Denoising** and **Cross-attention** follow its denoiser call (a denoising step is one
+  denoiser call), and the layer sliders of **Image labels**, Whisper's **Audio** and the
+  **Text encoder** follow its layer; moving any of them moves the replay. Denoising steps
+  past the calls the layers were recorded on say so and leave the replay where it is. An
+  attention capture replays layer by layer for the chosen head, and its layer dots move the
+  matrix there.
 - **Layer Stack** and the timeline select a layer; the inspector shows paths, shapes, dtypes
   and values.
 - **What it predicted** shows the next-token distribution and a logit lens: the top token
@@ -376,9 +382,24 @@ tensor names in 3D.
 Attention shows where a layer read, not what caused an output. Ablation and patching are
 interventions, not natural behaviour, and their effects do not add up across heads.
 
-**History.** The last 16 runs (up to 64 traces or 1 GiB) stay in memory; pin up to 8 runs
-(512 MiB) to keep them longer. Nothing is written to disk unless you export it, so
-restarting clears the history. A trace can be up to 64 MiB. Long lists of measured values
+**Capture size.** One setting in Settings decides how much every run keeps: prompt length,
+tokens per layer, attention, layers, ComfyUI calls and steps, the size of one run and the
+history. **Standard** is what Model Run was tested with and fits any computer; **Large** keeps
+about 4 to 8 times more; **Maximum** keeps as much as the computer's free memory allows; and
+**Custom** sets each limit between a quarter of Standard and Maximum. Settings shows every
+limit for each, and this computer's RAM and graphics memory. Anything over a limit still runs
+and is kept smaller: a prompt longer than the attention side has its attention shrunk to
+blocks of consecutive tokens (each block is the attention its queries gave its keys, so rows
+still sum to 1), and a layer keeps its first tokens. Before a run that would hold more at once
+than the computer has free, Model Run stops and says what to change. **Run Metrics ›
+Measurement context** lists, for each run, what it had against what it kept, the capture size
+it ran on, its size and the history's. A trace saved on a larger size opens on a smaller one
+when it fits that size's run limit. The browser keeps your choice and puts it back when the
+server restarts.
+
+**History.** The last 16 runs (up to 64 traces or 1 GiB) stay in memory on Standard; pin up
+to 8 runs (512 MiB) to keep them longer. Nothing is written to disk unless you export it, so
+restarting clears the history. A trace can be up to 64 MiB on Standard. Long lists of measured values
 are kept packed as 32-bit floats (base64 in the JSON), about a third smaller than JSON
 numbers; values keep 7 significant digits, and missing ones are stored as NaN. Exports are
 packed the same way, and import reads packed and plain traces.

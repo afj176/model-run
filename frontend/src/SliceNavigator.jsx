@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { CaretLeft, CaretRight, Pause, Play } from "@phosphor-icons/react";
 import { axisKey, axisLabel, resolveSlice } from "./matrixData";
+import { mostOf } from "./extent.js";
 
 const num = (v) => (Number.isFinite(v) ? v.toPrecision(3) : "non-finite");
 const FRAME_MS = 450;
 
 /** One axis: a bar per recorded index, sized by the mean magnitude measured over that index. */
 function AxisStrip({ axis, position, allowAll, onPick }) {
-  const peak = Math.max(
-    ...axis.mean_abs.filter((v) => Number.isFinite(v)),
+  const peak = mostOf(
+    axis.mean_abs.filter((v) => Number.isFinite(v)),
     1e-12,
   );
   const count = axis.indices.length;

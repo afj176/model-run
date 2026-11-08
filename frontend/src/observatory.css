@@ -4410,10 +4410,10 @@ i.after {
   border-radius: 4px;
   background: #1fa88c;
 }
-.parts-bar.mlp i {
+.parts-bar.part-mlp i {
   background: #6a52d6;
 }
-.parts-bar.output i {
+.parts-bar.part-output i {
   background: color-mix(in srgb, var(--ink) 35%, transparent);
 }
 .parts-bar small {
@@ -4463,4 +4463,115 @@ i.after {
 .file-chip:hover .chip-preview,
 .file-chip:focus-within .chip-preview {
   display: block;
+}
+
+/* Settings: how much each run keeps. */
+.capture-size {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.capture-size h3 {
+  margin: 0 0 4px;
+}
+.capture-size-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.capture-size-presets label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.capture-size-presets label.chosen {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 1px var(--indigo);
+}
+.capture-size-presets small {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.capture-size-table summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--indigo);
+  margin: 4px 0;
+}
+.capture-size-table table,
+.kept-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.capture-size-table th,
+.capture-size-table td,
+.kept-table th,
+.kept-table td {
+  text-align: left;
+  padding: 5px 8px 5px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+.capture-size-table thead th,
+.kept-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.capture-size-table input {
+  width: 96px;
+}
+
+/* Run Metrics: what a run held against what it kept. */
+.kept-table {
+  margin: 8px 0 14px;
+}
+.kept-table header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.kept-table h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.kept-table .chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--lilac);
+  color: var(--indigo);
+}
+.kept-table tbody th {
+  font-weight: 600;
+}
+.kept-table tr.short td:last-child {
+  color: var(--ink);
+}
+.kept-table tr.short th::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  vertical-align: middle;
+}
+.kept-table td small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
 }

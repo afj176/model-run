@@ -11,6 +11,7 @@ import {
   rowSummary,
   tokenLabel,
 } from "./insights";
+import { mostOf, leastOf } from "./extent.js";
 
 const fmt = (n, d = 3) => (Number.isFinite(n) ? n.toFixed(d) : "—");
 const short = (n) =>
@@ -166,8 +167,8 @@ export function HeadInsight({ trace }) {
 export function Sparkline({ points, label }) {
   if (!points?.length) return null;
   const values = points.map((p) => p.value).filter(Number.isFinite);
-  const lo = Math.min(...values),
-    hi = Math.max(...values);
+  const lo = leastOf(values),
+    hi = mostOf(values);
   const w = 320,
     h = 44;
   const d = points

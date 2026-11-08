@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { guardWheel } from "./wheelGuard";
+import { mostOf } from "./extent.js";
 
 // All geometry is derived from the provided matrix; nulls are missing, not zero.
 // The container should provide a definite width and height.
@@ -421,8 +422,8 @@ export default function MatrixScene({
     });
 
     if (!cells.length) return;
-    const maxAbs = Math.max(
-      ...cells.map(([, , value]) => Math.abs(value)),
+    const maxAbs = mostOf(
+      cells.map(([, , value]) => Math.abs(value)),
       1e-12,
     );
     const scale = mode === "attention" ? 1 : maxAbs;

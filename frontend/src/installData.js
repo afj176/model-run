@@ -1,3 +1,4 @@
+import { leastOf } from "./extent.js";
 /** Bytes in the largest whole unit, as a file manager would show them. */
 export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
@@ -47,7 +48,7 @@ export function planTotals(plan) {
       (sum, i) => sum + (i.size_bytes || 0) - (i.resume_bytes || 0),
       0,
     ),
-    free: free.length ? Math.min(...free) : NaN,
+    free: free.length ? leastOf(free) : NaN,
   };
 }
 

@@ -11,6 +11,7 @@ import time
 
 from .capture import capture_forward
 from .comfy_paths import NOT_INSTALL_FOLDERS
+from . import capture_limits
 from .denoising import DenoisingRecorder
 from .structure import inspect_module_tree
 from .layer_parts import block_part_meter
@@ -63,6 +64,15 @@ def _layer_entry(path, module):
 
 def all_layer_paths(core, limit=None):
     """Every top-level block of a denoiser, then its final output; just the output if it has no blocks."""
+    paths = layer_blocks(core)
+    limit = limit or capture_limits.get("layer_paths")
+    if len(paths) > limit - 1:
+        paths = [paths[round(i * (len(paths) - 1) / (limit - 2))] for i in range(limit - 1)]
+    return [*paths, ""]
+
+
+def layer_blocks(core):
+    """Every top-level block of a denoiser, in order, before any thinning."""
     import torch
     containers, paths = [], []
     for name, module in core.named_modules():
@@ -74,18 +84,18 @@ def all_layer_paths(core, limit=None):
         elif isinstance(module, torch.nn.Sequential) and len(module) > 0:
             containers.append(name)
             paths.append(_layer_entry(name, module))
-    limit = limit or MAX_LAYER_PATHS
-    if len(paths) > limit - 1:
-        paths = [paths[round(i * (len(paths) - 1) / (limit - 2))] for i in range(limit - 1)]
-    return [*paths, ""]
+    return paths
 
 
 def all_layer_plan(paths, max_calls, elements):
     """Fit a whole-model capture inside the trace bound, whatever the model's size."""
-    calls = max(1, min(max_calls, MAX_LAYER_EVENTS // len(paths)))
+    # A larger capture size records proportionally more: Standard is the 1,000 events these were set for.
+    budget = capture_limits.get("layer_events")
+    prefix, slices = ALL_LAYER_PREFIX_VALUES * budget // MAX_LAYER_EVENTS, ALL_LAYER_SLICE_VALUES * budget // MAX_LAYER_EVENTS
+    calls = max(1, min(max_calls, budget // len(paths)))
     events = len(paths) * calls
-    return {"max_calls": calls, "elements": max(16, min(elements, ALL_LAYER_PREFIX_VALUES // events)),
-            "slice_values": ALL_LAYER_SLICE_VALUES, "slice_per_event": ALL_LAYER_SLICE_VALUES // events}
+    return {"max_calls": calls, "elements": max(16, min(elements, prefix // events)),
+            "slice_values": slices, "slice_per_event": slices // events}
 
 
 # attention_block "auto": the first block in the first denoiser call whose attention reads the prompt.
@@ -170,7 +180,10 @@ class DenoiserObserver:
     def __init__(self, patcher, module_paths, *, max_calls=8, elements=1024, publish=None, output_selectors=None,
                  attention_block=None, attention_grid=32, token_labels=None, ablate_tokens=None, slice_values=None, slice_per_event=None):
         from .application import bounded_int
-        self.max_calls = bounded_int(max_calls, 1, 32, "max_calls")
+        self.max_calls = bounded_int(max_calls, 1, capture_limits.CEILING["layer_calls"], "max_calls")
+        self.attention_calls = capture_limits.get("attention_calls")
+        self.section_values = capture_limits.get("cross_attention_values")
+        self.layer_total = None  # blocks the denoiser has, when a whole-model capture thinned them
         self.elements = bounded_int(elements, 1, 4096, "elements")
         if attention_block is not None and (not isinstance(attention_block, str) or not 1 <= len(attention_block) <= 64):
             raise ValueError("attention_block must name a block such as double:0 or output:1")
@@ -200,11 +213,13 @@ class DenoiserObserver:
         self.core = patcher.model.diffusion_model
         self.base_model = patcher.model
         names = dict(self.core.named_modules())
-        if not module_paths or len(module_paths) > MAX_LAYER_PATHS or any(p not in names for p in module_paths):
-            raise ValueError(f"Select 1 to {MAX_LAYER_PATHS} valid diffusion module paths; an empty line selects the whole denoiser")
+        most = capture_limits.get("layer_paths")
+        if not module_paths or len(module_paths) > most or any(p not in names for p in module_paths):
+            raise ValueError(f"Select 1 to {most} valid diffusion module paths; an empty line selects the whole denoiser")
         self.paths = list(module_paths)
-        if len(self.paths) * self.max_calls * self.elements > 262144:
-            raise ValueError("Capture exceeds the aggregate budget of 262,144 values. Reduce modules, calls, or elements.")
+        budget = 262144 * capture_limits.get("layer_events") // MAX_LAYER_EVENTS
+        if len(self.paths) * self.max_calls * self.elements > budget:
+            raise ValueError(f"Capture exceeds the aggregate budget of {budget:,} values. Reduce modules, calls, or elements, or choose a larger capture size.")
         self.selectors = output_selectors or {}
         if not isinstance(self.selectors, dict) or any(key not in self.paths for key in self.selectors):
             raise ValueError("Output selectors must map selected module paths to lists of output indices or keys")
@@ -339,7 +354,7 @@ class DenoiserObserver:
 
     def _attention_context(self, call, arguments, measure_call=True):
         """Geometry the attention override needs for this denoiser call, or None when not measuring."""
-        measure_call = measure_call and self.attention_block is not None and call < MAX_ATTENTION_CALLS
+        measure_call = measure_call and self.attention_block is not None and call < self.attention_calls
         options = arguments.get("c", {}).get("transformer_options") if isinstance(arguments.get("c"), dict) else None
         order = arguments.get("cond_or_uncond")
         if not isinstance(order, list):
@@ -611,7 +626,7 @@ class DenoiserObserver:
             if self.attention_block is not None:
                 self.trace["cross_attention"] = new_section(self.attention_block, "comfyui_attention_override",
                                                             token_labels=self.token_labels, max_grid=self.attention_grid)
-                self.trace["cross_attention"]["max_calls"] = MAX_ATTENTION_CALLS
+                self.trace["cross_attention"]["max_calls"] = self.attention_calls
                 if self._auto_block:
                     self.trace["cross_attention"]["limitations"].append(AUTO_LIMITATION)
                 self.trace["cross_attention"]["limitations"].append("Text token labels come from the node's optional clip and prompt inputs; without them tokens are numbered.")
@@ -638,8 +653,8 @@ class DenoiserObserver:
             record = current["record"]
             if record is not None:
                 used = sum(len(e["maps"]) * len(e["maps"][0]) for e in section["events"] if e.get("maps"))
-                if used + len(record["maps"]) * len(record["maps"][0]) > MAX_SECTION_VALUES:
-                    self._skip(call, f"Cross-attention value budget of {MAX_SECTION_VALUES:,} reached; earlier calls are kept")
+                if used + len(record["maps"]) * len(record["maps"][0]) > self.section_values:
+                    self._skip(call, f"Cross-attention value budget of {self.section_values:,} reached; earlier calls are kept")
                 else:
                     section["events"].append(record)
             else:
@@ -670,6 +685,28 @@ class DenoiserObserver:
             self.trace["cross_attention"]["skipped"] = list(self._skipped)
         if self.publish is not None:
             self._publish_safely(call)
+
+    def note_kept(self, trace):
+        """Run Metrics rows: the layers, calls and maps this run held against what it kept."""
+        layers = len([p for p in self.paths if p])
+        if self.layer_total is not None and self.layer_total > layers:
+            capture_limits.kept(trace, "Denoiser layers", f"{self.layer_total:,}", f"{layers:,} (evenly spaced)", "Raise ComfyUI layers to record more of them.")
+        elif layers:
+            capture_limits.kept(trace, "Denoiser layers", f"{self.layer_total or layers:,}", f"{layers:,}")
+        if self.calls:
+            short = self.calls > self.max_calls
+            capture_limits.kept(trace, "Denoiser calls with layers", f"{self.calls:,}", f"{min(self.calls, self.max_calls):,} (the first ones)" if short else f"{self.calls:,}",
+                                "Raise Denoiser calls with layers to record layers on later calls." if short else None)
+        section = trace.get("cross_attention")
+        if section is not None and self.calls:
+            mapped = len(section.get("events") or [])
+            capture_limits.kept(trace, "Cross-attention calls", f"{self.calls:,}", f"{mapped:,}",
+                                "Raise Cross-attention calls to map more of them." if self.calls > self.attention_calls else None)
+        steps = (trace.get("denoising") or {}).get("steps") or []
+        total = (trace.get("denoising") or {}).get("total_steps")
+        if steps:
+            capture_limits.kept(trace, "Denoising steps", f"{total or len(steps):,}", f"{len(steps):,}",
+                                "Every few steps, evenly; raise Denoising steps to keep all of them." if total and total + 1 > len(steps) else None)
 
     def attach_denoising(self, section):
         """Sampler steps outlast the call budget, so they publish on their own."""
@@ -845,7 +882,7 @@ class ModelRunObserve:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"model": ("MODEL",), "modules": ("STRING", {"default": "", "multiline": True, "tooltip": "One module path per line. Leave empty to record every layer and the final output; on large models each event then keeps fewer values."}),
-                "max_calls": ("INT", {"default": 8, "min": 1, "max": 32}),
+                "max_calls": ("INT", {"default": 8, "min": 1, "max": capture_limits.CEILING["layer_calls"], "tooltip": "Denoiser calls whose layers are recorded, from the first."}),
                 "elements": ("INT", {"default": 1024, "min": 1, "max": 4096})},
                 "optional": {"output_selectors": ("STRING", {"default": "{}", "multiline": True,
                     "tooltip": "JSON mapping from module path to output tensor path, e.g. {\"transformer_blocks.0\": [1]} selects the audio tensor in an LTX block tuple."}),
@@ -873,9 +910,12 @@ class ModelRunObserve:
         app = application()
         last_id = [None]
         sources = []
+        watching = []
         def publish(trace):
             # Replace this run's snapshot; other runs remain in bounded history.
             trace["model_name"] = type(model.model.diffusion_model).__name__
+            if watching:
+                watching[0].note_kept(trace)
             if not sources and isinstance(workflow_graph, dict):
                 sources.append(source_images(workflow_graph))
             if sources and sources[0]:
@@ -888,16 +928,21 @@ class ModelRunObserve:
                 app.remember_workflow(result["id"], workflow_graph, unique_id)
         chosen = [s.strip() for s in modules.splitlines() if s.strip()]
         plan = {"max_calls": max_calls, "elements": elements}
+        total = None
         if not chosen:
+            total = len(layer_blocks(model.model.diffusion_model))
             chosen = all_layer_paths(model.model.diffusion_model)
             plan = all_layer_plan(chosen, max_calls, elements)
         observer = DenoiserObserver(model, chosen, publish=publish, **plan,
                                      output_selectors=selectors,
                                     attention_block=block or None, attention_grid=attention_grid, token_labels=labels, ablate_tokens=ablated)
+        observer.layer_total = total
+        watching.append(observer)
         observer.token_label_sets = encoder_labels(clip, prompt) if labels else {}
         clone.set_model_unet_function_wrapper(observer)
         if denoising_views:
-            recorder = DenoisingRecorder(getattr(model.model, "latent_format", None), on_update=observer.attach_denoising)
+            recorder = DenoisingRecorder(getattr(model.model, "latent_format", None), on_update=observer.attach_denoising,
+                                         max_steps=capture_limits.get("denoising_steps"))
             clone.set_model_sampler_post_cfg_function(recorder)
         if block or ablated:
             options = clone.model_options.setdefault("transformer_options", {})
@@ -1012,7 +1057,7 @@ def install_routes():
     from aiohttp import web
     from server import PromptServer
     from .server import STATIC, decode_body, dispatch
-    from .trace_store import MAX_TRACE_BYTES
+    from .trace_store import size_limit, too_large
     token = secrets.token_urlsafe(32)
 
     async def api(request):
@@ -1032,8 +1077,10 @@ def install_routes():
             if request.method == "POST":
                 if request.content_type != "application/json":
                     raise ValueError("Expected application/json")
-                if request.content_length is None or request.content_length > MAX_TRACE_BYTES:
+                if request.content_length is None:
                     raise ValueError("Invalid request size")
+                if request.content_length > size_limit():
+                    raise too_large(request.content_length)
                 body = decode_body(await request.read())
             result = await asyncio.to_thread(dispatch, application(), request.method, route, body)
             return web.json_response(result, headers={"Cache-Control": "no-store"})

@@ -2,11 +2,20 @@ import { useEffect, useMemo, useState } from "react";
 import { imageAttentionStory, pct, pctFine, validIndex } from "./insights";
 
 /** What an image model predicted, and where each layer's class token looked on the input. */
-export default function ImageClassification({ trace }) {
+export default function ImageClassification({
+  trace,
+  stageLayer = null,
+  onLayer,
+}) {
   const record = trace?.image_classification;
   const layers = record?.attention_layers || [];
   const [picked, setPicked] = useState(null);
   useEffect(() => setPicked(null), [trace]);
+  // The layer the stage shows is the layer whose attention this shows.
+  useEffect(() => {
+    const i = layers.findIndex((l) => l.layer === stageLayer);
+    if (i >= 0) setPicked(i);
+  }, [stageLayer, layers]);
   const index = validIndex(picked, layers.length, layers.length - 1);
   const layer = layers[index];
   const story = useMemo(
@@ -80,7 +89,11 @@ export default function ImageClassification({ trace }) {
                   max={layers.length - 1}
                   value={index}
                   aria-label="Attention layer"
-                  onChange={(e) => setPicked(Number(e.target.value))}
+                  onChange={(e) => {
+                    const i = Number(e.target.value);
+                    setPicked(i);
+                    onLayer?.(layers[i]?.layer);
+                  }}
                 />
               </label>
               <p className="muted">

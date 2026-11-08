@@ -10,6 +10,7 @@ import json
 import time
 from uuid import uuid4
 
+from . import capture_limits
 from .adapters import CausalLMAdapter, DiffusersPipelineAdapter
 from .catalog import discover_models
 from .host import ModelHost
@@ -22,11 +23,22 @@ from .media_models import (ImageClassifierAdapter, SpeechAdapter, declared_name,
 from .tensor_slices import ALL_FEATURES
 from .trace_store import decode_trace, encode_trace
 
+# The Standard capture size; the active history limits come from capture_limits (history_runs, history_bytes).
 MAX_RUNS = 16
 MAX_TRACES = 64
 MAX_RETAINED_BYTES = 1024 * 1024 * 1024
 MAX_PINNED_RUNS = 8
 MAX_PINNED_BYTES = 512 * 1024 * 1024
+
+
+def prompt_fits(count, what="prompt"):
+    """A text run takes prompts up to the capture size's prompt tokens; say how to run a longer one."""
+    limit = capture_limits.get("prompt_tokens")
+    if count < 1:
+        raise ValueError(f"The {what} has no tokens")
+    if count > limit:
+        raise ValueError(f"This {what} is {count:,} tokens; the {capture_limits.LABELS[capture_limits.profile()]} capture size runs prompts up to {limit:,}. "
+                         "Choose a larger capture size in Settings.")
 
 
 def bounded_int(value, low, high, name):
@@ -115,8 +127,9 @@ class Application:
             return {"host": self.host_kind, "packages": self.installer.packages_dir is not None, "job": deepcopy(self._state), "loaded": loaded,
                     "observation": self.host.snapshot(), "models": self.host.models(), "install": self.installer.status(),
                     "traces": [{k: t[k] for k in ("id", "name", "kind", "size_bytes", "revision", "run", "step", "pinned", "note")} for t in self._traces],
-                    "retention": {"runs": len({t["run"] for t in self._traces}), "max_runs": MAX_RUNS,
-                                  "bytes": self._trace_bytes, "max_bytes": MAX_RETAINED_BYTES,
+                    "capture_limits": {"profile": capture_limits.profile(), "values": capture_limits.current()},
+                    "retention": {"runs": len({t["run"] for t in self._traces}), "max_runs": capture_limits.get("history_runs"),
+                                  "bytes": self._trace_bytes, "max_bytes": capture_limits.get("history_bytes"),
                                   "pinned_runs": len({t["run"] for t in self._traces if t["pinned"]}), "max_pinned_runs": MAX_PINNED_RUNS}}
 
     def catalog(self):
@@ -389,11 +402,13 @@ class Application:
         if not isinstance(request, dict):
             raise ValueError("Expected a run request")
         prompt = request.get("prompt", "")
-        if not isinstance(prompt, str) or not 1 <= len(prompt) <= 8192:
-            raise ValueError("Prompt must contain 1 to 8192 characters")
+        longest = max(8192, capture_limits.get("prompt_tokens") * 8)
+        if not isinstance(prompt, str) or not 1 <= len(prompt) <= longest:
+            raise ValueError(f"Prompt must contain 1 to {longest:,} characters")
         paths = request.get("modules", [])
-        if not isinstance(paths, list) or len(paths) > 32 or any(not isinstance(p, str) or len(p) > 512 for p in paths):
-            raise ValueError("Select at most 32 module paths")
+        picked = capture_limits.get("capture_components")
+        if not isinstance(paths, list) or len(paths) > picked or any(not isinstance(p, str) or len(p) > 512 for p in paths):
+            raise ValueError(f"Select at most {picked} module paths")
         paths = list(paths)
         elements = bounded_int(request.get("elements", 1024), 1, 4096, "elements")
         # Features kept for every token of a text layer; 0 keeps as many as the trace holds.
@@ -411,7 +426,7 @@ class Application:
             raise ValueError("Capture attention for this prompt before ablating heads")
         generate = request.get("generate")
         if generate is not None:
-            generate = bounded_int(generate, 1, 256, "generate")
+            generate = bounded_int(generate, 1, capture_limits.get("response_tokens"), "generate")
         patching = request.get("patch")
         if patching not in (None, "last", "all"):
             raise ValueError("patch must be last or all")
@@ -439,8 +454,7 @@ class Application:
                 ids = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
                 if mode == "raw":
                     ids = with_start_token(tokenizer, ids)
-                if not 1 <= ids.shape[1] <= 128:
-                    raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
+                prompt_fits(ids.shape[1])
                 inputs = {"input_ids": ids.to(item["device"])}
                 if request.get("ablate_tokens") is not None or request.get("cross_attention") is not None:
                     raise ValueError("Token ablation and cross-attention maps apply to diffusion pipelines; load one first")
@@ -449,8 +463,7 @@ class Application:
                     source_ids = tokenizer(source_text, return_tensors="pt", add_special_tokens=mode == "raw")["input_ids"]
                     if mode == "raw":
                         source_ids = with_start_token(tokenizer, source_ids)
-                    if not 1 <= source_ids.shape[1] <= 128:
-                        raise ValueError("Use a source prompt of 1 to 128 tokens")
+                    prompt_fits(source_ids.shape[1], "source prompt")
                     inputs["source_ids"] = source_ids.to(item["device"])
                 attention = request.get("attention", False)
                 if type(attention) is not bool:
@@ -474,6 +487,9 @@ class Application:
                 def decorate(output, trace):
                     trace["input_mode"] = mode
                     trace["tokens"] = [{"id": i, "text": tokenizer.decode([i])} for i in ids[0].tolist()]
+                    if trace.get("pooled"):
+                        # A long prompt's attention is kept in blocks; each block is labelled by its text.
+                        trace["tokens"] = capture_limits.pooled_tokens(trace["tokens"], trace["pooled"]["ranges"])
                     for token in trace.get("output", {}).get("top_tokens", []):
                         token["text"] = tokenizer.decode([token["token_id"]])
                     for token in trace.get("logits_view", {}).get("top", []):
@@ -504,8 +520,7 @@ class Application:
                     raise ValueError("An embedding model has no next token, response or attention probe; running it records its layers and the sentence vector")
                 tokenizer = item["tokenizer"]
                 encoded = tokenizer(prompt, return_tensors="pt")
-                if not 1 <= encoded["input_ids"].shape[1] <= 128:
-                    raise ValueError("Use a prompt of 1 to 128 tokens for bounded observation")
+                prompt_fits(encoded["input_ids"].shape[1])
                 if not paths:
                     paths.extend([n["path"] for n in self._tree["nodes"] if n["path"].split(".")[-1].isdigit()][:32] or [""])
                 inputs = {"input_ids": encoded["input_ids"].to(item["device"]), "attention_mask": encoded["attention_mask"].to(item["device"])}
@@ -564,7 +579,7 @@ class Application:
                 parameters = inspect.signature(type(item["adapter"].pipeline).__call__).parameters
                 if "prompt" not in parameters or "output_type" not in parameters:
                     raise ValueError("This pipeline needs a task-specific input adapter; use ComfyUI to observe it")
-                steps = bounded_int(request.get("steps", 8), 1, 32, "steps")
+                steps = bounded_int(request.get("steps", 8), 1, max(32, capture_limits.get("denoising_steps")), "steps")
                 size = bounded_int(request.get("size", 256), 64, 512, "size")
                 if size % 8:
                     raise ValueError("Image size must be divisible by 8")
@@ -574,7 +589,7 @@ class Application:
                 for key in ("height", "width"):
                     if key in parameters:
                         inputs[key] = size
-                operation, options = "denoising_steps", {"max_tensor_elements": elements, "max_events": 32}
+                operation, options = "denoising_steps", {"max_tensor_elements": elements, "max_events": max(32, capture_limits.get("denoising_steps"))}
                 ablate_tokens = request.get("ablate_tokens")
                 if ablate_tokens is not None:
                     from .cross_attention import parse_token_list
@@ -693,8 +708,11 @@ class Application:
             name = record["name"] if record else "Attention capture"
         self.publish(target, name, replace_id=attach_to)
 
-    def publish(self, trace, name="Imported trace", *, replace_id=None, run=None, step=None, note=None):
+    def publish(self, trace, name="Imported trace", *, replace_id=None, run=None, step=None, note=None, imported=False):
         """Keep a trace in memory as encoded bytes. Traces of one run are kept and evicted together."""
+        if not imported and "capture_limits" not in trace:
+            # What this run kept is measured against the capture size it ran on; an import keeps its own record.
+            capture_limits.stamp(trace)
         data = encode_trace(trace)
         record = {"id": uuid4().hex, "name": str(name)[:160], "kind": trace["kind"], "size_bytes": len(data), "data": data,
                   "revision": 1, "run": run, "step": step, "pinned": False, "note": str(note)[:48] if note else None}
@@ -713,8 +731,17 @@ class Application:
         return {"id": record["id"]}
 
     def _over_limits(self):
-        return (len({t["run"] for t in self._traces}) > MAX_RUNS or len(self._traces) > MAX_TRACES
-                or self._trace_bytes > MAX_RETAINED_BYTES)
+        runs = capture_limits.get("history_runs")
+        return (len({t["run"] for t in self._traces}) > runs or len(self._traces) > runs * MAX_TRACES // MAX_RUNS
+                or self._trace_bytes > capture_limits.get("history_bytes"))
+
+    def set_capture_limits(self, name, values=None):
+        """Choose how much later runs keep. History shrinks at once when the new size holds less."""
+        described = capture_limits.configure(name, values)
+        with self._lock:
+            if self._traces:
+                self._evict(self._traces[-1])
+        return described
 
     def _drop(self, record):
         self._traces.remove(record)

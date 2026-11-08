@@ -68,6 +68,10 @@ import { sliceEvent, volumeCell, volumeEvent } from "./matrixData";
 import Compare from "./Compare";
 import ModelInstall from "./ModelInstall";
 import Unlock from "./Unlock";
+import CaptureSize, {
+  KeptTable,
+  useRememberedCaptureSize,
+} from "./CaptureSize";
 import WorkflowBar from "./WorkflowBar";
 import {
   cancelPrompt,
@@ -81,6 +85,7 @@ import {
 import { buildReport } from "./report";
 import { packValues } from "./packedValues.js";
 import { api, displayNodes, samples, eventPath } from "./api";
+import { mostOf, leastOf } from "./extent.js";
 const num = (n) =>
   Number.isFinite(n)
     ? new Intl.NumberFormat("en", { maximumFractionDigits: 4 }).format(n)
@@ -193,15 +198,57 @@ function valueName(event, index) {
   return `${token ? `“${token}”` : `token ${row}`} · #${feature}`;
 }
 
+/** The layers an attention capture holds: the probed one and every layer it kept a matrix for. */
+function attentionLayers(trace) {
+  return [
+    ...new Set([
+      trace.layer,
+      ...(trace.layer_stacks || []).map((s) => s.index),
+    ]),
+  ].sort((a, b) => a - b);
+}
+
+/** One replay event per kept layer, for head ``head`` (each layer's head mean where only that was kept). */
+function attentionEvents(trace, tree, head) {
+  return attentionLayers(trace).map((layer) => {
+    const probed = layer === trace.layer;
+    const stack = (trace.layer_stacks || []).find((s) => s.index === layer);
+    const heads = probed ? trace.heads : stack?.heads;
+    const mean = !Array.isArray(heads?.[head]) && stack?.mean;
+    const matrix =
+      probed && head === trace.head
+        ? trace.values
+        : heads?.[head] || stack?.mean || trace.values;
+    const label = `Attention L${layer} / ${mean ? "head mean" : `H${head}`}`;
+    const event = {
+      module: layerNodePath(tree?.nodes, layer) ?? label,
+      label,
+      layer,
+      shape: trace.shape,
+      total_elements: trace.shape[0] * trace.shape[1],
+      selection: "full_attention_head",
+      dtype: "float32",
+      truncated: false,
+    };
+    // Flattened only when shown, so a long capture with many layers stays light.
+    let flat;
+    Object.defineProperty(event, "values", {
+      enumerable: true,
+      get: () => (flat ??= matrix.flat()),
+    });
+    return event;
+  });
+}
+
 /** Per token: how large the attention and MLP outputs were, beside the layer's output. */
 function PartsTable({ info, onPick }) {
   const kinds = [
     ...info.parts.map((p) => [p.kind, p.label, p.path]),
     ...(info.output ? [["output", "Output", info.output]] : []),
   ];
-  const top = Math.max(
+  const top = mostOf(
     1e-9,
-    ...info.tokens.flatMap((row) =>
+    info.tokens.flatMap((row) =>
       kinds.map(([kind]) => row[kind]).filter(Number.isFinite),
     ),
   );
@@ -238,7 +285,7 @@ function PartsTable({ info, onPick }) {
             {kinds.map(([kind]) => (
               <span
                 key={kind}
-                className={`parts-bar ${kind}`}
+                className={`parts-bar part-${kind}`}
                 title={
                   Number.isFinite(row[kind]) ? num(row[kind]) : "Not recorded"
                 }
@@ -270,6 +317,9 @@ export function App() {
     [trace, setTrace] = useState(null),
     [traceId, setTraceId] = useState("");
   const [outputTab, setOutputTab] = useState("response");
+  // How much each run keeps; the server holds it, and this browser puts its choice back after a restart.
+  const limits = state?.capture_limits?.values;
+  useRememberedCaptureSize(state?.capture_limits);
   const [selected, setSelected] = useState(""),
     [eventIndex, setEventIndex] = useState(0),
     [view, setView] = useState("matrix"),
@@ -425,25 +475,13 @@ export function App() {
       [tree, trace],
     ),
     allNodes = tree?.nodes || nodes;
+  // An attention capture replays layer by layer for the chosen head, like a run's layer events.
   const events = useMemo(
     () =>
       trace?.kind === "attention_capture"
-        ? [
-            {
-              module:
-                layerNodePath(tree?.nodes, trace.layer) ??
-                `Attention L${trace.layer} / H${trace.head}`,
-              label: `Attention L${trace.layer} / H${trace.head}`,
-              values: trace.values.flat(),
-              shape: trace.shape,
-              total_elements: trace.shape[0] * trace.shape[1],
-              selection: "full_attention_head",
-              dtype: "float32",
-              truncated: false,
-            },
-          ]
+        ? attentionEvents(trace, tree, headView ?? trace.head)
         : trace?.events || [],
-    [trace, tree],
+    [trace, tree, headView],
   );
   const viewTrace = useMemo(() => {
     if (!trace || trace.kind !== "attention_capture") return trace;
@@ -481,6 +519,15 @@ export function App() {
   }, [trace, headView, layerView]);
   const replayEvent =
     events[Math.min(eventIndex, Math.max(0, events.length - 1))];
+  // The replay's layer is the attention layer shown, so playing walks the layers.
+  useEffect(() => {
+    if (trace?.kind !== "attention_capture") return;
+    const at = replayEvent?.layer;
+    if (!Number.isInteger(at)) return;
+    setLayerView(at === trace.layer ? null : at);
+    setLayer(at);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replayEvent?.layer, trace]);
   const rawEvent =
     !selected || eventPath(replayEvent) === selected ? replayEvent : null;
   const event = useMemo(
@@ -575,7 +622,7 @@ export function App() {
         (!primary || n.path.startsWith(`${primary}.`)),
     );
     const shape = unit?.parameters?.[0]?.shape;
-    return Array.isArray(shape) && shape.length ? Math.max(...shape) : null;
+    return Array.isArray(shape) && shape.length ? mostOf(shape) : null;
   }, [allNodes, tree]);
   const modelFacts = state?.loaded
     ? [
@@ -733,12 +780,14 @@ export function App() {
     setLayerView(null);
     setTree(t.structure || null);
     const landing =
-      atLayer === null || t.kind === "attention_capture"
-        ? 0
-        : Math.max(
-            0,
-            (t.events || []).findIndex((e) => layerOf(e.module) === atLayer),
-          );
+      t.kind === "attention_capture"
+        ? Math.max(0, attentionLayers(t).indexOf(t.layer))
+        : atLayer === null
+          ? 0
+          : Math.max(
+              0,
+              (t.events || []).findIndex((e) => layerOf(e.module) === atLayer),
+            );
     setEventIndex(landing);
     setSelected(
       t.kind === "attention_capture"
@@ -913,6 +962,34 @@ export function App() {
     sessionRef.current = active;
     launchSessionStep(active, active.pending[0]);
   }
+  // One playhead for the run: the replay's event. Panels follow it, and moving one moves the replay.
+  const replayModule = replayEvent?.module ?? null;
+  const replayCall = replayEvent?.denoiser_call ?? null;
+  const lastRecordedCall = events.reduce(
+    (top, e) =>
+      Number.isInteger(e.denoiser_call)
+        ? Math.max(top ?? 0, e.denoiser_call)
+        : top,
+    null,
+  );
+  function jumpTo(match) {
+    const i = events.findIndex(match);
+    if (i < 0) return false;
+    setPlaying(false);
+    setEventIndex(i);
+    setSelected(eventPath(events[i]));
+    return true;
+  }
+  /** The same block at another denoiser call, or that call's first event when the block was not recorded there. */
+  function goToCall(call) {
+    if (call === null || call === undefined) return;
+    jumpTo((e) => e.denoiser_call === call && e.module === replayModule) ||
+      jumpTo((e) => e.denoiser_call === call);
+  }
+  const goToLayer = (number, inside = () => true) =>
+    jumpTo(
+      (e) => !e.part && layerOf(e.module) === number && inside(e.module ?? ""),
+    );
   /** Look at another layer: re-probe attention there when a session is live, and jump the outputs view. */
   function pickLayer(index, nextHead = head) {
     setLayer(index);
@@ -927,7 +1004,9 @@ export function App() {
     if (captured) setLayerView(index === trace.layer ? null : index);
     else if (textModel && sameSession && !busy)
       runSession(["attention"], { layer: index, head: nextHead });
-    const at = events.findIndex((e) => layerOf(e.module) === index);
+    const at = events.findIndex(
+      (e) => (e.layer ?? layerOf(e.module)) === index,
+    );
     if (at >= 0) {
       setEventIndex(at);
       setSelected(eventPath(events[at]));
@@ -1208,7 +1287,11 @@ export function App() {
     e.target.value = "";
     if (!file) return;
     await action(async () => {
-      if (file.size > 64 * 1024 * 1024) throw new Error("Trace exceeds 64 MiB");
+      const most = limits?.trace_bytes ?? 64 * 1024 * 1024;
+      if (file.size > most)
+        throw new Error(
+          `This file is ${Math.round(file.size / 1024 ** 2)} MB; the current capture size opens runs up to ${Math.round(most / 1024 ** 2)} MB. Choose a larger capture size in Settings.`,
+        );
       const r = await api("import", JSON.parse(await file.text()));
       await openTrace(r.id);
     });
@@ -1398,7 +1481,7 @@ export function App() {
                 : undefined
             }
             onChange={(e) => setPrompt(e.target.value)}
-            maxLength={8192}
+            maxLength={Math.max(8192, (limits?.prompt_tokens ?? 1024) * 8)}
           />
         )}
         <div className="tokens">
@@ -1414,12 +1497,15 @@ export function App() {
                   : mediaTask
                     ? `Choose a file, then Run. It stays on this computer.`
                     : trace?.tokens
-                      ? `Tokens (${trace.tokens.length})`
+                      ? trace.pooled
+                        ? `Tokens (${trace.pooled.token_count.toLocaleString()}, attention in ${trace.tokens.length} blocks)`
+                        : `Tokens (${trace.tokens.length.toLocaleString()})`
                       : native
                         ? "Runs through ComfyUI"
                         : "Tokens appear after a capture"}
           </span>
-          {trace?.tokens?.map((t, i) => (
+          {/* A long prompt shows its first tokens here; every view still has all of them. */}
+          {trace?.tokens?.slice(0, 400).map((t, i) => (
             <span
               className="token"
               key={i}
@@ -1428,6 +1514,11 @@ export function App() {
               {t.text || "[empty]"}
             </span>
           ))}
+          {trace?.tokens?.length > 400 && (
+            <span className="muted">
+              +{(trace.tokens.length - 400).toLocaleString()} more
+            </span>
+          )}
         </div>
         <Button
           icon={GearSix}
@@ -1532,7 +1623,11 @@ export function App() {
             canAttention={state?.loaded?.task === "text"}
             onCapture={() => run(true)}
             onAblate={(mode) => run(true, mode)}
-            onPickLayer={textModel ? pickLayer : undefined}
+            onPickLayer={
+              textModel || trace?.kind === "attention_capture"
+                ? pickLayer
+                : undefined
+            }
             stageOptions={
               session && Object.values(session.ids).includes(traceId)
                 ? {
@@ -1721,6 +1816,11 @@ export function App() {
                   }}
                 />
                 <h3>Measurement context</h3>
+                <KeptTable
+                  trace={trace}
+                  record={state?.traces?.find((t) => t.id === traceId)}
+                  retention={state?.retention}
+                />
                 <ul>
                   {trace?.limitations?.map((l, i) => <li key={i}>{l}</li>) || (
                     <li>
@@ -1765,8 +1865,14 @@ export function App() {
                           type="checkbox"
                           checked={capturePaths.includes(n.path)}
                           onChange={(e) => {
-                            if (e.target.checked && capturePaths.length >= 32) {
-                              setError("Capture at most 32 components");
+                            const most = limits?.capture_components ?? 32;
+                            if (
+                              e.target.checked &&
+                              capturePaths.length >= most
+                            ) {
+                              setError(
+                                `Capture at most ${most} components; a larger capture size in Settings allows more`,
+                              );
                               return;
                             }
                             setCapturePaths((p) =>
@@ -1875,7 +1981,7 @@ export function App() {
                       <span className="positive">Positive</span>
                       <small>
                         {logScale ? "Signed log1p" : "Linear"} · ±
-                        {num(Math.max(...vals.map(Math.abs), 0))} · null = gray
+                        {num(mostOf(vals.map(Math.abs), 0))} · null = gray
                       </small>
                     </div>
                   )}
@@ -2074,9 +2180,9 @@ export function App() {
                 </h3>
                 <dl>
                   <dt>Minimum</dt>
-                  <dd>{vals.length ? num(Math.min(...vals)) : "—"}</dd>
+                  <dd>{vals.length ? num(leastOf(vals)) : "—"}</dd>
                   <dt>Maximum</dt>
-                  <dd>{vals.length ? num(Math.max(...vals)) : "—"}</dd>
+                  <dd>{vals.length ? num(mostOf(vals)) : "—"}</dd>
                   <dt>Mean</dt>
                   <dd>
                     {vals.length
@@ -2281,9 +2387,27 @@ export function App() {
               ? companions.module
               : null;
           if (audioTrace)
-            panels.push(<AudioView key="audio" trace={audioTrace} />);
+            panels.push(
+              <AudioView
+                key="audio"
+                trace={audioTrace}
+                stageLayer={
+                  /decoder/.test(replayModule ?? "")
+                    ? layerOf(replayModule)
+                    : null
+                }
+                onLayer={(n) => goToLayer(n, (m) => /decoder/.test(m))}
+              />,
+            );
           if (trace?.image_classification)
-            panels.push(<ImageClassification key="image" trace={trace} />);
+            panels.push(
+              <ImageClassification
+                key="image"
+                trace={trace}
+                stageLayer={replayEvent?.part ? null : layerOf(replayModule)}
+                onLayer={(n) => goToLayer(n)}
+              />,
+            );
           if (trace?.embedding)
             panels.push(<EmbeddingView key="embedding" trace={trace} />);
           if (predictionTrace)
@@ -2305,11 +2429,33 @@ export function App() {
           if (trace?.kind === "attention_capture")
             panels.push(<AttentionLinks key="links" trace={trace} />);
           if (trace?.text_encoder)
-            panels.push(<TextEncoderPanel key="encoder" trace={trace} />);
+            panels.push(
+              <TextEncoderPanel
+                key="encoder"
+                trace={trace}
+                stagePath={replayModule}
+                onPath={(path) => jumpTo((e) => e.module === path)}
+              />,
+            );
           if (trace?.denoising?.steps?.length)
-            panels.push(<Denoising key="denoising" trace={trace} />);
+            panels.push(
+              <Denoising
+                key="denoising"
+                trace={trace}
+                call={replayCall}
+                onCall={goToCall}
+                lastCall={lastRecordedCall}
+              />,
+            );
           if (trace?.cross_attention)
-            panels.push(<CrossAttention key="xattn" trace={trace} />);
+            panels.push(
+              <CrossAttention
+                key="xattn"
+                trace={trace}
+                call={replayCall}
+                onCall={goToCall}
+              />,
+            );
           if (trace?.events?.some((e) => e.slices?.layout === "features"))
             panels.push(<FeatureMaps key="features" trace={trace} />);
           if (!panels.length && trace?.preview?.mime === "image/png")
@@ -2716,11 +2862,13 @@ export function App() {
                       }
                       aria-label="Response length"
                     >
-                      {[32, 48, 96, 160, 256].map((n) => (
-                        <option key={n} value={n}>
-                          {n} tokens
-                        </option>
-                      ))}
+                      {[32, 48, 96, 160, 256, 512, 1024, 2048, 4096]
+                        .filter((n) => n <= (limits?.response_tokens ?? 256))
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            {n} tokens
+                          </option>
+                        ))}
                     </select>
                   </Field>
                 )}
@@ -2730,7 +2878,7 @@ export function App() {
                       <input
                         type="number"
                         min="1"
-                        max="32"
+                        max={Math.max(32, limits?.denoising_steps ?? 32)}
                         value={steps}
                         onChange={(e) => setSteps(Number(e.target.value))}
                       />
@@ -2777,7 +2925,8 @@ export function App() {
               </div>
               {settingsFor.text && (
                 <p>
-                  Text captures accept up to 128 tokens.{" "}
+                  Text captures accept up to{" "}
+                  {(limits?.prompt_tokens ?? 1024).toLocaleString()} tokens.{" "}
                   {capturePaths.length
                     ? `${capturePaths.length} components selected.`
                     : "The first 32 numbered components are selected automatically."}{" "}
@@ -2791,6 +2940,7 @@ export function App() {
               </p>
             </>
           )}
+          {modal === "settings" && <CaptureSize onError={setError} />}
         </Modal>
       )}
     </main>

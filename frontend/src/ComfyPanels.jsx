@@ -9,6 +9,7 @@ import {
   seriesRange,
   unitTokens,
 } from "./viewData";
+import { mostOf } from "./extent.js";
 
 const PANELS = [
   ["latent", "Noisy latent", "What the sampler holds at this step"],
@@ -68,29 +69,42 @@ export function SourceFigures({ trace }) {
   ));
 }
 
-export function Denoising({ trace }) {
+export function Denoising({ trace, call = null, onCall, lastCall = null }) {
   const section = trace?.denoising;
   const steps = section?.steps || [];
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const at = useRef(0);
+  at.current = position;
   useEffect(() => {
     setPosition(Math.max(0, steps.length - 1));
     setPlaying(false);
   }, [trace?.id, steps.length]);
+  // A step is one denoiser call (the recorder counts calls as the replay does): follow the replay.
+  useEffect(() => {
+    if (call === null || !steps.length) return;
+    let found = -1;
+    steps.forEach((s, i) => {
+      if (s.index <= call) found = i;
+    });
+    if (found >= 0) setPosition(found);
+  }, [call, steps]);
+  // Only a move made here goes back to the replay, so following it never pulls it back.
+  const go = (next) => {
+    setPosition(next);
+    onCall?.(steps[next]?.index);
+  };
   useEffect(() => {
     if (!playing) return undefined;
-    const timer = setInterval(
-      () =>
-        setPosition((p) => {
-          if (p >= steps.length - 1) {
-            setPlaying(false);
-            return p;
-          }
-          return p + 1;
-        }),
-      500,
-    );
+    const timer = setInterval(() => {
+      if (at.current >= steps.length - 1) {
+        setPlaying(false);
+        return;
+      }
+      go(at.current + 1);
+    }, 500);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, steps.length]);
   if (!steps.length) return null;
   const step = steps[Math.min(position, steps.length - 1)];
@@ -111,7 +125,7 @@ export function Denoising({ trace }) {
           <button
             aria-label={playing ? "Pause" : "Play the steps"}
             onClick={() => {
-              if (!playing && position >= steps.length - 1) setPosition(0);
+              if (!playing && position >= steps.length - 1) go(0);
               setPlaying(!playing);
             }}
           >
@@ -125,7 +139,7 @@ export function Denoising({ trace }) {
             value={position}
             onChange={(e) => {
               setPlaying(false);
-              setPosition(Number(e.target.value));
+              go(Number(e.target.value));
             }}
           />
           <span>
@@ -139,6 +153,13 @@ export function Denoising({ trace }) {
         {denoisingStory(section, position)}
       </p>
       {section.skipped && <p className="micro">{section.skipped}</p>}
+      {lastCall !== null && step.index > lastCall && (
+        <p className="micro">
+          Layers were recorded on denoiser calls 0–{lastCall}, so the event
+          replay stays on call {call ?? lastCall} while this shows step{" "}
+          {step.index + 1}.
+        </p>
+      )}
       <div className="denoising-grid">
         <SourceFigures trace={trace} />
         {PANELS.filter(([key]) => step.images?.[key]).map(
@@ -328,7 +349,7 @@ export function FeatureMaps({ trace }) {
 const TOKEN_HUES = 6;
 
 /** A text encoder's work: how the prompt was cut up, how each layer responded, and which tokens move a unit. */
-export function TextEncoderPanel({ trace }) {
+export function TextEncoderPanel({ trace, stagePath = null, onPath }) {
   const [otherCaptures, setOtherCaptures] = useState([]);
   const section = trace?.text_encoder;
   const encoders = section?.encoders || [];
@@ -365,9 +386,9 @@ export function TextEncoderPanel({ trace }) {
   // A start token can be many times stronger than any word; scale to the words and say so.
   const { peak, clipped } = useMemo(() => {
     const special = (encoder?.tokens || []).map((t) => t.special);
-    const scale = Math.max(
+    const scale = mostOf(
       1e-9,
-      ...layers.flatMap((l) => l.token_rms.filter((_, i) => !special[i])),
+      layers.flatMap((l) => l.token_rms.filter((_, i) => !special[i])),
     );
     const strongest = Math.max(0, ...layers.flatMap((l) => l.token_rms));
     return { peak: scale, clipped: strongest > scale ? strongest : null };
@@ -376,6 +397,11 @@ export function TextEncoderPanel({ trace }) {
     () => fitPoints(encoder?.map?.points, encoder?.tokens),
     [encoder?.map?.points, encoder?.tokens],
   );
+  // The stage's layer, when it belongs to this encoder, is the one the token map shows.
+  const stageAt = layers.findIndex((l) => l.path === stagePath);
+  useEffect(() => {
+    if (stageAt >= 0) setMapLayer(stageAt);
+  }, [stageAt]);
   if (!encoder) return null;
   const tokens = encoder.tokens;
   const layer = cell ? layers[cell.layer] : null;
@@ -583,7 +609,11 @@ export function TextEncoderPanel({ trace }) {
               min={0}
               max={layers.length - 1}
               value={shownLayer}
-              onChange={(e) => setMapLayer(Number(e.target.value))}
+              onChange={(e) => {
+                const i = Number(e.target.value);
+                setMapLayer(i);
+                onPath?.(layers[i]?.path);
+              }}
             />
           </label>
         </div>

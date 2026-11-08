@@ -19,6 +19,7 @@ import {
 } from "./insights";
 import { mix } from "./MatrixWorkspace";
 import DiffusionCompare from "./DiffusionCompare";
+import { mostOf } from "./extent.js";
 
 const short = (n) => (Number.isFinite(n) ? n.toPrecision(3) : "—");
 
@@ -213,7 +214,7 @@ export default function Compare({
             <textarea
               value={promptB}
               onChange={(e) => setPromptB(e.target.value)}
-              maxLength={8192}
+              maxLength={262144}
               aria-label="Variant prompt"
             />
           </label>
@@ -409,7 +410,7 @@ export default function Compare({
           <div className="compare-strips">
             {strips.map((strip, i) => {
               const t = i ? traceB : traceA;
-              const peak = Math.max(...strip, 1e-9);
+              const peak = mostOf(strip, 1e-9);
               return (
                 <div key={i}>
                   <p className="matrix-insight-sub">
@@ -640,7 +641,10 @@ function Thumb({ matrix, signed }) {
   const n = matrix.length,
     m = matrix[0]?.length || 0;
   const peak = signed
-    ? Math.max(...matrix.flat().map((v) => Math.abs(v ?? 0)), 1e-9)
+    ? mostOf(
+        matrix.flat().map((v) => Math.abs(v ?? 0)),
+        1e-9,
+      )
     : 1;
   return (
     <div

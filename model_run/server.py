@@ -10,7 +10,8 @@ import socket
 from urllib.parse import urlsplit
 
 from .application import Application
-from .trace_store import MAX_TRACE_BYTES, _unique_pairs, unpack_values
+from . import capture_limits
+from .trace_store import MAX_TRACE_BYTES, _unique_pairs, size_limit, too_large, unpack_values
 
 STATIC = Path(__file__).parent / "web"
 
@@ -26,8 +27,8 @@ class LocalHTTPServer(ThreadingHTTPServer):
 
 
 def decode_body(data):
-    if len(data) > MAX_TRACE_BYTES:
-        raise ValueError("Request exceeds 16 MiB")
+    if len(data) > size_limit():
+        raise too_large(len(data))
     result = json.loads(data, object_pairs_hook=_unique_pairs,
                         parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
     if not isinstance(result, dict):
@@ -39,6 +40,7 @@ def dispatch(app, method, route, body=None):
     body = body or {}
     if method == "GET":
         if route == "state": return app.snapshot()
+        if route == "capture-limits": return capture_limits.describe()
         if route == "catalog": return app.catalog()
         if route == "structure": return app.structure()
         if route.startswith("artifact-structure/"): return app.artifact_structure(route[19:])
@@ -65,8 +67,9 @@ def dispatch(app, method, route, body=None):
         if route == "load": return app.load(body.get("id"), body.get("device", "cpu"))
         if route == "unload": return app.unload()
         if route == "run": return app.run(body)
+        if route == "capture-limits": return app.set_capture_limits(body.get("profile"), body.get("values"))
         if route == "cancel": return app.cancel()
-        if route == "import": return app.publish(unpack_values(body), "Imported trace")
+        if route == "import": return app.publish(unpack_values(body), "Imported trace", imported=True)
         if route.startswith("delete/"): return app.delete_trace(route[7:])
         if route.startswith("pin/"): return app.pin_trace(route[4:], body.get("pinned"))
     raise LookupError("Unknown API endpoint")
@@ -113,8 +116,8 @@ def make_server(app, port=8766):
                         if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                             return self.respond(415, {"error": "Expected application/json"})
                         size = int(self.headers.get("Content-Length", "0"))
-                        if not 0 < size <= MAX_TRACE_BYTES:
-                            raise ValueError("Invalid request size")
+                        if not 0 < size <= size_limit():
+                            raise ValueError("Invalid request size") if size <= 0 else too_large(size)
                         self.connection.settimeout(15)
                         body = decode_body(self.rfile.read(size))
                     return self.respond(200, dispatch(app, self.command, route[5:], body))

@@ -1,3 +1,4 @@
+import { mostOf, leastOf } from "./extent.js";
 /** What sampling settings would do to one measured distribution. The model itself never sampled with them. */
 export function samplingWhatIf(view, names, { temperature, topK, topP }) {
   const grid = view?.temperatures || [];
@@ -74,7 +75,7 @@ export function headFanOut(heads, query) {
 export function seriesRange(values) {
   const finite = values.filter((v) => Number.isFinite(v));
   return finite.length
-    ? { low: Math.min(...finite), high: Math.max(...finite) }
+    ? { low: leastOf(finite), high: mostOf(finite) }
     : { low: 0, high: 1 };
 }
 
@@ -87,7 +88,7 @@ export function denoisingStory(section, position) {
     `Step ${step.index + 1}${section.total_steps ? ` of ${section.total_steps}` : ""}, at noise level ${step.sigma?.toFixed(2) ?? "unknown"}.`,
   ];
   const changes = steps.map((s) => s.estimate_change ?? -1);
-  const biggest = changes.indexOf(Math.max(...changes));
+  const biggest = changes.indexOf(mostOf(changes));
   if (biggest > 0)
     parts.push(
       biggest === position
@@ -123,8 +124,8 @@ export function fitPoints(layers, tokens, size = 100, margin = 6) {
   if (!all.length) return [];
   const xs = all.map((p) => p[0]);
   const ys = all.map((p) => p[1] ?? 0);
-  const [xLow, xHigh] = [Math.min(...xs), Math.max(...xs)];
-  const [yLow, yHigh] = [Math.min(...ys), Math.max(...ys)];
+  const [xLow, xHigh] = [leastOf(xs), mostOf(xs)];
+  const [yLow, yHigh] = [leastOf(ys), mostOf(ys)];
   const span = Math.max(xHigh - xLow, yHigh - yLow, 1e-9);
   const scale = (size - 2 * margin) / span;
   const xOffset = (size - (xHigh - xLow) * scale) / 2;
