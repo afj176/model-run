@@ -90,8 +90,21 @@ class DecodeTests(unittest.TestCase):
                 self.assertEqual(len(samples), 30 * 16000)
                 self.assertEqual((info["source_rate"], info["source_channels"], info["rate"], info["clipped"], info["used_seconds"]), (8000, 2, 16000, True, 30.0))
                 self.assertEqual(info["source_seconds"], 31.0)
+                self.assertEqual(info["start_seconds"], 0.0)
                 with self.assertRaises(ValueError):
                     decode_audio(media(b"not audio"))
+                # A start time moves the window, decoding as far as it needs; the record says where it began.
+                later, info = decode_audio({**media(data), "start": 10})
+                self.assertEqual(len(later), 21 * 16000)
+                self.assertEqual((info["start_seconds"], info["used_seconds"], info["clipped"]), (10.0, 21.0, True))
+                longer = wav_bytes(np.zeros((8000 * 50, 1), dtype="float32"), 8000)
+                window, info = decode_audio({**media(longer), "start": 15})
+                self.assertEqual(len(window), 30 * 16000)
+                self.assertEqual((info["start_seconds"], info["used_seconds"], info["source_seconds"], info["clipped"]), (15.0, 30.0, 50.0, True))
+                with self.assertRaises(ValueError):
+                    decode_audio({**media(data), "start": 31})
+                with self.assertRaises(ValueError):
+                    decode_audio({**media(data), "start": "soon"})
 
 class ImportValidationTests(unittest.TestCase):
     def audio(self):

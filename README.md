@@ -417,6 +417,10 @@ tensor names in 3D.
   the decoded image, with a strip of every step's estimate ending at the final decode;
   the slider and the strip pick a step and the large picture follows. **How the image came
   out of the noise** and **Where the prompt is read** follow in turn.
+- **Audio** runs take a file or a recording from the computer's microphone (**Record**, up to
+  two minutes, kept in the browser until the run sends it to the local server). Whisper hears
+  one 30-second window; **Start at** picks where in the file it begins, and the run says
+  which seconds it heard, of how many, in the prompt bar and the **Audio** panel.
 - **Where the prompt is read** (diffusion) ranks prompt tokens by how much the image reads
   them, with a map per token over the preview image, per frame for video. **When each word
   shaped the output** under it has prompt words down and denoiser calls across, so when each

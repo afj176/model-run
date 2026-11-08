@@ -91,20 +91,20 @@ def decode_image(media):
         raise ValueError("That file is not a readable PNG, JPEG or WebP image") from exc
 
 
-def _read_soundfile(data):
-    """(samples [frames, channels], rate, channels, total frames) through libsndfile."""
+def _read_soundfile(data, seconds=MAX_SPEECH_SECONDS + 1):
+    """(samples [frames, channels], rate, channels, total frames) through libsndfile, decoding the first ``seconds``."""
     import soundfile
     try:
         with soundfile.SoundFile(io.BytesIO(data)) as source:
             rate, channels, total = source.samplerate, source.channels, source.frames
             # Only what will be used is decoded: a small compressed file can hold hours of audio.
-            samples = source.read(frames=min(total, (MAX_SPEECH_SECONDS + 1) * rate), dtype="float32", always_2d=True)
+            samples = source.read(frames=min(total, math.ceil(seconds * rate)), dtype="float32", always_2d=True)
     except (soundfile.LibsndfileError, RuntimeError, TypeError) as exc:
         raise ValueError("That file is not readable audio; use WAV, FLAC, OGG or MP3") from exc
     return samples, rate, channels, total
 
 
-def _read_pyav(data):
+def _read_pyav(data, seconds=MAX_SPEECH_SECONDS + 1):
     """The same through PyAV, which ComfyUI always installs where soundfile may be missing."""
     import av
     import numpy as np
@@ -113,7 +113,7 @@ def _read_pyav(data):
             stream = container.streams.audio[0]
             rate, channels = int(stream.codec_context.sample_rate or 0), int(stream.codec_context.channels or 0)
             resampler = av.AudioResampler(format="fltp", layout=stream.codec_context.layout.name, rate=rate)
-            limit, parts, got = (MAX_SPEECH_SECONDS + 1) * rate, [], 0
+            limit, parts, got = math.ceil(seconds * rate), [], 0
             for frame in container.decode(stream):
                 for out in resampler.resample(frame):
                     parts.append(out.to_ndarray())
@@ -128,27 +128,48 @@ def _read_pyav(data):
     return samples, rate, channels or samples.shape[1], total
 
 
+def _start_seconds(media):
+    """Where in the file the model's window starts, from the request; 0 when it says nothing."""
+    start = media.get("start", 0) if isinstance(media, dict) else 0
+    if start in (None, ""):
+        return 0.0
+    if type(start) not in (int, float) or isinstance(start, bool) or not math.isfinite(start) or start < 0 or start > 86400:
+        raise ValueError("The start time must be a number of seconds from 0 to 86400")
+    return float(start)
+
+
 def decode_audio(media):
-    """Mono 16 kHz samples and what was done to get them, from an audio file libsndfile or FFmpeg can read."""
+    """Mono 16 kHz samples and what was done to get them, from an audio file libsndfile or FFmpeg can read.
+
+    ``media["start"]`` (seconds) picks where the model's window begins; the window is
+    ``MAX_SPEECH_SECONDS`` long, and the record says what it covered."""
     import numpy as np
     from scipy.signal import resample_poly
+    start = _start_seconds(media)
     try:
         import soundfile  # noqa: F401
         reader = _read_soundfile
     except ImportError:
         reader = _read_pyav
-    samples, rate, channels, total = reader(_decode_bytes(media))
+    # Decode up to the end of the window the start time asks for, and no more.
+    samples, rate, channels, total = reader(_decode_bytes(media), start + MAX_SPEECH_SECONDS + 1)
     if not len(samples) or rate < 1:
         raise ValueError("The audio file has no samples")
     duration = total / rate
+    if start and start >= duration:
+        raise ValueError(f"The start time is past the end of the audio ({duration:.1f} s)")
     mono = samples.mean(axis=1)
     if rate != SPEECH_RATE:
         divisor = math.gcd(int(rate), SPEECH_RATE)
         mono = resample_poly(mono, SPEECH_RATE // divisor, int(rate) // divisor).astype(np.float32)
-    kept = mono[:MAX_SPEECH_SECONDS * SPEECH_RATE]
+    first = int(round(start * SPEECH_RATE))
+    kept = mono[first:first + MAX_SPEECH_SECONDS * SPEECH_RATE]
+    if not len(kept):
+        raise ValueError("No audio is left after the start time")
+    end = start + len(kept) / SPEECH_RATE
     return kept, {"kind": "audio", "source_rate": int(rate), "source_channels": int(channels),
-                  "source_seconds": round(duration, 3), "used_seconds": round(len(kept) / SPEECH_RATE, 3),
-                  "rate": SPEECH_RATE, "clipped": duration > MAX_SPEECH_SECONDS}
+                  "source_seconds": round(duration, 3), "start_seconds": round(start, 3), "used_seconds": round(len(kept) / SPEECH_RATE, 3),
+                  "rate": SPEECH_RATE, "clipped": start > 0 or end < duration - 1e-3}
 
 
 def _image_processor(auto, path, shared):
@@ -382,6 +403,9 @@ def validate_input_media(media):
         raise ValueError("Invalid input description")
     fields = ("source_width", "source_height") if media["kind"] == "image" else ("source_rate", "source_seconds", "used_seconds", "rate")
     if any(type(media.get(f)) not in (int, float) or not math.isfinite(media[f]) or media[f] < 0 for f in fields):
+        raise ValueError("Invalid input description")
+    start = media.get("start_seconds")
+    if start is not None and (type(start) not in (int, float) or not math.isfinite(start) or start < 0):
         raise ValueError("Invalid input description")
 
 

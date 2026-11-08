@@ -78,6 +78,7 @@ import CaptureSize, {
 } from "./CaptureSize";
 import WorkflowBar from "./WorkflowBar";
 import PromptRibbon from "./PromptRibbon";
+import AudioRecorder from "./AudioRecorder";
 import ResidualLadder from "./ResidualLadder";
 import { layerSummary, layerTokenGrid } from "./weatherData";
 import {
@@ -121,7 +122,12 @@ function mediaSummary(media) {
   if (media.kind === "image")
     return `${media.name} · ${media.source_width} × ${media.source_height}`;
   const rate = (media.source_rate / 1000).toFixed(1);
-  return `${media.name} · used ${media.used_seconds} s of ${media.source_seconds} s · ${rate} kHz converted to ${media.rate / 1000} kHz mono`;
+  const start = media.start_seconds || 0;
+  const window =
+    media.used_seconds >= media.source_seconds - 1e-3 && !start
+      ? `all ${media.source_seconds} s`
+      : `${media.used_seconds} s of ${media.source_seconds} s, from ${start} s to ${(start + media.used_seconds).toFixed(1)} s`;
+  return `${media.name} · heard ${window} · ${rate} kHz converted to ${media.rate / 1000} kHz mono`;
 }
 
 const mib = (bytes) =>
@@ -446,6 +452,8 @@ export function App() {
   const [valueIndex, setValueIndex] = useState(null);
   const [sliceWanted, setSliceWanted] = useState({});
   const [mediaFile, setMediaFile] = useState(null);
+  // Where in an audio file the model's 30-second window starts.
+  const [audioStart, setAudioStart] = useState(0);
   const pickSlice = useCallback(
     (key, value) => setSliceWanted((w) => ({ ...w, [key]: value })),
     [],
@@ -1163,7 +1171,12 @@ export function App() {
       action(() =>
         api("run", {
           prompt: mediaFile.name.slice(0, 160) || mediaTask,
-          media: { base64: mediaFile.base64 },
+          media: {
+            base64: mediaFile.base64,
+            ...(mediaTask === "audio" && audioStart > 0
+              ? { start: audioStart }
+              : {}),
+          },
           modules: capturePaths,
           elements,
         }),
@@ -1599,17 +1612,50 @@ export function App() {
               : "Prompt"}
         </label>
         {mediaTask ? (
-          <input
-            id="prompt"
-            key={mediaTask}
-            type="file"
-            accept={
-              mediaTask === "image"
-                ? "image/png,image/jpeg,image/webp"
-                : ".wav,.flac,.ogg,.mp3,audio/*"
-            }
-            onChange={(e) => action(() => pickMedia(e.target.files?.[0]))}
-          />
+          <div className="media-input">
+            <input
+              id="prompt"
+              key={`${mediaTask}-${mediaFile?.name ?? ""}`}
+              type="file"
+              accept={
+                mediaTask === "image"
+                  ? "image/png,image/jpeg,image/webp"
+                  : ".wav,.flac,.ogg,.mp3,audio/*"
+              }
+              onChange={(e) => action(() => pickMedia(e.target.files?.[0]))}
+            />
+            {mediaTask === "audio" && (
+              <>
+                <AudioRecorder
+                  disabled={busy}
+                  onRecorded={(file) => action(() => pickMedia(file))}
+                  onError={setError}
+                />
+                {mediaFile?.task === "audio" && (
+                  <span className="media-chosen" title={mediaFile.name}>
+                    {mediaFile.name}
+                  </span>
+                )}
+                <label
+                  className="media-start"
+                  title="Where the model's 30-second window starts in the file"
+                >
+                  Start at
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={audioStart}
+                    onChange={(e) =>
+                      setAudioStart(Math.max(0, Number(e.target.value) || 0))
+                    }
+                    aria-label="Start time in seconds"
+                  />
+                  s
+                </label>
+              </>
+            )}
+          </div>
         ) : (
           <input
             id="prompt"

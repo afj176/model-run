@@ -4933,6 +4933,62 @@ i.after {
   outline-offset: -2px;
 }
 
+/* ---- Audio input: a file, a recording, and where the window starts ---- */
+.media-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.media-input input[type="file"] {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.media-chosen {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--c-2a2452);
+}
+.media-start input {
+  width: 72px;
+  padding: 6px 8px !important;
+  font-size: 13px !important;
+}
+.record-button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  gap: 6px;
+  font-size: 13px;
+}
+.record-button.recording {
+  background: var(--coral) !important;
+  border-color: var(--coral) !important;
+  color: #fff !important;
+  animation: record-pulse 1.2s ease-in-out infinite;
+}
+@keyframes record-pulse {
+  50% {
+    box-shadow: 0 0 0 6px #ff3d8f33;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .record-button.recording {
+    animation: none;
+  }
+}
+
 /* ---- The prompt ribbon: every token as a column, a reading window drawn in full ---- */
 .ribbon {
   display: grid;

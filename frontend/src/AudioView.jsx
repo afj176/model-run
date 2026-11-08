@@ -146,6 +146,8 @@ export default function AudioView({ trace, stageLayer = null, onLayer }) {
     if (tokens[row]) setPicked(row);
   };
   const ticks = Math.min(6, Math.max(1, Math.floor(view.seconds)));
+  // The axis counts from where the window starts in the file, not from the window's own start.
+  const offset = trace?.input_media?.start_seconds || 0;
   const playhead = `${(time / view.seconds) * 100}%`;
   return (
     <div className="audio-view">
@@ -153,8 +155,13 @@ export default function AudioView({ trace, stageLayer = null, onLayer }) {
         <h2>
           What it heard
           <small>
-            {view.seconds.toFixed(1)} s · log-mel input · measured decoder
-            attention
+            {trace?.input_media?.source_seconds !== undefined &&
+            (trace.input_media.start_seconds ||
+              trace.input_media.used_seconds <
+                trace.input_media.source_seconds - 1e-3)
+              ? `${view.seconds.toFixed(1)} s of ${trace.input_media.source_seconds} s, from ${trace.input_media.start_seconds || 0} s`
+              : `${view.seconds.toFixed(1)} s`}{" "}
+            · log-mel input · measured decoder attention
           </small>
         </h2>
         {view.audio && (
@@ -259,7 +266,9 @@ export default function AudioView({ trace, stageLayer = null, onLayer }) {
         <span />
         <div className="audio-axis" aria-hidden="true">
           {Array.from({ length: ticks + 1 }, (_, i) => (
-            <span key={i}>{((i / ticks) * view.seconds).toFixed(1)} s</span>
+            <span key={i}>
+              {(offset + (i / ticks) * view.seconds).toFixed(1)} s
+            </span>
           ))}
         </div>
       </div>
