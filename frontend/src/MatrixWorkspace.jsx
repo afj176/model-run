@@ -16,6 +16,7 @@ import MatrixScene from "./MatrixScene";
 import TokenBarcode from "./TokenBarcode";
 import AttentionArcs from "./AttentionArcs";
 import WeatherMap from "./WeatherMap";
+import HeadCensus from "./HeadCensus";
 import { extractMatrix, tokenGridEvent } from "./matrixData";
 import {
   ablationStory,
@@ -893,6 +894,17 @@ export default function MatrixWorkspace({
             </div>
           </section>
         ) : null}
+        {attention && (
+          <HeadCensus
+            trace={trace}
+            layer={trace.layer}
+            head={trace.head_mean ? null : trace.head}
+            onPick={(l, h) => {
+              if (l === trace.layer) onPickHead?.(h);
+              else onPickLayer?.(l, h);
+            }}
+          />
+        )}
         {profile && (
           <section className="matrix-insight" aria-label="Head insight">
             <h3>

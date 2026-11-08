@@ -1676,3 +1676,91 @@ button.matrix-dot:hover i {
     rgb(15, 159, 134)
   );
 }
+
+/* ---- Head census: every head of the capture on one card ---- */
+.head-census {
+  margin: 0 0 14px;
+}
+.head-census h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.head-census h3 small {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.head-census-grid {
+  display: grid;
+  gap: 2px;
+  align-items: stretch;
+}
+.head-census-layer {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+.head-census-layer.current {
+  color: #ff3d8f;
+  font-weight: 700;
+}
+.head-census-cell {
+  position: relative;
+  min-height: 0;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 9px;
+  color: var(--c-f5f1ff);
+}
+.head-census-cell.mean {
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.head-census-cell.picked {
+  outline: 2px solid #ff3d8f;
+  outline-offset: 0;
+  z-index: 1;
+}
+.head-census-cell i {
+  display: block;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.head-census-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.head-census-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+.head-census-note {
+  margin-left: auto;
+}
+.head-census .text-button {
+  display: inline;
+  min-height: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--indigo);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
