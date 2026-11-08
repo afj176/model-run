@@ -84,18 +84,76 @@ def _fresh(prompt, base):
     return f"{base}{n}"
 
 
+# Nodes that hand a string on unchanged, and the input it arrives on.
+PASS_THROUGH = {"PreviewAny": "source", "Reroute": "", "PrimitiveStringMultiline": "value", "PrimitiveString": "value"}
+TEXT_INPUTS = ("text", "prompt", "string", "value")
+
+
+def _text_source(prompt, value, depth=8):
+    """Where the text that reaches an input is written: (node id, input name) of the literal string,
+    following links through pass-through nodes and the branch a switch has chosen. None when the
+    text is made by a node (a language model, say) or the chain cannot be read."""
+    for _ in range(depth):
+        if not _is_link(value) or value[0] not in prompt:
+            return None
+        node_id = value[0]
+        inputs = prompt[node_id].get("inputs", {})
+        kind = prompt[node_id].get("class_type", "")
+        if kind == "ComfySwitchNode":
+            branch = "on_true" if inputs.get("switch") else "on_false"
+            value = inputs.get(branch)
+            if isinstance(value, str):
+                return node_id, branch
+            continue
+        name = PASS_THROUGH.get(kind)
+        if name is None:
+            links = [v for v in inputs.values() if _is_link(v)]
+            name = next((k for k, v in inputs.items() if _is_link(v)), "") if len(links) == 1 and len(inputs) == 1 else None
+        if name is None:
+            return None
+        if not name:
+            links = [v for v in inputs.values() if _is_link(v)]
+            if len(links) != 1:
+                return None
+            value = links[0]
+            continue
+        value = inputs.get(name)
+        if isinstance(value, str):
+            return node_id, name
+    return None
+
+
 def _positive_text(prompt, link):
-    """The node holding the text behind a sampler's positive conditioning, a few steps back at most."""
+    """The node holding the text behind a sampler's positive conditioning, a few steps back at most.
+
+    When the encoder's text comes down a link, the literal it leads to is the place: through a
+    preview or a primitive, and down the branch a switch is set to, so the prompt reaches the
+    sampler the way the workflow is wired today."""
     current = link
     for _ in range(8):
         if not _is_link(current) or current[0] not in prompt:
             return None
         node = prompt[current[0]]
         inputs = node.get("inputs", {})
-        if isinstance(inputs.get("text"), str):
-            return current[0], "text"
-        if isinstance(inputs.get("prompt"), str):
-            return current[0], "prompt"
+        for key in ("text", "prompt"):
+            if isinstance(inputs.get(key), str):
+                return current[0], key
+            if _is_link(inputs.get(key)) and _is_link(inputs.get("clip")):
+                return _text_source(prompt, inputs[key])
+        current = inputs.get("conditioning") or inputs.get("positive")
+    return None
+
+
+def _encoder(prompt, link):
+    """The text encoder behind a sampler's positive conditioning: (node id, the input its text arrives on), or None."""
+    current = link
+    for _ in range(8):
+        if not _is_link(current) or current[0] not in prompt:
+            return None
+        inputs = prompt[current[0]].get("inputs", {})
+        if _is_link(inputs.get("clip")):
+            key = next((k for k in ("text", "prompt") if isinstance(inputs.get(k), str) or _is_link(inputs.get(k))), None)
+            return (current[0], key) if key else None
         current = inputs.get("conditioning") or inputs.get("positive")
     return None
 
@@ -204,11 +262,13 @@ def instrument(source, settings=None):
                                "inputs": {"model": model, "modules": "", "max_calls": capture_limits.get("layer_calls"), "elements": 1024, "output_selectors": "{}",
                                           "attention_block": "auto", "attention_grid": 32, "prompt": text if isinstance(text, str) else "",
                                           "denoising_views": True, "ablate_tokens": ""}}
-            # Word labels for the attention maps come from the text encoder that read the prompt.
-            located = _positive_text(prompt, node.get("inputs", {}).get("positive"))
-            clip = prompt[located[0]]["inputs"].get("clip") if located else None
-            if _is_link(clip):
-                prompt[observe]["inputs"]["clip"] = clip
+            # Word labels for the attention maps come from the text encoder that read the prompt, and
+            # from the text it was given: a literal, or the link that brings it (a rewriter's output, say).
+            encoder = _encoder(prompt, node.get("inputs", {}).get("positive"))
+            if encoder:
+                inputs = prompt[encoder[0]]["inputs"]
+                prompt[observe]["inputs"]["clip"] = inputs["clip"]
+                prompt[observe]["inputs"]["prompt"] = inputs[encoder[1]]
             observers[key] = observe
             changes.append(f"Observe the model of {node['class_type']} ({node_id})")
         node["inputs"]["model"] = [observers[key], 0]

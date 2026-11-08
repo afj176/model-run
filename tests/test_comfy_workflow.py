@@ -160,6 +160,35 @@ class Instrumenting(unittest.TestCase):
         self.assertEqual((prompt["5"]["inputs"]["seed"], prompt["5"]["inputs"]["steps"]), (7, 4))
         self.assertEqual((prompt["4"]["inputs"]["width"], prompt["4"]["inputs"]["height"]), (640, 640))
 
+    def test_a_prompt_behind_a_switch_lands_on_the_branch_in_use(self):
+        """A rewriter workflow: the encoder's text comes through a preview from a switch between a
+        literal and a language model's output. The prompt goes where the sampler will read it."""
+        graph = {
+            "clip": {"class_type": "CLIPLoader", "inputs": {}},
+            "llm_clip": {"class_type": "CLIPLoader", "inputs": {}},
+            "model": {"class_type": "UNETLoader", "inputs": {}},
+            "rewrite": {"class_type": "TextGenerate", "inputs": {"clip": ["llm_clip", 0], "prompt": "old words", "max_length": 64}},
+            "switch": {"class_type": "ComfySwitchNode", "inputs": {"switch": False, "on_true": ["rewrite", 0], "on_false": "a greyscale portrait"}},
+            "preview": {"class_type": "PreviewAny", "inputs": {"source": ["switch", 0]}},
+            "encode": {"class_type": "TextEncodeQwenImage21", "inputs": {"clip": ["clip", 0], "prompt": ["preview", 0], "negative_prompt": ""}},
+            "sampler": {"class_type": "KSampler", "inputs": {"model": ["model", 0], "positive": ["encode", 0], "negative": ["encode", 1], "seed": 1, "steps": 4}},
+        }
+        self.assertEqual(read_settings(graph)["prompt"], "a greyscale portrait")
+        done = instrument(graph, {"prompt": "dogs on the bridge"})
+        prompt = done["prompt"]
+        self.assertEqual(prompt["switch"]["inputs"]["on_false"], "dogs on the bridge")
+        self.assertEqual(prompt["rewrite"]["inputs"]["prompt"], "old words")
+        self.assertIn("Set the positive prompt", done["changes"])
+        observe = next(n for n in prompt.values() if n["class_type"] == "ModelRunObserve")
+        self.assertEqual(observe["inputs"]["clip"], ["clip", 0])
+        self.assertEqual(observe["inputs"]["prompt"], ["preview", 0])
+        # With the switch on, the language model's prompt is the one to set.
+        graph["switch"]["inputs"]["switch"] = True
+        self.assertEqual(read_settings(graph)["prompt"], "old words")
+        prompt = instrument(graph, {"prompt": "dogs on the bridge"})["prompt"]
+        self.assertEqual(prompt["rewrite"]["inputs"]["prompt"], "dogs on the bridge")
+        self.assertEqual(prompt["switch"]["inputs"]["on_false"], "a greyscale portrait")
+
     def test_generate_text_becomes_model_runs(self):
         source = {"1": {"class_type": "CLIPLoader", "inputs": {"clip_name": "g.safetensors"}},
                   "2": {"class_type": "TextGenerate", "inputs": {"clip": ["1", 0], "prompt": "hi", "max_length": 99, "sampling_mode": "on",
