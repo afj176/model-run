@@ -208,7 +208,9 @@ export default function MatrixWorkspace({
   const rowIndex = rowOffset + selected.row;
   const colIndex = colOffset + selected.col;
   // The prompt ribbon and this stage select the same token: a pooled attention row is a block of tokens.
+  // Each side remembers what it last pushed, so an echo never comes back as a new choice.
   const ranges = attention ? trace?.pooled?.ranges : null;
+  const linked = Boolean(ribbon?.tokens?.length);
   const rowOfToken = (t) =>
     ranges
       ? Math.max(
@@ -217,16 +219,22 @@ export default function MatrixWorkspace({
         )
       : t;
   const tokenOfRow = (r) => (ranges ? (ranges[r]?.[0] ?? r) : r);
+  const pushedToken = useRef(null);
   useEffect(() => {
-    if (!data || ribbon?.token === null || ribbon?.token === undefined) return;
-    const row = rowOfToken(ribbon.token);
+    if (!linked || !data) return;
+    const token = ribbon.token;
+    if (token === null || token === undefined || token === pushedToken.current)
+      return;
+    const row = rowOfToken(token);
     if (row !== rowIndex && row < data.dimensions[0]) pickCell(row, colIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ribbon?.token]);
   useEffect(() => {
-    if (!data || !ribbon?.onPick) return;
+    if (!linked || !data || !ribbon?.onPick) return;
     const token = tokenOfRow(rowIndex);
-    if (token !== ribbon.token) ribbon.onPick(token);
+    if (token === ribbon.token) return;
+    pushedToken.current = token;
+    ribbon.onPick(token);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowIndex]);
   const rowToken = labelRow(rowIndex);

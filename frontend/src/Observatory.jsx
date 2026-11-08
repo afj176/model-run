@@ -2493,7 +2493,7 @@ export function App() {
         </div>
       )}
       {/* The replay drives the visualizer, so it sits right under it. */}
-      {view !== "matrix" && view !== "compare" && (
+      {view !== "compare" && (
         <footer className="timeline panel">
           <Button
             icon={playing ? Pause : Play}
