@@ -4937,6 +4937,18 @@ i.after {
 .input-bar .take-card {
   grid-column: 2 / 4;
 }
+/* The prompt bar sizes its own buttons; the card's are their own shapes. */
+.input-bar .take-card button {
+  height: auto;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.input-bar .take-card .take-button {
+  width: 76px;
+  height: 76px;
+  aspect-ratio: 1;
+  flex: none;
+}
 .take-card {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr) 270px;
