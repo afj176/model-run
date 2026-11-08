@@ -44,6 +44,7 @@ import CrossAttention from "./CrossAttention";
 import {
   Denoising,
   FeatureMaps,
+  ImageProgress,
   SourceFigures,
   TextEncoderPanel,
 } from "./ComfyPanels";
@@ -2587,6 +2588,18 @@ export function App() {
                 onPath={(path) => jumpTo((e) => e.module === path)}
               />,
             );
+          const imageRun =
+            Boolean(trace?.denoising?.steps?.length) ||
+            (Boolean(trace?.cross_attention) && !audioTrace);
+          if (imageRun)
+            panels.push(
+              <ImageProgress
+                key="made"
+                trace={trace}
+                call={replayCall}
+                onCall={goToCall}
+              />,
+            );
           if (trace?.denoising?.steps?.length)
             panels.push(
               <Denoising
@@ -2641,6 +2654,21 @@ export function App() {
                     ? "Results from Model Run's nodes appear here while ComfyUI runs."
                     : "After a Run, what the model predicted and what it wrote appear here. Earlier runs stay in Capture history until the app restarts."}
                 </p>
+              </div>
+            );
+          // An image run reads top to bottom: what it made, how it came out of the noise, where the prompt was read.
+          if (imageRun)
+            return (
+              <div className="output-stack image-run">
+                {panels.map((panel) => (
+                  <ErrorBoundary
+                    key={panel.key}
+                    label="this result panel"
+                    resetKey={traceId}
+                  >
+                    {panel}
+                  </ErrorBoundary>
+                ))}
               </div>
             );
           const active =

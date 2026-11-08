@@ -50,6 +50,134 @@ function StepBars({ title, values, picked, onPick, labels }) {
   );
 }
 
+/**
+ * The image the run made, with its progress: a strip of every step's estimate ends at the final
+ * decode, and the large picture is whichever one is chosen. Follows the replay's denoiser call.
+ */
+export function ImageProgress({ trace, call = null, onCall }) {
+  const steps = (trace?.denoising?.steps || []).filter(
+    (s) => s.images?.estimate,
+  );
+  const final =
+    trace?.preview?.mime === "image/png"
+      ? `data:image/png;base64,${trace.preview.base64}`
+      : null;
+  // The last position is the final image; before it, each recorded step's estimate.
+  const last = steps.length;
+  const [position, setPosition] = useState(last);
+  // The replay's call moves this only when it changes after the run opens; a new run starts at the final image.
+  const seen = useRef(call);
+  useEffect(() => {
+    setPosition(steps.length);
+    seen.current = call;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trace?.id, steps.length]);
+  useEffect(() => {
+    if (call === seen.current) return;
+    seen.current = call;
+    if (call === null || !steps.length) return;
+    let found = -1;
+    steps.forEach((s, i) => {
+      if (s.index <= call) found = i;
+    });
+    if (found >= 0 && found < steps.length - 1) setPosition(found);
+  }, [call, steps]);
+  if (!final && !steps.length) return null;
+  const atFinal = position >= last || !steps[position];
+  const shown = atFinal ? final : jpeg(steps[position].images.estimate);
+  const go = (next) => {
+    setPosition(next);
+    if (next < last) onCall?.(steps[next].index);
+  };
+  const size =
+    trace?.preview?.width && trace?.preview?.height
+      ? `${trace.preview.width} × ${trace.preview.height}`
+      : "";
+  return (
+    <div className="image-progress">
+      <div className="xattn-head">
+        <h2>
+          What it made
+          <small>
+            {atFinal
+              ? `the decoded image${size ? ` · ${size}` : ""}`
+              : `step ${steps[position].index + 1}${trace.denoising?.total_steps ? ` of ${trace.denoising.total_steps}` : ""} · the sampler's estimate of the final image`}
+          </small>
+        </h2>
+        {steps.length > 0 && (
+          <div className="denoising-controls">
+            <input
+              type="range"
+              aria-label="Step, ending at the final image"
+              min={0}
+              max={last}
+              value={Math.min(position, last)}
+              onChange={(e) => go(Number(e.target.value))}
+            />
+            <span>{atFinal ? "final" : `${steps[position].index + 1}`}</span>
+          </div>
+        )}
+      </div>
+      <div className="image-progress-body">
+        <SourceFigures trace={trace} />
+        <figure className="image-progress-main">
+          {shown ? (
+            <img
+              src={shown}
+              alt={
+                atFinal
+                  ? "The decoded image"
+                  : `Estimate at step ${steps[position].index + 1}`
+              }
+            />
+          ) : (
+            <div className="image-progress-missing">
+              The decoded image was not attached to this run. Add Model Run ·
+              Attach Output after your VAE Decode, or use Model Run's VAE
+              Decode, to keep it.
+            </div>
+          )}
+          <figcaption>
+            {atFinal ? (
+              <b>Final image</b>
+            ) : (
+              <b>Step {steps[position].index + 1}</b>
+            )}
+            {!atFinal && <span>drag to the end for the decoded image</span>}
+          </figcaption>
+        </figure>
+      </div>
+      {steps.length > 0 && (
+        <div className="image-progress-strip" role="list" aria-label="Steps">
+          {steps.map((s, i) => (
+            <button
+              key={s.index}
+              role="listitem"
+              className={i === position ? "picked" : ""}
+              title={`Step ${s.index + 1}: the estimate of the final image`}
+              onClick={() => go(i)}
+            >
+              <img src={jpeg(s.images.estimate)} alt="" />
+              <small>{s.index + 1}</small>
+            </button>
+          ))}
+          {final && (
+            <button
+              role="listitem"
+              className={`final ${atFinal ? "picked" : ""}`}
+              title="The decoded image"
+              onClick={() => go(last)}
+            >
+              <img src={final} alt="" />
+              <small>final</small>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The sampler's work at each step: the latent, the noise it predicts and where that leaves the image. */
 /** The pictures the run read, so what it made can be seen beside where it started. */
 export function SourceFigures({ trace }) {
