@@ -139,6 +139,7 @@ export default function TokenBarcode({
   selected,
   onPick,
   image = null,
+  window: win = null,
 }) {
   // An image layer: [prefix tokens, patch rows, patch columns]. Rows are patches, not words.
   const patchGrid = event?.patch_grid ?? null;
@@ -163,14 +164,29 @@ export default function TokenBarcode({
     return () => watch.disconnect();
   }, [model !== null]);
 
+  // The reading window: only its rows are drawn, each tall enough to read. Without one, every row.
+  const rowList = useMemo(() => {
+    if (!model) return [];
+    const all = Array.from({ length: model.rows }, (_, r) => r);
+    if (!win || patchGrid) return all;
+    return all.slice(
+      Math.max(0, win.start),
+      Math.max(0, Math.min(model.rows, win.start + win.size)),
+    );
+  }, [model, win, patchGrid]);
+  const rowOf = (k) => rowList[k];
+  const slotOf = (r) => rowList.indexOf(r);
+  const R = rowList.length || 1;
   const rowH = model
-    ? Math.max(patchGrid ? 2 : 5, Math.min(22, Math.floor(380 / model.rows)))
+    ? win && !patchGrid
+      ? Math.max(14, Math.min(24, Math.floor(380 / R)))
+      : Math.max(patchGrid ? 2 : 5, Math.min(22, Math.floor(380 / model.rows)))
     : 0;
   // Narrow screens give the stripes more of the width.
   const LABEL_W = width && width < 480 ? 72 : 104;
   const RMS_W = width && width < 480 ? 44 : 72;
   const plotW = Math.max(40, width - LABEL_W - RMS_W);
-  const height = model ? model.rows * rowH : 0;
+  const height = model ? R * rowH : 0;
   const colAt = (x) => Math.floor(((x - LABEL_W) / plotW) * (model?.cols ?? 0));
   const xOf = (c) => LABEL_W + (c / model.cols) * plotW;
   // Patches are labelled once per row of the image (as often as labels fit); tokens while they fit.
@@ -240,8 +256,9 @@ export default function TokenBarcode({
     const maxRms = mostOf(model.rms.filter(Number.isFinite), 1e-6);
     ctx.font = "12px Inter, system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    for (let r = 0; r < model.rows; r++) {
-      const y = r * rowH;
+    for (let k = 0; k < R; k++) {
+      const r = rowOf(k);
+      const y = k * rowH;
       ctx.drawImage(off, 0, r, px, 1, LABEL_W, y + gap / 2, plotW, rowH - gap);
       if (showLabel(r)) {
         ctx.fillStyle = r === selected?.row ? "#ffd3e6" : "#c9c1e6";
@@ -261,52 +278,84 @@ export default function TokenBarcode({
     // Outliers beyond the robust scale get a bright tick, so saturation never hides them.
     if (scale === "robust") {
       ctx.fillStyle = "#ffffff";
-      for (let r = 0; r < model.rows; r++)
-        for (let c = 0; c < model.cols; c++)
+      for (let k = 0; k < R; k++)
+        for (let r = rowOf(k), c = 0; c < model.cols; c++)
           if (isMassive(model.values[r * model.cols + c], model.rms[r]))
             ctx.fillRect(
               xOf(c) - 0.5,
-              r * rowH + gap / 2,
+              k * rowH + gap / 2,
               1.5,
               Math.max(2, (rowH - gap) * 0.35),
             );
     }
     // The part the 3D stage shows, and the selected cell.
     if (view) {
-      ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = "#ffffffb0";
-      ctx.lineWidth = 1;
-      const x0 = xOf(view.col0);
-      ctx.strokeRect(
-        x0 + 0.5,
-        view.row0 * rowH + 0.5,
-        Math.max(3, xOf(view.col0 + view.cols) - x0) - 1,
-        view.rows * rowH - 1,
-      );
-      ctx.setLineDash([]);
+      // The rows the 3D stage shows, as far as they are drawn here.
+      const first = rowList.findIndex((r) => r >= view.row0);
+      const last = rowList.findLastIndex((r) => r < view.row0 + view.rows);
+      if (first >= 0 && last >= first) {
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "#ffffffb0";
+        ctx.lineWidth = 1;
+        const x0 = xOf(view.col0);
+        ctx.strokeRect(
+          x0 + 0.5,
+          first * rowH + 0.5,
+          Math.max(3, xOf(view.col0 + view.cols) - x0) - 1,
+          (last - first + 1) * rowH - 1,
+        );
+        ctx.setLineDash([]);
+      }
     }
-    if (selected) {
+    if (selected && slotOf(selected.row) >= 0) {
       ctx.strokeStyle = "#ff4fa3";
       ctx.lineWidth = 2;
       const x = xOf(selected.col);
       ctx.strokeRect(
         x - 2,
-        selected.row * rowH,
+        slotOf(selected.row) * rowH,
         Math.max(4, plotW / model.cols + 3),
         rowH,
       );
     }
-  }, [model, width, height, rowH, plotW, scale, view, selected, stripes]);
+  }, [
+    model,
+    width,
+    height,
+    rowH,
+    plotW,
+    scale,
+    view,
+    selected,
+    stripes,
+    rowList,
+  ]);
 
   if (!model) return null;
+  if (win && !patchGrid && R === 0)
+    return (
+      <section className="token-barcode" aria-label="Every token by feature">
+        <header>
+          <div>
+            <h3>Every token × feature</h3>
+            <p>
+              This capture kept the features of the first {model.rows} tokens;
+              the ribbon's window starts at token {win.start}. Move the window
+              below token {model.rows}, or choose a larger capture size in
+              Settings and run again.
+            </p>
+          </div>
+        </header>
+      </section>
+    );
 
   function pointAt(e) {
     const b = canvas.current.getBoundingClientRect();
     const x = e.clientX - b.left,
       y = e.clientY - b.top;
-    const r = Math.floor(y / rowH);
-    if (x < LABEL_W || x >= LABEL_W + plotW || r < 0 || r >= model.rows)
-      return null;
+    const k = Math.floor(y / rowH);
+    if (x < LABEL_W || x >= LABEL_W + plotW || k < 0 || k >= R) return null;
+    const r = rowOf(k);
     const per = model.cols / plotW;
     const c0 = Math.floor((x - LABEL_W) * per);
     const c = per > 1 ? strongest(model, r, c0, Math.ceil(c0 + per)) : colAt(x);
@@ -350,7 +399,9 @@ export default function TokenBarcode({
           <p>
             {patchGrid
               ? `${patchGrid[1]} × ${patchGrid[2]} patches${patchGrid[0] ? ` and ${patchGrid[0] === 1 ? "the class token" : `${patchGrid[0]} other tokens`}` : ""}`
-              : `${model.rows} tokens`}{" "}
+              : win && R < model.rows
+                ? `tokens ${rowOf(0)}–${rowOf(R - 1)} of ${model.rows}, from the ribbon's window`
+                : `${model.rows} tokens`}{" "}
             · {model.cols.toLocaleString()}{" "}
             {subsampled
               ? `of ${event.source_shape.at(-1).toLocaleString()} features, evenly spaced`

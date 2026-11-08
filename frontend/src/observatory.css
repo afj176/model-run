@@ -4607,6 +4607,148 @@ i.after {
   color: var(--muted);
 }
 
+/* ---- The prompt ribbon: every token as a column, a reading window drawn in full ---- */
+.ribbon {
+  display: grid;
+  gap: 6px;
+  margin: -4px 0 12px;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ribbon-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ribbon-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ribbon-title small {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.ribbon-measure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ribbon-measure select {
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.ribbon-caption {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ribbon-window-label {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--ink);
+}
+.ribbon-window-label button {
+  min-height: 0;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+.ribbon-window {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+}
+.ribbon-token {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 7px 2px;
+  border: 0;
+  border-radius: 5px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px;
+  color: var(--c-f5f1ff);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  text-align: center;
+}
+.ribbon-token.picked {
+  outline: 2px solid #ff3d8f;
+  outline-offset: 1px;
+}
+.ribbon-segments {
+  display: flex;
+  gap: 2px;
+}
+.ribbon-segment {
+  flex: 1 1 0;
+  min-width: 2px;
+  min-height: 0;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--c-f5f1ff);
+  opacity: 0.75;
+}
+.ribbon-segment.shown {
+  opacity: 1;
+}
+.ribbon-segment.picked {
+  outline: 1.5px solid #ff3d8f;
+  outline-offset: 1px;
+  opacity: 1;
+}
+.ribbon-strip {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.ribbon-strip:focus-visible {
+  outline: 2px solid #ff3d8f;
+  outline-offset: 2px;
+}
+.ribbon-strip canvas {
+  display: block;
+}
+.ribbon-frame {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border: 2px solid #ff3d8f;
+  border-radius: 3px;
+  pointer-events: none;
+}
+.ribbon-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  pointer-events: none;
+}
+
 /* Colours the stylesheets name by their light value. Dark mode and the standalone host redefine them below. */
 :root {
   /* Tokens that are not a single colour's flip. */

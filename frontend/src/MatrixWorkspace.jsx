@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import MatrixScene from "./MatrixScene";
 import TokenBarcode from "./TokenBarcode";
+import AttentionArcs from "./AttentionArcs";
 import { extractMatrix, tokenGridEvent } from "./matrixData";
 import {
   ablationStory,
@@ -93,6 +94,7 @@ export default function MatrixWorkspace({
   head,
   setHead,
   startPanel = null,
+  ribbon = null,
 }) {
   const [rowOffset, setRowOffset] = useState(0),
     [colOffset, setColOffset] = useState(0);
@@ -203,6 +205,28 @@ export default function MatrixWorkspace({
   const colName = data ? axisWord(data.axes[1]) : "column";
   const rowIndex = rowOffset + selected.row;
   const colIndex = colOffset + selected.col;
+  // The prompt ribbon and this stage select the same token: a pooled attention row is a block of tokens.
+  const ranges = attention ? trace?.pooled?.ranges : null;
+  const rowOfToken = (t) =>
+    ranges
+      ? Math.max(
+          0,
+          ranges.findIndex(([a, b]) => t >= a && t < b),
+        )
+      : t;
+  const tokenOfRow = (r) => (ranges ? (ranges[r]?.[0] ?? r) : r);
+  useEffect(() => {
+    if (!data || ribbon?.token === null || ribbon?.token === undefined) return;
+    const row = rowOfToken(ribbon.token);
+    if (row !== rowIndex && row < data.dimensions[0]) pickCell(row, colIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ribbon?.token]);
+  useEffect(() => {
+    if (!data || !ribbon?.onPick) return;
+    const token = tokenOfRow(rowIndex);
+    if (token !== ribbon.token) ribbon.onPick(token);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowIndex]);
   const rowToken = labelRow(rowIndex);
   const colToken = labelCol(colIndex);
   // A token grid's columns are named by their feature number ("#35"), which says it all.
@@ -757,6 +781,21 @@ export default function MatrixWorkspace({
             }
           />
         )}
+        {attention && ribbon?.tokens?.length > 0 && (
+          <AttentionArcs
+            row={trace.values?.[rowIndex]}
+            query={rowIndex}
+            ranges={ranges}
+            tokens={ribbon.tokens}
+            window={ribbon.window}
+            onPick={(t) => pickCell(rowOfToken(t), colIndex)}
+            caption={
+              profile?.label
+                ? `${profile.label} (${trace.head_mean ? "head mean" : `H${trace.head}`})`
+                : ""
+            }
+          />
+        )}
         {tokenGrid && (
           <TokenBarcode
             event={event}
@@ -768,6 +807,7 @@ export default function MatrixWorkspace({
             }}
             selected={{ row: rowIndex, col: colIndex }}
             onPick={pickCell}
+            window={ribbon?.window}
           />
         )}
       </div>

@@ -76,6 +76,15 @@ import CaptureSize, {
   useRememberedCaptureSize,
 } from "./CaptureSize";
 import WorkflowBar from "./WorkflowBar";
+import PromptRibbon from "./PromptRibbon";
+import {
+  answerAttention,
+  attentionReceived,
+  clampWindow,
+  tokenNorms,
+  windowShowing,
+  WINDOW_SIZE,
+} from "./ribbonData";
 import {
   cancelPrompt,
   inputPreviewUrl,
@@ -564,6 +573,67 @@ export function App() {
         : withTokenWords(sliceEvent(rawEvent, sliceWanted), trace),
     [rawEvent, sliceWanted, view, trace],
   );
+  // The prompt ribbon: the whole prompt as a strip, a reading window the views under it share.
+  const moduleTrace =
+    trace?.kind === "pytorch_module_capture"
+      ? trace
+      : (companions.module ?? null);
+  const generationTrace =
+    trace?.kind === "generation_capture"
+      ? trace
+      : (companions.generation ?? null);
+  const promptTokens = useMemo(
+    () =>
+      (trace?.pooled
+        ? (moduleTrace?.tokens ?? generationTrace?.tokens ?? trace?.tokens)
+        : trace?.tokens) ?? [],
+    [trace, moduleTrace, generationTrace],
+  );
+  const [ribbonWindow, setRibbonWindow] = useState(null);
+  const [ribbonToken, setRibbonToken] = useState(null);
+  const [ribbonMeasure, setRibbonMeasure] = useState("size");
+  // A new prompt starts the window over; opening another part of the same run keeps it.
+  useEffect(() => {
+    setRibbonWindow((w) =>
+      clampWindow(w?.start ?? 0, WINDOW_SIZE, promptTokens.length),
+    );
+    setRibbonToken((t) => (t !== null && t < promptTokens.length ? t : null));
+  }, [promptTokens.length]);
+  const ribbonMeasures = useMemo(() => {
+    const n = promptTokens.length;
+    if (!n) return [];
+    const list = [];
+    const layerEvent = (moduleTrace?.events ?? []).find(
+      (e) => !e.part && layerOf(e.module) === layer && e.slices?.token_rms,
+    );
+    const norms = tokenNorms(layerEvent);
+    if (norms)
+      list.push({
+        key: "size",
+        label: `token size at L${layer}`,
+        values: norms,
+      });
+    const read = answerAttention(generationTrace?.steps, n);
+    if (read)
+      list.push({ key: "read", label: "read by the answer", values: read });
+    if (
+      trace?.kind === "attention_capture" &&
+      Array.isArray(viewTrace?.values)
+    ) {
+      const got = attentionReceived(viewTrace.values, trace.pooled, n);
+      if (got)
+        list.push({
+          key: "received",
+          label: `attention received · L${viewTrace.layer}${viewTrace.head_mean ? " head mean" : ` H${viewTrace.head}`}`,
+          values: got,
+        });
+    }
+    return list;
+  }, [promptTokens, moduleTrace, generationTrace, trace, viewTrace, layer]);
+  const pickRibbonToken = (index) => {
+    setRibbonToken(index);
+    setRibbonWindow((w) => windowShowing(index, w, promptTokens.length));
+  };
   const sliceNav = (
     <SliceNavigator event={event} wanted={sliceWanted} onChange={pickSlice} />
   );
@@ -1543,21 +1613,7 @@ export function App() {
                         ? "Runs through ComfyUI"
                         : "Tokens appear after a capture"}
           </span>
-          {/* A long prompt shows its first tokens here; every view still has all of them. */}
-          {trace?.tokens?.slice(0, 400).map((t, i) => (
-            <span
-              className="token"
-              key={i}
-              title={`Position ${i} · Token ID ${t.id}`}
-            >
-              {t.text || "[empty]"}
-            </span>
-          ))}
-          {trace?.tokens?.length > 400 && (
-            <span className="muted">
-              +{(trace.tokens.length - 400).toLocaleString()} more
-            </span>
-          )}
+          {/* The tokens themselves are on the prompt ribbon below, every one of them. */}
         </div>
         <Button
           icon={GearSix}
@@ -1592,6 +1648,18 @@ export function App() {
               setError(e.message),
             )
           }
+        />
+      )}
+      {promptTokens.length > 0 && view !== "compare" && (
+        <PromptRibbon
+          tokens={promptTokens}
+          measures={ribbonMeasures}
+          measure={ribbonMeasure}
+          onMeasure={setRibbonMeasure}
+          window={ribbonWindow}
+          onWindow={setRibbonWindow}
+          selected={ribbonToken}
+          onPick={pickRibbonToken}
         />
       )}
       {error && (
@@ -1642,6 +1710,12 @@ export function App() {
         <ErrorBoundary label="the tensor table" resetKey={traceId}>
           <MatrixWorkspace
             startPanel={startPanel}
+            ribbon={{
+              tokens: promptTokens,
+              window: ribbonWindow,
+              token: ribbonToken,
+              onPick: pickRibbonToken,
+            }}
             trace={viewTrace}
             event={event}
             sliceNav={sliceNav}
