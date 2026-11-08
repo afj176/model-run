@@ -78,7 +78,7 @@ import CaptureSize, {
 } from "./CaptureSize";
 import WorkflowBar from "./WorkflowBar";
 import PromptRibbon from "./PromptRibbon";
-import AudioRecorder from "./AudioRecorder";
+import AudioTakeCard from "./AudioTakeCard";
 import ResidualLadder from "./ResidualLadder";
 import { layerSummary, layerTokenGrid } from "./weatherData";
 import {
@@ -1611,51 +1611,27 @@ export function App() {
               ? "Audio"
               : "Prompt"}
         </label>
-        {mediaTask ? (
-          <div className="media-input">
-            <input
-              id="prompt"
-              key={`${mediaTask}-${mediaFile?.name ?? ""}`}
-              type="file"
-              accept={
-                mediaTask === "image"
-                  ? "image/png,image/jpeg,image/webp"
-                  : ".wav,.flac,.ogg,.mp3,audio/*"
-              }
-              onChange={(e) => action(() => pickMedia(e.target.files?.[0]))}
-            />
-            {mediaTask === "audio" && (
-              <>
-                <AudioRecorder
-                  disabled={busy}
-                  onRecorded={(file) => action(() => pickMedia(file))}
-                  onError={setError}
-                />
-                {mediaFile?.task === "audio" && (
-                  <span className="media-chosen" title={mediaFile.name}>
-                    {mediaFile.name}
-                  </span>
-                )}
-                <label
-                  className="media-start"
-                  title="Where the model's 30-second window starts in the file"
-                >
-                  Start at
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={audioStart}
-                    onChange={(e) =>
-                      setAudioStart(Math.max(0, Number(e.target.value) || 0))
-                    }
-                    aria-label="Start time in seconds"
-                  />
-                  s
-                </label>
-              </>
-            )}
-          </div>
+        {mediaTask === "audio" ? (
+          <AudioTakeCard
+            busy={busy}
+            start={audioStart}
+            onStart={setAudioStart}
+            heard={
+              trace?.input_media?.kind === "audio" ? trace.input_media : null
+            }
+            onFile={(file) =>
+              file ? action(() => pickMedia(file)) : setMediaFile(null)
+            }
+            onError={setError}
+          />
+        ) : mediaTask ? (
+          <input
+            id="prompt"
+            key={mediaTask}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) => action(() => pickMedia(e.target.files?.[0]))}
+          />
         ) : (
           <input
             id="prompt"
@@ -1669,7 +1645,10 @@ export function App() {
             maxLength={Math.max(8192, (limits?.prompt_tokens ?? 1024) * 8)}
           />
         )}
-        <div className="tokens">
+        <div
+          className="tokens"
+          style={mediaTask === "audio" ? { display: "none" } : undefined}
+        >
           <span className={busy ? "muted working" : "muted"}>
             {nativeQueued
               ? `${comfyProgress || "Running in ComfyUI"}…`

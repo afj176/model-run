@@ -32,3 +32,50 @@ test("a decoded buffer becomes a 16-bit mono WAV with a correct header", async (
   assert.equal(bytes.getInt16(48, true), -0.5 * 0x8000);
   assert.equal(bytes.getInt16(50, true), 0x7fff); // clipped, not wrapped
 });
+
+import { formatTime, peaksFromBuffer, windowOf } from "../src/audioData.js";
+
+test("times read as minutes and seconds, with tenths for short clips", () => {
+  assert.equal(formatTime(3.54, true), "0:03.5");
+  assert.equal(formatTime(3.54), "0:03");
+  assert.equal(formatTime(101.2), "1:41");
+  assert.equal(formatTime(NaN), "–");
+});
+
+test("the window a model hears is clamped to the file and says what it leaves out", () => {
+  assert.deepEqual(windowOf(0, 3.54), {
+    start: 0,
+    end: 3.54,
+    used: 3.54,
+    whole: true,
+    leftOut: [],
+  });
+  const w = windowOf(38, 101.2);
+  assert.equal(w.end, 68);
+  assert.equal(w.used, 30);
+  assert.equal(w.whole, false);
+  assert.deepEqual(w.leftOut, [
+    [0, 38],
+    [68, 101.2],
+  ]);
+  assert.equal(windowOf(500, 101.2).start < 101.2, true);
+  assert.equal(windowOf(90, 101.2).used.toFixed(1), "11.2");
+});
+
+test("peaks take the largest magnitude of any channel in each column", () => {
+  const peaks = peaksFromBuffer(
+    {
+      length: 8,
+      numberOfChannels: 2,
+      getChannelData: (c) =>
+        Float32Array.from(
+          c ? [0, 0, 0, 0, 0.9, 0, 0, 0] : [0.1, -0.5, 0, 0, 0, 0, 0, 0.2],
+        ),
+    },
+    4,
+  );
+  assert.deepEqual(
+    [...peaks].map((v) => Number(v.toFixed(2))),
+    [0.5, 0, 0.9, 0.2],
+  );
+});
