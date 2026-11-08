@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
 import {
   pct,
@@ -9,13 +9,90 @@ import {
 } from "./insights";
 import { CacheGrowth } from "./TextPanels";
 
+/** Answers longer than this collapse their sure stretches to plain text. */
+const COLLAPSE_AT = 120;
+const NEAR = 6;
+
+/** The model's confidence across the whole answer as one line, dips marked; a click picks a token. */
+function SurpriseLine({ steps, index, onPick, dips }) {
+  const box = useRef(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!box.current) return;
+    const watch = new ResizeObserver(([entry]) =>
+      setWidth(Math.floor(entry.contentRect.width)),
+    );
+    watch.observe(box.current);
+    return () => watch.disconnect();
+  }, []);
+  const H = 44,
+    PAD = 2;
+  const n = steps.length;
+  const x = (i) => PAD + ((i + 0.5) / n) * (width - 2 * PAD);
+  const y = (p) => PAD + (1 - p) * (H - 2 * PAD);
+  const path = steps
+    .map((s, i) => `${i ? "L" : "M"}${x(i)} ${y(s.probability)}`)
+    .join(" ");
+  const pickAt = (e) => {
+    const b = box.current.getBoundingClientRect();
+    const i = Math.floor(((e.clientX - b.left - PAD) / (width - 2 * PAD)) * n);
+    if (i >= 0 && i < n) onPick(i);
+  };
+  return (
+    <div className="surprise" ref={box}>
+      {width > 0 && (
+        <svg
+          width={width}
+          height={H}
+          role="img"
+          aria-label="Probability of each written token, in order"
+          onClick={pickAt}
+        >
+          <path
+            d={`${path} L${x(n - 1)} ${H} L${x(0)} ${H} Z`}
+            className="surprise-fill"
+          />
+          <path d={path} className="surprise-line" />
+          {dips.map((i) => (
+            <circle
+              key={i}
+              cx={x(i)}
+              cy={y(steps[i].probability)}
+              r={3}
+              className="surprise-dip"
+            />
+          ))}
+          {index !== null && (
+            <line
+              x1={x(index)}
+              x2={x(index)}
+              y1={0}
+              y2={H}
+              className="surprise-pick"
+            />
+          )}
+        </svg>
+      )}
+      <span className="surprise-axis">
+        <em>sure</em>
+        <em>
+          {n} tokens · click the line to pick a token; dots are the closest
+          calls
+        </em>
+      </span>
+    </div>
+  );
+}
+
 /** The model's response and, for each token it wrote, where that token came from. */
 export default function Response({ trace, doubtful = false }) {
   const steps = trace?.steps || [];
   const [picked, setPicked] = useState(null);
   const [showThinking, setShowThinking] = useState(true);
+  const [opened, setOpened] = useState(() => []);
   useEffect(() => {
     setPicked(null);
+    setOpened([]);
   }, [trace]);
   const story = useMemo(() => responseStory(trace), [trace]);
   const segments = useMemo(() => responseSegments(steps), [steps]);
@@ -37,6 +114,42 @@ export default function Response({ trace, doubtful = false }) {
   }
   const lens = step.lens || null;
   const layerCount = lens ? lens.chosen_probability_by_layer.length : 0;
+  const layersTotal =
+    steps.find((s) => s.lens)?.lens?.chosen_probability_by_layer?.length ?? 0;
+  // Where the model hesitated: the closest calls and every token under 30%.
+  const dips = useMemo(() => {
+    const set = new Set((story.closeCalls || []).map((c) => c.index));
+    steps.forEach((s, i) => {
+      if (s.probability < 0.3) set.add(i);
+    });
+    return [...set].sort((a, b) => a - b);
+  }, [steps, story]);
+  // How deep in the model each token was decided: 0 at the embeddings, 1 at the last layer.
+  const depthOf = (s) =>
+    s.lens && Number.isInteger(s.lens.settled_layer) && layersTotal > 1
+      ? s.lens.settled_layer / (layersTotal - 1)
+      : null;
+  const collapse = steps.length > COLLAPSE_AT;
+  const keep = useMemo(() => {
+    if (!collapse) return null;
+    const near = new Set();
+    const mark = (i) => {
+      for (
+        let k = Math.max(0, i - NEAR);
+        k <= Math.min(steps.length - 1, i + NEAR);
+        k++
+      )
+        near.add(k);
+    };
+    dips.forEach(mark);
+    mark(index);
+    if (segments.thinking) {
+      mark(segments.thinking[0]);
+      mark(segments.thinking[1]);
+    }
+    for (const [a, b] of opened) for (let k = a; k < b; k++) near.add(k);
+    return near;
+  }, [collapse, dips, index, segments, opened, steps.length]);
   const segmentOf = (i) =>
     segments.thinking && i >= segments.thinking[0] && i < segments.thinking[1]
       ? "thinking"
@@ -45,14 +158,46 @@ export default function Response({ trace, doubtful = false }) {
     <button
       key={i}
       role="listitem"
-      className={`response-token ${i === index ? "picked" : ""} ${s.probability < 0.3 ? "unsure" : ""}`}
-      style={{ "--p": s.probability }}
+      className={`response-token ${i === index ? "picked" : ""} ${s.probability < 0.3 ? "unsure" : ""} ${depthOf(s) !== null ? "deep" : ""}`}
+      style={{ "--p": s.probability, "--depth": depthOf(s) ?? 0 }}
       title={`token ${i}: “${tokenText(s.text)}” ${pct(s.probability)} · ${s.entropy_bits.toFixed(2)} bits${s.lens?.settled_layer !== undefined && s.lens?.settled_layer !== null ? ` · settled at ${s.lens.settled_layer === 0 ? "the embeddings" : `layer ${s.lens.settled_layer - 1}`}` : ""}`}
       onClick={() => setPicked(i)}
     >
       {s.text === "" ? "∅" : s.text}
     </button>
   );
+  /** Tokens from `from` to `to`: every chip, or, in a long answer, chips near the dips and plain text between. */
+  const renderRange = (from, to) => {
+    if (!keep)
+      return steps.slice(from, to).map((s, k) => tokenButton(s, from + k));
+    const out = [];
+    let i = from;
+    while (i < to) {
+      if (keep.has(i)) {
+        out.push(tokenButton(steps[i], i));
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < to && !keep.has(j)) j++;
+      const run = [i, j];
+      out.push(
+        <button
+          key={`run-${i}`}
+          className="response-run"
+          title={`${j - i} tokens the model was sure of (each at least 30%). Click to show them.`}
+          onClick={() => setOpened((o) => [...o, run])}
+        >
+          {steps
+            .slice(i, j)
+            .map((s) => s.text)
+            .join("")}
+        </button>,
+      );
+      i = j;
+    }
+    return out;
+  };
   return (
     <div className="response">
       <div className="prediction-head">
@@ -62,8 +207,7 @@ export default function Response({ trace, doubtful = false }) {
             {trace.decoding === "sampled"
               ? `sampled${trace.sampling?.temperature !== undefined ? ` at temperature ${trace.sampling.temperature}` : ""}`
               : "greedy"}{" "}
-            · {steps.length} token{steps.length === 1 ? "" : "s"} ·
-            stopped:{" "}
+            · {steps.length} token{steps.length === 1 ? "" : "s"} · stopped:{" "}
             {trace.stopped === "eos"
               ? "end of text"
               : trace.stopped.replace(/_/g, " ")}
@@ -85,13 +229,19 @@ export default function Response({ trace, doubtful = false }) {
       <p className="prediction-story">
         <Lightbulb size={16} weight="duotone" /> {story.text}
       </p>
+      <SurpriseLine
+        steps={steps}
+        index={index}
+        onPick={setPicked}
+        dips={dips}
+      />
       <div className="response-text" role="list" aria-label="Generated tokens">
         <span className="response-prompt">
           {(trace.tokens || []).map((t) => t.text).join("")}
         </span>
         {segments.thinking ? (
           <>
-            {steps.slice(0, segments.thinking[0]).map(tokenButton)}
+            {renderRange(0, segments.thinking[0])}
             <span className="response-segment thinking">
               <button
                 className="response-segment-toggle"
@@ -103,26 +253,29 @@ export default function Response({ trace, doubtful = false }) {
                 {showThinking ? "▾" : "▸"}
               </button>
               {showThinking &&
-                steps
-                  .slice(segments.thinking[0], segments.thinking[1])
-                  .map((s, k) => tokenButton(s, segments.thinking[0] + k))}
+                renderRange(segments.thinking[0], segments.thinking[1])}
             </span>
             {segments.closed && (
               <span className="response-segment answer">
                 <span className="response-segment-label">answer</span>
-                {steps
-                  .slice(segments.thinking[1])
-                  .map((s, k) => tokenButton(s, segments.thinking[1] + k))}
+                {renderRange(segments.thinking[1], steps.length)}
               </span>
             )}
           </>
         ) : (
-          steps.map(tokenButton)
+          renderRange(0, steps.length)
         )}
       </div>
       <p className="micro">
         Click a token. Shade is the probability the model gave it; tokens under
-        30% are outlined. The prompt is shown plain.
+        30% are outlined.
+        {layersTotal > 1
+          ? " The underline is how deep the token was decided: faint for one settled in the early layers, dark for one that only settled near the end."
+          : ""}
+        {collapse
+          ? " Long answer: stretches the model was sure of are shown as plain text; click one to open it."
+          : ""}{" "}
+        The prompt is shown plain.
         {segments.thinking
           ? " Thinking tokens are what the model wrote between its own <think> markers; they are its visible reasoning, not a hidden state."
           : ""}
