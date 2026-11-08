@@ -55,7 +55,18 @@ test("the word-by-call grid shares each call's text attention and skips padding 
     [0.222, 0.667, 0.111],
   );
   assert.equal(grid.cells[0][1], 1);
+  assert.equal(grid.rest, null);
   assert.equal(wordStepGrid([], labels), null);
+  // A long encoder prompt keeps only the words that matter, in prompt order, and folds the rest.
+  const long = wordStepGrid(
+    [{ denoiser_call: 0, token_mass: [0.1, 5, 0.1, 0.1, 3, 0.1] }],
+    null,
+    2,
+  );
+  assert.deepEqual(long.rows, [1, 4]);
+  assert.equal(long.total, 6);
+  assert.equal(long.rest.count, 4);
+  assert.ok(Math.abs(long.rest.shares[0] - 0.4 / 8.4) < 1e-9);
 });
 
 test("a head census profiles every kept head and falls back to the layer mean", () => {

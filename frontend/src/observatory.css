@@ -4828,6 +4828,16 @@ i.after {
 .word-steps-cell.column {
   box-shadow: inset 0 0 0 1px #ff3d8f80;
 }
+.word-steps-cell {
+  height: 14px;
+}
+.word-steps-label.rest,
+.word-steps-cell.rest {
+  opacity: 0.7;
+}
+.word-steps-label.rest {
+  font-style: italic;
+}
 .word-steps-axis {
   display: grid;
   font-family: Consolas, "Cascadia Mono", monospace;

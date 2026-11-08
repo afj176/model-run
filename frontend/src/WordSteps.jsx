@@ -32,7 +32,10 @@ export default function WordSteps({
       <h3>
         When each word shaped the output{" "}
         <small>
-          {grid.rows.length} words × {C} calls · share of the text attention
+          {grid.rest
+            ? `${grid.rows.length} of ${grid.total} words`
+            : `${grid.rows.length} words`}{" "}
+          × {C} calls · share of the text attention
         </small>
       </h3>
       <div
@@ -63,6 +66,26 @@ export default function WordSteps({
             ))}
           </div>
         ))}
+        {grid.rest && (
+          <div role="row" style={{ display: "contents" }}>
+            <span
+              className="word-steps-label rest"
+              role="rowheader"
+              title={`The ${grid.rest.count} other tokens together`}
+            >
+              {grid.rest.count} others
+            </span>
+            {grid.rest.shares.map((v, i) => (
+              <span
+                key={i}
+                role="gridcell"
+                className="word-steps-cell rest"
+                style={{ background: heat(Math.min(1, v / grid.peak)) }}
+                title={`call ${grid.calls[i]} · the ${grid.rest.count} other tokens together · ${(v * 100).toFixed(1)}%`}
+              />
+            ))}
+          </div>
+        )}
       </div>
       <div
         className="word-steps-axis"
@@ -77,7 +100,10 @@ export default function WordSteps({
       </div>
       <p className="micro">
         Each column is one recorded denoiser call; each cell is that word's
-        share of the attention the image paid to the text, over the peak.{" "}
+        share of the attention the image paid to the text, over the peak.
+        {grid.rest
+          ? ` Only the ${grid.rows.length} words that reach the largest share at some call have a row; the other ${grid.rest.count} are one row together.`
+          : ""}{" "}
         {mover && mover.swing > 0.05
           ? `“${label(mover.t)}” moves most: strongest at call ${grid.calls[mover.peakAt]}.`
           : ""}{" "}

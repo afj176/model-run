@@ -128,19 +128,6 @@ export default function CrossAttention({ trace, call = null, onCall }) {
           {section.skipped?.[0]?.reason}
         </p>
       )}
-      {events.length > 1 && (
-        <WordSteps
-          events={events}
-          labels={labels}
-          picked={eventIndex}
-          token={picked}
-          onPick={(i, t) => {
-            setEventIndex(i);
-            onCall?.(events[i]?.denoiser_call);
-            if (t !== null) setToken(t);
-          }}
-        />
-      )}
       {event && focus && (
         <>
           <p className="xattn-story">
@@ -236,6 +223,19 @@ export default function CrossAttention({ trace, call = null, onCall }) {
               </ol>
             </div>
           </div>
+          {events.length > 1 && (
+            <WordSteps
+              events={events}
+              labels={labels}
+              picked={eventIndex}
+              token={picked}
+              onPick={(i, t) => {
+                setEventIndex(i);
+                onCall?.(events[i]?.denoiser_call);
+                if (t !== null) setToken(t);
+              }}
+            />
+          )}
           <p className="micro">
             Probabilities are computed from the exact query and key tensors the
             attention kernel received, averaged over heads and area-pooled to
