@@ -77,6 +77,8 @@ import CaptureSize, {
 } from "./CaptureSize";
 import WorkflowBar from "./WorkflowBar";
 import PromptRibbon from "./PromptRibbon";
+import ResidualLadder from "./ResidualLadder";
+import { layerSummary, layerTokenGrid } from "./weatherData";
 import {
   answerAttention,
   attentionReceived,
@@ -630,6 +632,19 @@ export function App() {
     }
     return list;
   }, [promptTokens, moduleTrace, generationTrace, trace, viewTrace, layer]);
+  // Each layer's mean output size, as a share of the largest, for the layer rail's background.
+  const railLoad = useMemo(() => {
+    const summary = layerSummary(
+      layerTokenGrid(moduleTrace?.events ?? []),
+      "output",
+    );
+    const top = Math.max(1e-9, ...summary.map((s) => s.mean ?? 0));
+    return new Map(
+      summary
+        .filter((s) => s.mean !== null)
+        .map((s) => [s.layer, s.mean / top]),
+    );
+  }, [moduleTrace]);
   const pickRibbonToken = (index) => {
     setRibbonToken(index);
     setRibbonWindow((w) => windowShowing(index, w, promptTokens.length));
@@ -1918,6 +1933,12 @@ export function App() {
                   <dt>Model class</dt>
                   <dd>{trace?.model_class || "—"}</dd>
                 </dl>
+                <ResidualLadder
+                  events={moduleTrace?.events ?? []}
+                  tokens={promptTokens}
+                  layer={layer}
+                  onPick={(n) => goToLayer(n)}
+                />
                 <MetricsTable
                   trace={trace}
                   events={events}
@@ -2055,13 +2076,20 @@ export function App() {
                     {nodes.map((n, i) => (
                       <button
                         key={n.path}
-                        title={n.path}
+                        title={
+                          railLoad.has(layerOf(n.path))
+                            ? `${n.path} · output ${Math.round(railLoad.get(layerOf(n.path)) * 100)}% of the largest layer's`
+                            : n.path
+                        }
                         className={
                           n.path === selected ||
                           selected.startsWith(n.path + ".")
                             ? "selected"
                             : ""
                         }
+                        style={{
+                          "--load": railLoad.get(layerOf(n.path)) ?? 0,
+                        }}
                         onClick={() => choose(n.path)}
                       >
                         {railLabels[i]}
@@ -2536,6 +2564,11 @@ export function App() {
               <Response
                 key="response"
                 trace={responseTrace}
+                onRibbon={
+                  ribbonMeasures.some((m) => m.key === "read")
+                    ? () => setRibbonMeasure("read")
+                    : null
+                }
                 doubtful={
                   attentionPastAudio(audioTrace?.audio_view?.layers)?.doubtful
                 }

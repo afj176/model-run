@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
 import { crossAttentionStory, pct, pctFine, tokenText } from "./insights";
+import WordSteps from "./WordSteps";
 
 /** Where the prompt is read: measured image-to-text attention maps per token. */
 export default function CrossAttention({ trace, call = null, onCall }) {
@@ -126,6 +127,19 @@ export default function CrossAttention({ trace, call = null, onCall }) {
           No attention call matched {section.selection}.{" "}
           {section.skipped?.[0]?.reason}
         </p>
+      )}
+      {events.length > 1 && (
+        <WordSteps
+          events={events}
+          labels={labels}
+          picked={eventIndex}
+          token={picked}
+          onPick={(i, t) => {
+            setEventIndex(i);
+            onCall?.(events[i]?.denoiser_call);
+            if (t !== null) setToken(t);
+          }}
+        />
       )}
       {event && focus && (
         <>

@@ -85,7 +85,7 @@ function SurpriseLine({ steps, index, onPick, dips }) {
 }
 
 /** The model's response and, for each token it wrote, where that token came from. */
-export default function Response({ trace, doubtful = false }) {
+export default function Response({ trace, doubtful = false, onRibbon = null }) {
   const steps = trace?.steps || [];
   const [picked, setPicked] = useState(null);
   const [showThinking, setShowThinking] = useState(true);
@@ -229,6 +229,13 @@ export default function Response({ trace, doubtful = false }) {
       <p className="prediction-story">
         <Lightbulb size={16} weight="duotone" /> {story.text}
       </p>
+      {onRibbon && (
+        <p className="response-ribbon-link">
+          <button className="text-button" onClick={onRibbon}>
+            Colour the prompt ribbon by how much this answer read each token
+          </button>
+        </p>
+      )}
       <SurpriseLine
         steps={steps}
         index={index}
