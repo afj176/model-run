@@ -39,13 +39,13 @@ button {
   transition: background 0.15s;
 }
 button:hover:not(:disabled) {
-  background: #eee6f2;
-  border-color: #b4a4cf;
+  background: var(--c-eee6f2);
+  border-color: var(--c-b4a4cf);
 }
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid #9a87d8;
+  outline: 3px solid var(--c-9a87d8);
   outline-offset: 3px;
 }
 button:disabled {
@@ -61,7 +61,7 @@ button.primary,
 }
 input:not([type="checkbox"]):not([type="range"]),
 select {
-  background: #fffaf5;
+  background: var(--c-fffaf5);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 9px;
@@ -73,7 +73,7 @@ input[type="range"] {
   width: 100%;
   height: 6px;
   border-radius: 4px;
-  background: #ddd5e4;
+  background: var(--c-ddd5e4);
   cursor: pointer;
 }
 input[type="range"]::-webkit-slider-thumb {
@@ -82,7 +82,7 @@ input[type="range"]::-webkit-slider-thumb {
   height: 18px;
   border-radius: 50%;
   border: 2px solid var(--coral);
-  background: #fffaf5;
+  background: var(--c-fffaf5);
   box-shadow: 0 1px 4px #76618b22;
 }
 input[type="range"]::-moz-range-thumb {
@@ -90,7 +90,7 @@ input[type="range"]::-moz-range-thumb {
   height: 14px;
   border-radius: 50%;
   border: 2px solid var(--coral);
-  background: #fffaf5;
+  background: var(--c-fffaf5);
 }
 input[type="checkbox"] {
   accent-color: var(--indigo);
@@ -155,9 +155,8 @@ main {
   color: var(--c-3e365f);
 }
 .host-badge {
-  margin-left: auto;
   border-radius: 8px;
-  background: #f0e7de;
+  background: var(--c-f0e7de);
   padding: 9px 13px;
   font-size: 15px;
   white-space: nowrap;
@@ -240,7 +239,7 @@ main {
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
-  box-shadow: 0 1px 0 #ffffff inset;
+  box-shadow: 0 1px 0 var(--panel-sheen) inset;
 }
 .sidebar {
   max-height: 600px;
@@ -533,7 +532,7 @@ main {
 .metrics dt,
 .metrics dd {
   margin: 0;
-  border-bottom: 1px solid #ded6cf;
+  border-bottom: 1px solid var(--c-ded6cf);
   padding: 8px 0;
   overflow-wrap: anywhere;
 }
@@ -756,8 +755,8 @@ main {
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  border: 1px solid #df9c92;
-  background: #fbe5de;
+  border: 1px solid var(--c-df9c92);
+  background: var(--c-fbe5de);
   border-radius: 8px;
   margin-bottom: 12px;
   font-size: 12px;
@@ -806,7 +805,7 @@ main {
 }
 .component-row {
   display: flex;
-  border-bottom: 1px solid #e5ddd3;
+  border-bottom: 1px solid var(--c-e5ddd3);
   align-items: center;
 }
 .component-row button {
@@ -830,7 +829,7 @@ main {
   flex-shrink: 0;
 }
 .component-row.chosen {
-  background: #e7dff3;
+  background: var(--c-e7dff3);
 }
 .modal-backdrop {
   position: fixed;
@@ -845,7 +844,7 @@ main {
 }
 .modal {
   background: var(--paper);
-  border: 1px solid #c3b6cc;
+  border: 1px solid var(--c-c3b6cc);
   border-radius: 16px;
   box-shadow: 0 20px 80px #271c4633;
   width: min(850px, 100%);
@@ -920,7 +919,7 @@ main {
   font-size: 10px;
   max-height: 230px;
   overflow: auto;
-  background: #eee8df;
+  background: var(--c-eee8df);
   padding: 15px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1260,9 +1259,9 @@ main {
   font-size: 11px;
 }
 .scene-tools .camera-selected {
-  background: #eee7fa;
-  color: #483096;
-  border-color: #ae9dcb;
+  background: var(--c-eee7fa);
+  color: var(--c-483096);
+  border-color: var(--c-ae9dcb);
 }
 .component-shortcuts {
   display: flex;
@@ -1276,7 +1275,7 @@ main {
   min-height: 26px;
   padding: 4px 7px;
   font-size: 11px;
-  background: #f0e9f7;
+  background: var(--c-f0e9f7);
   border-color: transparent;
 }
 .inspector {
@@ -1294,8 +1293,8 @@ main {
   width: 32px;
   height: 18px;
   border-radius: 12px;
-  background: #d7d0ce;
-  border: 1px solid #c0b9bf;
+  background: var(--c-d7d0ce);
+  border: 1px solid var(--c-c0b9bf);
   position: relative;
   flex-shrink: 0;
 }
@@ -1392,7 +1391,7 @@ main {
 .brand h1 {
   font-size: 34px;
   letter-spacing: -1px;
-  color: #241c63;
+  color: var(--c-241c63);
 }
 .brand svg {
   color: var(--c-4a3bb3);
@@ -1409,7 +1408,7 @@ main {
   -webkit-text-fill-color: transparent;
 }
 .host-badge {
-  background: #e9e4f4;
+  background: var(--c-e9e4f4);
   border-radius: 10px;
   padding: 9px 14px;
   font-size: 15px;
@@ -1470,7 +1469,7 @@ main {
   padding: 8px 32px 8px 12px;
   border-radius: 9px;
   border: 1px solid var(--line);
-  background: #fffdfa;
+  background: var(--c-fffdfa);
   min-height: 40px;
   appearance: none;
   background-image:
@@ -1500,7 +1499,11 @@ main {
   font-size: 16px;
   font-weight: 700;
   border-radius: 10px;
-  background: linear-gradient(180deg, #5b48c9, var(--c-3f31a3)) !important;
+  background: linear-gradient(
+    180deg,
+    var(--c-5b48c9),
+    var(--c-3f31a3)
+  ) !important;
   box-shadow: 0 8px 18px #4a3bb340;
 }
 .input-bar {
@@ -1623,12 +1626,12 @@ main {
   color: var(--c-3f31a3);
 }
 .prediction-confidence.confident {
-  background: #d9f5ec;
-  color: #0a7f6a;
+  background: var(--c-d9f5ec);
+  color: var(--c-0a7f6a);
 }
 .prediction-confidence.undecided {
-  background: #ffe1ec;
-  color: #b4215a;
+  background: var(--c-ffe1ec);
+  color: var(--c-b4215a);
 }
 .prediction-confidence small {
   font-weight: 400;
@@ -1783,7 +1786,7 @@ main {
 .lens-detail-tokens span {
   padding: 2px 8px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--c-e3dbf5);
   font-family: Consolas, "Cascadia Mono", monospace;
   white-space: pre;
@@ -1888,7 +1891,7 @@ main {
   text-align: left;
 }
 .compare-table td.hot {
-  color: #b4215a;
+  color: var(--c-b4215a);
   font-weight: 700;
 }
 .compare-tokens {
@@ -1917,7 +1920,7 @@ main {
 .compare-tokens span {
   padding: 3px 9px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--c-e3dbf5);
   white-space: pre;
   font-family: Consolas, "Cascadia Mono", monospace;
@@ -1927,7 +1930,7 @@ main {
 }
 .compare-tokens span small {
   margin-left: 6px;
-  color: #b4215a;
+  color: var(--c-b4215a);
   font-family: inherit;
 }
 @media (max-width: 900px) {
@@ -2038,7 +2041,7 @@ main {
   border: 1px solid #0f9f8633;
   font-size: 12px;
   font-family: Consolas, "Cascadia Mono", monospace;
-  color: var(--c-1e1a46);
+  color: var(--heat-ink);
   background: color-mix(in srgb, #0f9f86 calc(var(--heat) * 85%), #f2efe4);
   cursor: pointer;
   white-space: pre;
@@ -2087,7 +2090,7 @@ main {
 }
 .xattn-rank b {
   text-align: right;
-  color: #0a7f6a;
+  color: var(--c-0a7f6a);
 }
 .xattn .micro {
   margin-top: 10px;
@@ -2206,7 +2209,7 @@ main {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--c-c9bdf0);
-  background: #fff;
+  background: var(--surface);
   color: var(--c-1e1a46);
 }
 .compare-variant button {
@@ -2288,16 +2291,16 @@ main {
   width: 18px;
   height: 18px;
   border-radius: 4px;
-  background: #d9f5ec;
+  background: var(--c-d9f5ec);
   font-size: 9px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #0a7f6a;
+  color: var(--c-0a7f6a);
 }
 .compare-lens span.differs {
-  background: #ffe1ec;
-  color: #b4215a;
+  background: var(--c-ffe1ec);
+  color: var(--c-b4215a);
 }
 .compare-strips {
   display: grid;
@@ -2387,7 +2390,7 @@ main {
   padding: 0 14px;
   border-radius: 10px;
   border: 1px solid var(--c-c9bdf0);
-  background: #fff;
+  background: var(--surface);
   color: var(--c-3f31a3);
   font-weight: 700;
   cursor: pointer;
@@ -2508,7 +2511,7 @@ main {
   border-radius: 5px;
   min-height: 0;
   cursor: pointer;
-  color: var(--c-1e1a46);
+  color: var(--heat-ink);
   background: color-mix(in srgb, #0f9f86 calc(var(--p) * 70%), #f2efe4);
 }
 .response-token.picked {
@@ -2588,8 +2591,8 @@ main {
 }
 .response-segment-label {
   cursor: default;
-  background: #d9f5ec;
-  color: #0a7f6a;
+  background: var(--c-d9f5ec);
+  color: var(--c-0a7f6a);
 }
 .response-forks {
   display: flex;
@@ -2606,7 +2609,7 @@ main {
   padding: 4px 10px;
   border-radius: 10px;
   border: 1px solid var(--c-e3dbf5);
-  background: #fff;
+  background: var(--surface);
   font-size: 12.5px;
   cursor: pointer;
   font-family: Consolas, "Cascadia Mono", monospace;
@@ -2619,7 +2622,7 @@ main {
 }
 .response-fork small {
   margin-left: 6px;
-  color: #b4215a;
+  color: var(--c-b4215a);
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -2842,7 +2845,10 @@ main {
   overflow: hidden;
   height: 96px;
   margin: 12px 0 4px;
-  background: linear-gradient(var(--line, #ddd6ea), var(--line, #ddd6ea))
+  background: linear-gradient(
+      var(--line, var(--c-ddd6ea)),
+      var(--line, var(--c-ddd6ea))
+    )
     center / 100% 1px no-repeat;
 }
 .embedding-values i {
@@ -2987,9 +2993,9 @@ main {
   gap: 6px;
   margin: 12px;
   padding: 16px;
-  border: 1px solid var(--line, #cfc5cb);
+  border: 1px solid var(--line, var(--c-cfc5cb));
   border-radius: 8px;
-  background: var(--surface, #fffaf4);
+  background: var(--surface, var(--c-fffaf4));
   color: var(--ink, var(--c-141537));
 }
 .view-error small {
@@ -3008,10 +3014,10 @@ main {
   max-height: 38vh;
 }
 .install-note {
-  color: #b3261e;
+  color: var(--c-b3261e);
 }
 .artifact small.install-note {
-  color: #b3261e;
+  color: var(--c-b3261e);
 }
 .install-have {
   font-size: 11px;
@@ -3020,7 +3026,7 @@ main {
 }
 .artifact span.install-have {
   margin: 0;
-  color: #0b7a66;
+  color: var(--c-0b7a66);
 }
 .install-count {
   margin: 8px 0;
@@ -3286,19 +3292,19 @@ button.feature-cell.active {
   --token: var(--c-4c409d);
 }
 .hue-1 {
-  --token: #0b7a66;
+  --token: var(--c-0b7a66);
 }
 .hue-2 {
-  --token: #b3541e;
+  --token: var(--c-b3541e);
 }
 .hue-3 {
-  --token: #a12c7b;
+  --token: var(--c-a12c7b);
 }
 .hue-4 {
-  --token: #1f6fb2;
+  --token: var(--c-1f6fb2);
 }
 .hue-5 {
-  --token: #6b6b12;
+  --token: var(--c-6b6b12);
 }
 .text-encoder-body {
   display: grid;
@@ -3465,7 +3471,7 @@ button.feature-cell.active {
   height: 5px;
 }
 i.before {
-  background: #a79ad6;
+  background: var(--c-a79ad6);
 }
 i.after {
   background: var(--indigo);
@@ -3693,10 +3699,10 @@ i.after {
   overflow-wrap: anywhere;
 }
 .workflow-files li.have {
-  color: #0b7a66;
+  color: var(--c-0b7a66);
 }
 .workflow-files li.blocked {
-  color: #b3261e;
+  color: var(--c-b3261e);
 }
 .workflow-action {
   flex: none;
@@ -3740,8 +3746,8 @@ i.after {
   white-space: nowrap;
 }
 .run-badge.here {
-  border-color: #0b7a66;
-  color: #0b7a66;
+  border-color: var(--c-0b7a66);
+  color: var(--c-0b7a66);
 }
 .library-toolbar button {
   display: inline-flex;
@@ -4021,9 +4027,9 @@ i.after {
   justify-content: space-between;
   margin: 4px 0 12px;
   padding: 12px 14px;
-  border: 1px solid #b9e3d9;
+  border: 1px solid var(--c-b9e3d9);
   border-radius: 12px;
-  background: #eefaf6;
+  background: var(--c-eefaf6);
 }
 .library-callout > div {
   display: flex;
@@ -4048,6 +4054,10 @@ i.after {
 /* Brand colours. Inside ComfyUI, Model Run keeps its violet; on its own it is slate and ocean, so the two never look alike.
    Data colours (the pink selection, teal values and the value ramps) are the same in both. */
 :root {
+  --c-b9b0dd: #b9b0dd;
+  --c-c7bbd5: #c7bbd5;
+  --c-c9c1e6: #c9c1e6;
+  --c-f5f1ff: #f5f1ff;
   --c-5a3fd6: #5a3fd6;
   --c-8a5bd8: #8a5bd8;
   --c-6b4fd6: #6b4fd6;
@@ -4078,8 +4088,6 @@ i.after {
   --c-ebe6f6: #ebe6f6;
   --c-d9d0e8: #d9d0e8;
   --c-c9bdf0: #c9bdf0;
-  --c-b9b0dd: #b9b0dd;
-  --c-c7bbd5: #c7bbd5;
   --c-eee7f3: #eee7f3;
   --c-f8f5ff: #f8f5ff;
   --c-cfc6e2: #cfc6e2;
@@ -4089,12 +4097,14 @@ i.after {
   --c-221b45: #221b45;
   --c-1a1437: #1a1437;
   --c-1e1a46: #1e1a46;
-  --c-c9c1e6: #c9c1e6;
-  --c-f5f1ff: #f5f1ff;
   --c-241d49: #241d49;
   --c-1e1738: #1e1738;
 }
 :root[data-host="standalone"] {
+  --c-b9b0dd: #a8c3cd;
+  --c-c7bbd5: #b8cbd2;
+  --c-c9c1e6: #b9d2db;
+  --c-f5f1ff: #eef8fb;
   --c-5a3fd6: #127a94;
   --c-8a5bd8: #2a93ad;
   --c-6b4fd6: #127a94;
@@ -4125,8 +4135,6 @@ i.after {
   --c-ebe6f6: #e2ecf0;
   --c-d9d0e8: #cddce3;
   --c-c9bdf0: #b9d3dc;
-  --c-b9b0dd: #a8c3cd;
-  --c-c7bbd5: #b8cbd2;
   --c-eee7f3: #e4eef1;
   --c-f8f5ff: #f7fbfc;
   --c-cfc6e2: #c2d3da;
@@ -4136,8 +4144,6 @@ i.after {
   --c-221b45: #132a33;
   --c-1a1437: #0f222b;
   --c-1e1a46: #12303b;
-  --c-c9c1e6: #b9d2db;
-  --c-f5f1ff: #eef8fb;
   --c-241d49: #142c36;
   --c-1e1738: #10242d;
   --paper: #eef3f5;
@@ -4147,6 +4153,31 @@ i.after {
   --line: #cddce3;
   --indigo: #127a94;
   --lilac: #e2ecf0;
+}
+
+.topbar > :nth-child(3) {
+  margin-left: auto;
+}
+.brand {
+  flex-shrink: 0;
+}
+.brand h1 {
+  white-space: nowrap;
+}
+.tagline {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-toggle {
+  margin-left: 12px;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
 }
 
 /* The header link back to ComfyUI, or to what ComfyUI unlocks. */
@@ -4574,4 +4605,196 @@ i.after {
   margin-top: 2px;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* Colours the stylesheets name by their light value. Dark mode and the standalone host redefine them below. */
+:root {
+  /* Tokens that are not a single colour's flip. */
+  --heat-ink: #1e1a46; /* text on the cream-to-teal heat chips, which keep their colour in both themes */
+  --panel-sheen: #ffffff;
+  --chip-null: #d2ccd3;
+  --chip-neg: #fbe0da;
+  --chip-pos: #d8eee5;
+  --c-0a7f6a: #0a7f6a;
+  --c-0b7a66: #0b7a66;
+  --c-1f6fb2: #1f6fb2;
+  --c-241c63: #241c63;
+  --c-3a3270: #3a3270;
+  --c-483096: #483096;
+  --c-5b48c9: #5b48c9;
+  --c-6b6b12: #6b6b12;
+  --c-777081: #777081;
+  --c-7d7694: #7d7694;
+  --c-9a87d8: #9a87d8;
+  --c-a12c7b: #a12c7b;
+  --c-a79ad6: #a79ad6;
+  --c-ae9dcb: #ae9dcb;
+  --c-b3261e: #b3261e;
+  --c-b3541e: #b3541e;
+  --c-b4215a: #b4215a;
+  --c-b4a4cf: #b4a4cf;
+  --c-b9e3d9: #b9e3d9;
+  --c-c0b9bf: #c0b9bf;
+  --c-c3b6cc: #c3b6cc;
+  --c-cfc5cb: #cfc5cb;
+  --c-d7d0ce: #d7d0ce;
+  --c-d9f5ec: #d9f5ec;
+  --c-ddd5e4: #ddd5e4;
+  --c-ddd6ea: #ddd6ea;
+  --c-ded6cf: #ded6cf;
+  --c-df9c92: #df9c92;
+  --c-e2f6ef: #e2f6ef;
+  --c-e5ddd3: #e5ddd3;
+  --c-e7dff3: #e7dff3;
+  --c-e7e0f0: #e7e0f0;
+  --c-e9e4f4: #e9e4f4;
+  --c-ebe5f2: #ebe5f2;
+  --c-eee6f2: #eee6f2;
+  --c-eee7fa: #eee7fa;
+  --c-eee8df: #eee8df;
+  --c-eefaf6: #eefaf6;
+  --c-f0e7de: #f0e7de;
+  --c-f0e9f7: #f0e9f7;
+  --c-fbe5de: #fbe5de;
+  --c-fbf9ff: #fbf9ff;
+  --c-ffe1ec: #ffe1ec;
+  --c-fffaf4: #fffaf4;
+  --c-fffaf5: #fffaf5;
+  --c-fffdfa: #fffdfa;
+}
+
+/* Dark mode. The 3D and matrix stages are already dark, so only the chrome, text and tints change;
+   data colours (the pink selection, teal values and the ramps) stay the same. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --panel-sheen: #ffffff12;
+  --chip-null: #3a3450;
+  --chip-neg: #4a2a26;
+  --chip-pos: #1e4a40;
+  --c-0a7f6a: #5fd6bb;
+  --c-0b7a66: #5fd6bb;
+  --c-141537: #e9e4f8;
+  --c-171440: #e9e4f8;
+  --c-1e1a46: #dcd7f2;
+  --c-1f6fb2: #72b6f0;
+  --c-241c63: #e4defa;
+  --c-2a2452: #d6cff0;
+  --c-2f2a55: #cfc8ea;
+  --c-3a3270: #d6cff0;
+  --c-3e365f: #b6aed6;
+  --c-3f31a3: #7b6be0;
+  --c-483096: #c9bdfa;
+  --c-4a3bb3: #8f80f2;
+  --c-4c3fb0: #8f80f2;
+  --c-4c409d: #9d8ff0;
+  --c-4d3cb0: #8f80f2;
+  --c-514a77: #aea6cf;
+  --c-5444ba: #8f80f2;
+  --c-5a3fd6: #9a86f5;
+  --c-5b48c9: #9585f2;
+  --c-6b4fd6: #9a86f5;
+  --c-6b6489: #a39bc4;
+  --c-6b6b12: #cbcb5c;
+  --c-746f83: #a39bc4;
+  --c-7560e0: #a090f5;
+  --c-777081: #a39bc4;
+  --c-7d7694: #a39bc4;
+  --c-8a5bd8: #a98af0;
+  --c-9a87d8: #a797f5;
+  --c-a12c7b: #ea86c9;
+  --c-a395a3: #4a4170;
+  --c-a79ad6: #6f62b8;
+  --c-ae9dcb: #5a4f8c;
+  --c-b3261e: #ff8a7a;
+  --c-b3541e: #f29a6c;
+  --c-b4215a: #ff7fb8;
+  --c-b4a4cf: #5a4f8c;
+  --c-b9e3d9: #1f5a4d;
+  --c-c0b9bf: #4a4170;
+  --c-c3b6cc: #3a3260;
+  --c-c3b8dd: #4e4480;
+  --c-c9bdf0: #4a3f85;
+  --c-cfc5cb: #322b56;
+  --c-cfc6e2: #3a3260;
+  --c-d7d0ce: #3a3260;
+  --c-d9d0e8: #322b56;
+  --c-d9f5ec: #163f37;
+  --c-ddd5e4: #3a3260;
+  --c-ddd6ea: #322b56;
+  --c-ded6cf: #332c55;
+  --c-df9c92: #7c3b33;
+  --c-e2f6ef: #163f37;
+  --c-e3dbf5: #2f2858;
+  --c-e5ddd3: #332c55;
+  --c-e7dff3: #2f285a;
+  --c-e7e0f0: #332c55;
+  --c-e9e4f4: #2a2446;
+  --c-ebe5f2: #332c55;
+  --c-ebe6f6: #2a2350;
+  --c-ece7fa: #2a2350;
+  --c-eee6f2: #2d2650;
+  --c-eee7f3: #2a2350;
+  --c-eee7fa: #2f285a;
+  --c-eee8df: #1f1a3a;
+  --c-eefaf6: #12302b;
+  --c-efe9ff: #221c42;
+  --c-f0e7de: #2a2446;
+  --c-f0e9f7: #2a2350;
+  --c-f3f0fa: #110e22;
+  --c-f6f2ff: #1e193a;
+  --c-f8f5ff: #191434;
+  --c-fbe5de: #3f1d19;
+  --c-fbf9ff: #1b1733;
+  --c-ffe1ec: #4b1c32;
+  --c-fffaf4: #1b1733;
+  --c-fffaf5: #1f1a3a;
+  --c-fffdfa: #1b1733;
+  --paper: var(--c-f3f0fa);
+  --surface: var(--c-fffdfa);
+  --ink: var(--c-171440);
+  --muted: var(--c-6b6489);
+  --line: var(--c-d9d0e8);
+  --indigo: var(--c-4a3bb3);
+  --lilac: var(--c-ebe6f6);
+}
+:root[data-theme="dark"][data-host="standalone"] {
+  --c-141537: #e3edf1;
+  --c-171440: #e3edf1;
+  --c-1e1a46: #a5c7d4;
+  --c-2a2452: #d2e1e8;
+  --c-2f2a55: #c9dae2;
+  --c-3e365f: #b1c8d2;
+  --c-3f31a3: #3fa6c2;
+  --c-4a3bb3: #4fb7d2;
+  --c-4c3fb0: #4fb7d2;
+  --c-4c409d: #4fb7d2;
+  --c-4d3cb0: #3fa6c2;
+  --c-514a77: #a8c0ca;
+  --c-5444ba: #4fb7d2;
+  --c-5a3fd6: #4fb7d2;
+  --c-6b4fd6: #4fb7d2;
+  --c-6b6489: #9db4bf;
+  --c-746f83: #9db4bf;
+  --c-7560e0: #6cc7df;
+  --c-8a5bd8: #6cc7df;
+  --c-a395a3: #47626d;
+  --c-c3b8dd: #45606b;
+  --c-c9bdf0: #45606b;
+  --c-cfc6e2: #2e4650;
+  --c-d9d0e8: #263a45;
+  --c-e3dbf5: #22363f;
+  --c-ebe6f6: #1d3039;
+  --c-ece7fa: #1d3039;
+  --c-eee7f3: #1d3039;
+  --c-efe9ff: #1a2d35;
+  --c-f3f0fa: #0c161b;
+  --c-f6f2ff: #172830;
+  --c-f8f5ff: #132129;
+  --paper: var(--c-f3f0fa);
+  --surface: var(--c-fffdfa);
+  --ink: var(--c-171440);
+  --muted: var(--c-6b6489);
+  --line: var(--c-d9d0e8);
+  --indigo: var(--c-4a3bb3);
+  --lilac: var(--c-ebe6f6);
 }

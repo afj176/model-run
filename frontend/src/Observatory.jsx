@@ -23,6 +23,8 @@ import {
   X,
   CaretRight,
   GearSix,
+  Moon,
+  Sun,
   Eye,
   Trash,
   Info,
@@ -35,6 +37,7 @@ import {
   PushPin,
 } from "@phosphor-icons/react";
 import Scene from "./Scene";
+import { currentTheme, setTheme, startTheme } from "./theme.js";
 import MatrixWorkspace, { mix } from "./MatrixWorkspace";
 import Prediction from "./Prediction";
 import CrossAttention from "./CrossAttention";
@@ -424,6 +427,9 @@ export function App() {
   useEffect(() => {
     if (state?.host) document.documentElement.dataset.host = state.host;
   }, [state?.host]);
+  const [theme, setThemeState] = useState(currentTheme);
+  // Follow the system setting while no theme is saved.
+  useEffect(() => startTheme(setThemeState), []);
   const [crossModule, setCrossModule] = useState("");
   const [valueIndex, setValueIndex] = useState(null);
   const [sliceWanted, setSliceWanted] = useState({});
@@ -437,6 +443,8 @@ export function App() {
   const [layerView, setLayerView] = useState(null);
   // A capture session: the companion traces produced by one Run (outputs, response, attention).
   const sessionRef = useRef(null);
+  // The stage's layer list: the layer being shown is kept in view as the replay moves.
+  const railRef = useRef(null);
   const [session, setSession] = useState(null);
   const [loadingName, setLoadingName] = useState("");
   const [companions, setCompanions] = useState({});
@@ -519,6 +527,25 @@ export function App() {
   }, [trace, headView, layerView]);
   const replayEvent =
     events[Math.min(eventIndex, Math.max(0, events.length - 1))];
+  const railLabels = useMemo(
+    () => layerLabels(nodes.map((x) => x.path)),
+    [nodes],
+  );
+  // Scroll the layer list itself, never the page, so the highlighted layer stays visible.
+  useEffect(() => {
+    const rail = railRef.current;
+    const chosen = rail?.querySelector("button.selected");
+    if (!rail || !chosen) return;
+    // The rail is positioned, so a button's offsetTop is measured from the rail's own top.
+    const top = chosen.offsetTop;
+    const bottom = top + chosen.offsetHeight;
+    if (top >= rail.scrollTop && bottom <= rail.scrollTop + rail.clientHeight)
+      return;
+    rail.scrollTo({
+      top: Math.max(0, top - (rail.clientHeight - chosen.offsetHeight) / 2),
+      behavior: playing ? "smooth" : "auto",
+    });
+  }, [selected, nodes, view, playing]);
   // The replay's layer is the attention layer shown, so playing walks the layers.
   useEffect(() => {
     if (trace?.kind !== "attention_capture") return;
@@ -1326,6 +1353,18 @@ export function App() {
             </button>
           )
         )}
+        <button
+          className="theme-toggle"
+          aria-label={
+            theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+          }
+          title={theme === "dark" ? "Light mode" : "Dark mode"}
+          onClick={() =>
+            setThemeState(setTheme(theme === "dark" ? "light" : "dark"))
+          }
+        >
+          {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+        </button>
       </header>
       <nav className="toolbar" aria-label="Workspace">
         <div className="toolbar-tabs">
@@ -1934,7 +1973,11 @@ export function App() {
                 </ErrorBoundary>
                 {sliceNav}
                 {nodes.length > 0 && (
-                  <div className="layer-rail" aria-label="Model components">
+                  <div
+                    className="layer-rail"
+                    aria-label="Model components"
+                    ref={railRef}
+                  >
                     {nodes.map((n, i) => (
                       <button
                         key={n.path}
@@ -1947,7 +1990,7 @@ export function App() {
                         }
                         onClick={() => choose(n.path)}
                       >
-                        {layerLabels(nodes.map((x) => x.path))[i]}
+                        {railLabels[i]}
                       </button>
                     ))}
                   </div>
@@ -2222,10 +2265,10 @@ export function App() {
                         style={{
                           background:
                             v === null
-                              ? "#d2ccd3"
+                              ? "var(--chip-null)"
                               : v < 0
-                                ? "#fbe0da"
-                                : "#d8eee5",
+                                ? "var(--chip-neg)"
+                                : "var(--chip-pos)",
                         }}
                       >
                         <small>{i}</small>

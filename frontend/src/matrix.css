@@ -514,7 +514,7 @@ button.matrix-dot:hover i {
   color: #fff;
 }
 .matrix-table td {
-  color: var(--c-141537);
+  color: var(--heat-ink);
   padding: 3px 5px;
   min-width: 44px;
   text-align: right;
@@ -531,7 +531,7 @@ button.matrix-dot:hover i {
 }
 .matrix-inspector {
   border: 1px solid var(--c-d9d0e8);
-  background: #fffdfa;
+  background: var(--c-fffdfa);
   border-radius: 18px;
   padding: 20px 22px 18px;
   overflow: auto;
@@ -546,7 +546,7 @@ button.matrix-dot:hover i {
   gap: 10px;
   color: var(--c-171440);
   padding-bottom: 14px;
-  border-bottom: 1px solid #e7e0f0;
+  border-bottom: 1px solid var(--c-e7e0f0);
 }
 .matrix-inspector h2 svg {
   color: var(--c-4c3fb0);
@@ -575,7 +575,7 @@ button.matrix-dot:hover i {
 .matrix-facts dd {
   margin: 0;
   padding: 7px 0;
-  border-bottom: 1px solid #ebe5f2;
+  border-bottom: 1px solid var(--c-ebe5f2);
   overflow-wrap: anywhere;
   display: flex;
   align-items: center;
@@ -592,8 +592,8 @@ button.matrix-dot:hover i {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 6px;
-  background: #d9f5ec;
-  color: #0a7f6a;
+  background: var(--c-d9f5ec);
+  color: var(--c-0a7f6a);
   font-weight: 700;
 }
 .matrix-facts .mint {
@@ -714,11 +714,11 @@ button.matrix-dot:hover i {
 .matrix-note {
   font-size: 11px;
   line-height: 1.5;
-  color: #777081;
+  color: var(--c-777081);
   margin: 10px 0 0;
 }
 .matrix-capture {
-  border-top: 1px solid #ebe5f2;
+  border-top: 1px solid var(--c-ebe5f2);
   margin-top: 14px;
   padding-top: 12px;
   display: flex;
@@ -745,7 +745,7 @@ button.matrix-dot:hover i {
   text-align: right;
   font-size: 12px;
   font-style: italic;
-  color: #7d7694;
+  color: var(--c-7d7694);
 }
 @media (max-width: 1250px) {
   .matrix-workspace {
@@ -895,7 +895,7 @@ button.matrix-dot:hover i {
   margin-top: 14px;
   padding: 12px 14px 14px;
   border-radius: 14px;
-  background: linear-gradient(180deg, var(--c-f6f2ff), #fbf9ff);
+  background: linear-gradient(180deg, var(--c-f6f2ff), var(--c-fbf9ff));
   border: 1px solid var(--c-e3dbf5);
 }
 .matrix-insight h3 {
@@ -934,14 +934,14 @@ button.matrix-dot:hover i {
   padding: 4px 9px;
   border-radius: 999px;
   background: var(--c-ece7fa);
-  color: #3a3270;
+  color: var(--c-3a3270);
   border: 0;
   min-height: 0;
   line-height: 1.2;
 }
 .matrix-chips button {
   cursor: pointer;
-  background: #e2f6ef;
+  background: var(--c-e2f6ef);
   color: #0a6f5d;
 }
 .matrix-chips button b {
@@ -986,7 +986,7 @@ button.matrix-dot:hover i {
 }
 .matrix-attends b {
   text-align: right;
-  color: #0a7f6a;
+  color: var(--c-0a7f6a);
 }
 .matrix-attribution {
   display: flex;
@@ -1001,7 +1001,7 @@ button.matrix-dot:hover i {
   padding: 4px 7px 3px;
   border-radius: 7px;
   font-size: 13px;
-  color: var(--c-1e1a46);
+  color: var(--heat-ink);
   background: color-mix(in srgb, #0f9f86 calc(var(--heat) * 85%), #f2efe4);
   border: 1px solid #0f9f8633;
 }
@@ -1021,7 +1021,7 @@ button.matrix-dot:hover i {
   align-items: center;
   gap: 3px;
   padding: 6px 4px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--c-e3dbf5);
   border-radius: 10px;
   min-height: 0;
@@ -1214,7 +1214,7 @@ button.matrix-dot:hover i {
 
 /* ---- Head ablation ---- */
 .matrix-insight-label.effect-decisive {
-  color: #b4215a;
+  color: var(--c-b4215a);
 }
 .matrix-insight-label.effect-negligible {
   color: var(--c-6b6489);
@@ -1268,13 +1268,13 @@ button.matrix-dot:hover i {
   background: linear-gradient(90deg, #ff9ec9, #ff3d8f);
 }
 .matrix-ablation-rank b {
-  color: #b4215a;
+  color: var(--c-b4215a);
 }
 .matrix-ablation-rank em {
   font-style: normal;
   font-size: 10px;
   font-weight: 700;
-  color: #b4215a;
+  color: var(--c-b4215a);
   text-transform: uppercase;
 }
 .matrix-ablation-actions {
@@ -1288,7 +1288,7 @@ button.matrix-dot:hover i {
   min-height: 34px;
   border-radius: 10px;
   border: 1px solid var(--c-c9bdf0);
-  background: #fff;
+  background: var(--surface);
   color: var(--c-3f31a3);
   font-weight: 600;
   font-size: 13px;
@@ -1304,8 +1304,8 @@ button.matrix-dot:hover i {
 .matrix-gallery-effect {
   padding: 1px 6px;
   border-radius: 999px;
-  background: #ffe1ec;
-  color: #b4215a !important;
+  background: var(--c-ffe1ec);
+  color: var(--c-b4215a) !important;
   font-weight: 700;
 }
 .matrix-gallery-effect.flips {
