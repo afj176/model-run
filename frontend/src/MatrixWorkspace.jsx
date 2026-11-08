@@ -15,6 +15,7 @@ import {
 import MatrixScene from "./MatrixScene";
 import TokenBarcode from "./TokenBarcode";
 import AttentionArcs from "./AttentionArcs";
+import WeatherMap from "./WeatherMap";
 import { extractMatrix, tokenGridEvent } from "./matrixData";
 import {
   ablationStory,
@@ -794,6 +795,19 @@ export default function MatrixWorkspace({
                 ? `${profile.label} (${trace.head_mean ? "head mean" : `H${trace.head}`})`
                 : ""
             }
+          />
+        )}
+        {!attention && ribbon?.tokens?.length > 0 && (
+          <WeatherMap
+            events={events}
+            tokens={ribbon.tokens}
+            window={ribbon.window}
+            layer={currentLayer ?? null}
+            token={ribbon.token}
+            onPick={(l, t) => {
+              onPickLayer?.(l);
+              ribbon.onPick?.(t);
+            }}
           />
         )}
         {tokenGrid && (

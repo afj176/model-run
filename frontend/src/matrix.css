@@ -1622,3 +1622,57 @@ button.matrix-dot:hover i {
   font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 11px;
 }
+
+/* ---- Weather map: layers down, the prompt across ---- */
+.weather-map {
+  margin-top: 12px;
+  padding: 12px 14px 8px;
+  border-radius: 14px;
+  background: var(--c-1a1436);
+  color: var(--c-f5f1ff);
+  box-shadow: inset 0 0 0 1px #ffffff14;
+}
+.weather-map header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.weather-map header h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+.weather-map header h3 small {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--c-c9c1e6);
+}
+.weather-map header p {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--c-c9c1e6);
+}
+.weather-map-plot {
+  position: relative;
+}
+.weather-map-plot canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+.weather-map .token-barcode-legend {
+  margin-top: 6px;
+}
+.weather-ramp {
+  display: inline-block;
+  width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgb(43, 36, 82),
+    rgb(127, 217, 194),
+    rgb(15, 159, 134)
+  );
+}
