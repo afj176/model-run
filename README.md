@@ -13,6 +13,9 @@ Every number in the interface is measured from the run. Nothing is inferred from
 architecture names, missing data is never drawn as zero, and every trace lists its own
 limitations. [Tested models](#tested-models) lists what has been checked and how.
 
+The interface has a light and a dark mode: the sun or moon in the header switches, and
+until you choose, it follows the system setting.
+
 ## Contents
 
 - [Two ways to run it](#two-ways-to-run-it)
@@ -99,7 +102,11 @@ adds its own nodes for that run and queues it on ComfyUI. No ComfyUI tab needs t
   is still missing files for has **Get files**, which opens that workflow in Get models.
   **Get models › By workflow** has **Use** on every ready template as well.
 - **Choosing a workflow** fills the prompt bar with its prompt and the settings (the gear)
-  with its seed, steps and size. Change any of them and press **Run**. Each image, video or
+  with its seed, steps and size. Change any of them and press **Run**. The prompt goes
+  where the sampler's text encoder reads it: into the encoder's own text, or, when that text
+  arrives down a link, into the literal it leads to, through previews, primitives and the
+  branch a switch is set to. A workflow whose encoder reads a language model's rewrite of
+  the prompt gets your words in the rewriter's prompt instead. Each image, video or
   audio file the workflow reads gets a picker beside the prompt, marked **needed** or
   **optional**; your file goes to ComfyUI's input folder. An image's chip shows a thumbnail
   of it, larger on hover, and your choice is kept when you come back while ComfyUI still has
@@ -162,7 +169,9 @@ The nodes are built to leave the output unchanged, and every model under
   `single:N` for DiT models, `input:N` / `middle:0` / `output:N` for UNets, `audio:N` for
   an audio stream, and `call:N` for models that do not name their blocks. `auto` measures
   the first block whose attention reads the prompt and keeps it. Wire **clip** and
-  **prompt** to label the tokens.
+  **prompt** to label the tokens; a run from Model Run or **Observe this workflow** wires
+  them from the sampler's text encoder, including the link that brings its text, so the
+  labels are the tokens the encoder saw.
 - **ablate_tokens** masks token positions out of every attention call (for example `4, 5`).
   Compare with a run that leaves it empty to see what those tokens did.
 - **output_selectors** picks a nested output, such as `{"transformer_blocks.0": [1]}` for
@@ -331,9 +340,25 @@ tensor names in 3D.
   timestep gate before adding it, so the tiles show each part's own output size before that
   gate, attention against MLP, with the block's total change beside them; they are not
   shares of the block's change.
+- **The prompt ribbon** under the prompt bar is every token of the prompt as one column of a
+  strip, coloured by a measure: each token's size at the shown layer, how much the written
+  answer read it, or the attention it received in an attention capture. A reading window of
+  24 tokens is drawn in full; drag the strip, use the arrow keys, or click a token to move
+  it. A prompt over 48 tokens folds into its sentences above the strip, each bar coloured by
+  its share of the measure, and a click opens that sentence. The window is shared: the views
+  under the stage draw what it holds, whatever the prompt's length, and the stage's selected
+  token follows it.
 - **Tensor Exploration Table** shows attention and activations as a navigable 3D matrix with
   a linked heatmap, 32 × 32 values per window. **Tensor Volume** stacks a tensor's recorded
   maps along one axis. Frames and channels can be stepped through and played.
+- **Where "token" looks** draws the selected query's attention as a few arcs over the
+  ribbon's window: the keys that carry 90% of its row, labelled with their weights. Keys
+  outside the window are listed and marked on a strip of the whole prompt, and a click on
+  any token makes it the query. The head's habit is named beside it.
+- **Where each layer worked** sits above the token barcode: layers down, the prompt across,
+  one cell per layer and token holding the size of that layer's output there, or of what its
+  attention or MLP added. A massive activation is named in the caption, the ribbon's window
+  is framed, and a click opens that layer at that token.
 - **Every token of a text layer.** A text model's layers, standalone or in ComfyUI, are
   recorded as a grid: one row per prompt token (the first 128 on Standard), named by the token, and one
   column per feature, with exact values rather than averages. *All that fit* keeps every
@@ -346,36 +371,58 @@ tensor names in 3D.
 - **Every token × feature** under the stage draws that grid whole: one row per token, every
   feature as a stripe, and each token's RMS beside it. The robust colour scale saturates at
   the 99th percentile so one huge channel does not wash out the rest; white ticks and the
-  **Outlier channels** chips mark massive activations (over 10× their token's RMS). Click
-  anywhere, or use the arrow keys, to move the 3D window there. An image classifier's
+  **Outlier channels** chips mark massive activations (over 10× their token's RMS). It draws
+  the tokens in the ribbon's window, each row tall enough to read. Click anywhere, or use
+  the arrow keys, to move the 3D window there. An image classifier's
   layers get **Every patch × feature**: the class token and every patch by all of their
   features, beside a map of each patch's RMS over the image the model received. The layer's
   patch maps are kept as before.
 - **Recorded event replay** sits right under the visualizer and is the run's one playhead.
-  **Denoising** and **Cross-attention** follow its denoiser call (a denoising step is one
-  denoiser call), and the layer sliders of **Image labels**, Whisper's **Audio** and the
-  **Text encoder** follow its layer; moving any of them moves the replay. Denoising steps
+  **What it made**, **Denoising** and **Cross-attention** follow its denoiser call (a
+  denoising step is one denoiser call), the layer sliders of **Image labels**, Whisper's
+  **Audio** and the **Text encoder** follow its layer, and so do the prompt ribbon's
+  token-size measure and the residual ladder; moving any of them moves the replay. Denoising steps
   past the calls the layers were recorded on say so and leave the replay where it is. An
   attention capture replays layer by layer for the chosen head, and its layer dots move the
   matrix there.
 - **Layer Stack** and the timeline select a layer; the inspector shows paths, shapes, dtypes
   and values.
 - **What it predicted** shows the next-token distribution and a logit lens: the top token
-  after every layer, and where the answer first took the lead.
-- **Response** shows each written token shaded by its probability, its runners-up, its logit
-  lens and the attention from that position to every earlier token. A reasoning model's
-  `<think>` block is shown separately.
+  after every layer, and where the answer first took the lead. **The lens river** draws the
+  candidates as lanes across the layers, each layer's lanes sharing the height by
+  probability, so the takeover reads at any depth; the answer is the pink lane.
+- **Response** opens with a surprise line, each written token's probability in order with
+  the closest calls as dots; click it to pick a token. Each token's chip is shaded by its
+  probability and underlined by how deep in the model it settled, from the logit lens.
+  Answers over 120 tokens show the stretches the model was sure of as plain text, opened by
+  a click. The picked token shows its runners-up, its logit lens and the attention from
+  that position to every earlier token, and a link colours the prompt ribbon by how much the
+  whole answer read each token. A reasoning model's `<think>` block is shown separately.
 - **Head profile and gallery** label each attention head from its weights (attention sink,
   previous-token, self-attending, focused, diffuse) and browse every head of a layer.
+  **Every head** in the inspector puts the capture's heads on one grid, layers down and
+  heads across, coloured by habit, brightened by focus and ringed by ablation effect after a
+  sweep; a click opens that head. Layers that kept only the head mean show one cell.
+- **How the stream grows** opens Run Metrics: one bar per layer, the mean size of its
+  output over all tokens split by what attention and the MLP added, with a whisker to the
+  largest token so a massive activation shows at once. The layer rail is shaded by the same
+  numbers, and a click opens that layer.
 - **Ablate** and **Sweep** zero one head, or every head in turn, for a full forward pass and
   record how the next token moves.
 - **Compare** puts two traces side by side. Edit one word and **Run B** reruns the same
   capture; Model Run reports which tokens changed, whether the answer held, and where the
   layers diverged. **Patch A → B** copies A's residual stream into B one layer at a time to
   find where the answer is carried.
+- **An image run's results** are stacked rather than tabbed. **What it made** comes first:
+  the decoded image, with a strip of every step's estimate ending at the final decode;
+  the slider and the strip pick a step and the large picture follows. **How the image came
+  out of the noise** and **Where the prompt is read** follow in turn.
 - **Where the prompt is read** (diffusion) ranks prompt tokens by how much the image reads
-  them, with a map per token over the preview image, per frame for video. **Run without a
-  token** reruns with tokens masked and shows the pixel difference.
+  them, with a map per token over the preview image, per frame for video. **When each word
+  shaped the output** under it has prompt words down and denoiser calls across, so when each
+  word pulled on the image reads at a glance; only the words that carry attention get a row,
+  the rest fold into one. **Run without a token** reruns with tokens masked and shows the
+  pixel difference.
 - **Report** downloads a self-contained HTML report of the open trace, built in the browser,
   with every limitation recorded in the trace.
 
@@ -586,7 +633,8 @@ npm run package
 ```
 
 The built front end lives in `model_run/web`, so rebuild and package after changing
-`frontend/src`. Tests use generated fixtures and never need personal model paths; tests
+`frontend/src`. While working on it, `npm run dev` serves the source with hot reload and
+proxies `/api` to a standalone Model Run on port 8766, so start one first. Tests use generated fixtures and never need personal model paths; tests
 for optional packages skip when those packages are missing. Run the backend tests under
 ComfyUI's Python as well when changing the nodes.
 
@@ -618,7 +666,7 @@ from stdin.
 | `model_run/model_packages.py` | Runs here: whether a Hugging Face repository runs in Model Run, and which of its files make a package. |
 | `model_run/launch.py` | Starts ComfyUI with Model Run registered, without changing the ComfyUI folder. |
 | `model_run/trace_store.py` | Validates every trace section on import and export. |
-| `frontend/src/` | The React interface; build and package it into `model_run/web`. `comfyRun.js` queues runs on ComfyUI, follows their progress and opens workflows on the canvas. |
+| `frontend/src/` | The React interface; build and package it into `model_run/web`. `comfyRun.js` queues runs on ComfyUI, follows their progress and opens workflows on the canvas. Each view's numbers come from a pure `*Data.js` module beside it (`ribbonData`, `weatherData`, `censusData` and others), tested under `frontend/tests` without a browser. |
 | `model_run/comfy_workflow.py` | Turns a saved ComfyUI workflow (subgraphs included) into the prompt ComfyUI queues, from ComfyUI's own node definitions. |
 | `model_run/comfy_instrument.py` | Adds Model Run's nodes to a queued workflow and applies a run's prompt, seed, steps, size and input files. |
 | `__init__.py`, `comfy_web/` | ComfyUI's entry point, and the Model Run sidebar and menu. |
