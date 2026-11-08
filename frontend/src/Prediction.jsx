@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Lightbulb } from "@phosphor-icons/react";
 import { lensStory, pct, tokenLabel, tokenText as show } from "./insights";
 import { ResidualStream } from "./TextPanels";
+import LensRiver from "./LensRiver";
 
 /** What the model predicted next, how sure it was, and how that answer formed layer by layer. */
 export default function Prediction({ trace }) {
@@ -88,6 +89,17 @@ export default function Prediction({ trace }) {
             How the answer formed{" "}
             <small>logit lens · last position · top token per layer</small>
           </h3>
+          <LensRiver
+            lens={lens}
+            names={names}
+            picked={lensLayer}
+            onPick={(index) => setLensLayer(lensLayer === index ? null : index)}
+          />
+          <p className="micro">
+            Each lane is a candidate that reaches a layer's top five, as wide as
+            its probability there; the pink lane is the answer. Click a layer to
+            see its top five below.
+          </p>
           <div className="lens-track" role="list">
             {lens.layers.map((layer) => {
               const guess = layer.top_tokens[0];

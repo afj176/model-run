@@ -4669,6 +4669,41 @@ i.after {
   color: var(--ink);
 }
 
+/* ---- Lens river: the candidates as lanes across the layers ---- */
+.lens-river {
+  margin: 6px 0 2px;
+}
+.lens-river svg {
+  display: block;
+  overflow: visible;
+}
+.lens-river-tick {
+  font-size: 10px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  fill: var(--muted);
+}
+.lens-river-label {
+  font-size: 11px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.lens-river-label.final {
+  font-weight: 700;
+}
+.lens-river-pick {
+  stroke: var(--ink);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+.lens-river-takeover {
+  stroke: #ff3d8f;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.lens-river-note {
+  font-size: 10px;
+  fill: #ff3d8f;
+}
+
 /* ---- The prompt ribbon: every token as a column, a reading window drawn in full ---- */
 .ribbon {
   display: grid;
