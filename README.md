@@ -6,6 +6,8 @@ image reads its prompt, and what changes when you remove a head or a word.
 
 ![Model Run inside ComfyUI: a 65-token prompt as a ribbon folded into its sentences, one layer's attention as a 3D matrix, and every head of every layer in the Inspector](screenshots/model-run-in-comfyui.png)
 
+![Run View of the same run: the model as a stack of slabs with layer 14 opened as a field of bars, what its attention and MLP added above it, and the prompt ribbon recoloured for that layer](screenshots/run-view.png)
+
 Everything stays on your computer: no CDN, no remote inference, no remote model code, and
 nothing downloads without a click. Every number in the interface is measured from the run.
 Nothing is inferred from an architecture's name, missing data is never drawn as zero, and
