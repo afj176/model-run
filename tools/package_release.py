@@ -7,7 +7,7 @@ root = Path(__file__).resolve().parents[1]
 version = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
 destination = root / ".tmp" / "dist" / f"model-run-comfyui-{version}.zip"
 destination.parent.mkdir(parents=True, exist_ok=True)
-files = [root / "__init__.py", root / "pyproject.toml", root / "README.md", root / "Start-ModelRun.ps1", root / "start-model-run.sh"]
+files = [root / "__init__.py", root / "pyproject.toml", root / "README.md", root / "LICENSE", root / "Start-ModelRun.ps1", root / "start-model-run.sh"]
 files.extend((root / "model_run").glob("*.py"))
 files.extend(p for p in (root / "model_run" / "web").rglob("*") if p.is_file())
 files.extend((root / "comfy_web").glob("*.js"))

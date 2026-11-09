@@ -30,6 +30,7 @@ until you choose, it follows the system setting.
 - [Tested models](#tested-models)
 - [Privacy and safety](#privacy-and-safety)
 - [Development](#development)
+- [Licence](#licence)
 
 ## Two ways to run it
 
@@ -512,3 +513,7 @@ proxies `/api` to a standalone Model Run on port 8766, so start one first. Tests
 fixtures and never need personal model paths; run the backend tests under ComfyUI's Python as
 well when changing the nodes. The `tools` folder holds the checks that were run against real
 models and every ComfyUI model family.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
