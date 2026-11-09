@@ -41,7 +41,7 @@ export default function HeadCensus({ trace, layer, head, onPick }) {
           {withHeads
             ? census.layers.every((l) => l.heads)
               ? ` × ${H} heads`
-              : ` · ${H} heads where kept, the head mean elsewhere`
+              : ` · ${H} heads were kept, the head mean elsewhere`
             : " · head means"}
         </small>
       </h3>

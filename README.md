@@ -4,7 +4,7 @@ Model Run shows what a model actually does when it runs. Run a model and explore
 it produced: layer outputs, attention, the next-token distribution, denoising steps, where an
 image reads its prompt, and what changes when you remove a head or a word.
 
-![Model Run inside ComfyUI: a language model's attention as a 3D matrix, with the Inspector explaining the selected head](screenshots/model-run-in-comfyui.png)
+![Model Run inside ComfyUI: a 65-token prompt as a ribbon folded into its sentences, one layer's attention as a 3D matrix, and every head of every layer in the Inspector](screenshots/model-run-in-comfyui.png)
 
 Everything stays on your computer: no CDN, no remote inference, no remote model code, and
 nothing downloads without a click.
@@ -15,6 +15,8 @@ limitations. [Tested models](#tested-models) lists what has been checked and how
 
 The interface has a light and a dark mode: the sun or moon in the header switches, and
 until you choose, it follows the system setting.
+
+![Dark mode: where the selected token looks, drawn as arcs over the prompt; the replay bar; and the response with each written token's probability](screenshots/dark-mode-response.png)
 
 ## Contents
 
@@ -139,7 +141,7 @@ connected or whose nodes have changed since the template was saved.
 - **Runs here packages** load inside ComfyUI too, through ComfyUI's Python. ComfyUI lets go
   of its own models first, so both share one GPU.
 
-![A Qwen Image 2.1 workflow run from Model Run: each denoising step, the predicted noise and the estimate of the final image](screenshots/observed-workflow.png)
+![A Qwen Image 2.1 workflow run from Model Run: the decoded image with a strip of every step's estimate, then how the image came out of the noise](screenshots/observed-workflow.png)
 
 ### The nodes
 
@@ -282,7 +284,7 @@ without loading it: parameter count, storage by precision, repeated block stacks
 ComfyUI workflow templates that use it, with the full header below. **Explore** shows its
 tensor names in 3D.
 
-![Get models › By workflow inside ComfyUI: every ComfyUI template, those ready with your models first, each with a Run button](screenshots/get-models.png)
+![Get models › By workflow inside ComfyUI: every ComfyUI template, those ready with your models first, each with a Use button](screenshots/get-models.png)
 
 **Get models** finds models in four places. Standalone, it shows only **Runs here** and
 **Hugging Face**, since ComfyUI's files need ComfyUI to run.
@@ -296,7 +298,8 @@ tensor names in 3D.
 - **By workflow** (inside ComfyUI) lists every workflow template ComfyUI ships, with its
   preview, nearest to ready first: templates your installed models already complete, then
   those one file away. Filter by kind (Image, Video, Audio, 3D, LLM and more), get a
-  template's missing files in one step, and **Run** one that is ready.
+  template's missing files in one step, and **Use** one that is ready: it fills the prompt
+  bar and settings, and **Run** queues it.
 - **All files** (inside ComfyUI) searches every file in ComfyUI's template lists and ComfyUI
   Manager's list, with each file once however many repositories host it.
 - **Hugging Face** searches Hugging Face, only when you ask, including repos that only have
@@ -416,7 +419,11 @@ tensor names in 3D.
 - **An image run's results** are stacked rather than tabbed. **What it made** comes first:
   the decoded image, with a strip of every step's estimate ending at the final decode;
   the slider and the strip pick a step and the large picture follows. **How the image came
-  out of the noise** and **Where the prompt is read** follow in turn.
+  out of the noise** and **Where the prompt is read** follow in turn. A video run plays the
+  file ComfyUI saved, with the source picture beside it for image-to-video; a run from
+  before the saved file was recorded shows its decoded frames as a flipbook instead.
+
+  ![An LTX image-to-video run: the saved video plays in What it made, with the source picture beside it, then each denoising step](screenshots/video-result.png)
 - **Audio** runs use the take card in the prompt bar: record from the computer's microphone
   (up to two minutes, kept in the browser until the run sends it to the local server), choose
   or drop a file, and see the take as a waveform with the 30-second window the model hears
@@ -424,6 +431,10 @@ tensor names in 3D.
   lists the take's length, channels, what the model gets, the window and what is left out,
   and after a run what it actually heard. Several takes sit in a strip; one is selected and
   run. The **Audio** panel's axis counts from the file's start.
+
+  ![The take card: a 22-second take as a waveform with the window the model hears framed, and its facts beside it](screenshots/audio-take-card.png)
+
+  ![What Whisper heard: the spectrogram, and each transcribed token's attention over audio time](screenshots/whisper-attention.png)
 - **Where the prompt is read** (diffusion) ranks prompt tokens by how much the image reads
   them, with a map per token over the preview image, per frame for video. **When each word
   shaped the output** under it has prompt words down and denoiser calls across, so when each

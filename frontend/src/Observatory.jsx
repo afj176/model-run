@@ -775,12 +775,20 @@ export function App() {
     const shape = unit?.parameters?.[0]?.shape;
     return Array.isArray(shape) && shape.length ? mostOf(shape) : null;
   }, [allNodes, tree]);
+  // The layer facts come from the open trace, so they are named after its model when a
+  // different one is loaded (a ComfyUI capture opened while a package is loaded).
+  const openModel =
+    trace && modelName && state?.loaded && modelName !== state.loaded.name
+      ? modelName
+      : state?.loaded?.name;
   const modelFacts = state?.loaded
     ? [
-        state.loaded.name,
+        openModel,
         layerIndices.length ? `${layerIndices.length} layers` : null,
         mlpUnits ? `${mlpUnits.toLocaleString()} MLP units/layer` : null,
-        state.loaded.dtype && state.loaded.dtype !== "float32"
+        openModel === state.loaded.name &&
+        state.loaded.dtype &&
+        state.loaded.dtype !== "float32"
           ? `${state.loaded.dtype} to fit the GPU`
           : null,
       ]
